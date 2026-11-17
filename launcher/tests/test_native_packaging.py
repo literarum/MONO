@@ -82,6 +82,7 @@ class NativePackagingTests(unittest.TestCase):
             with patch.object(mono,'assets_root',return_value=stage),patch.object(mono,'run',side_effect=AssertionError('Verification must not start the app')),contextlib.redirect_stdout(output):
                 result=mono.main(['--verify-bundle'])
             self.assertEqual(result,0);self.assertTrue(json.loads(output.getvalue())['ok'])
+    @unittest.skipUnless(sys.platform not in ('win32','darwin') or os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','On Windows/macOS packaging requires release inputs (native helper bundle); set MONO_RELEASE_TOOLCHAIN=1')
     def test_capture_inventory_tampering_missing_license_and_consistent_wrong_cpu_are_rejected(self):
         if os.name!='nt':
             from native_bundle import require_amd64
