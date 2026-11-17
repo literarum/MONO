@@ -1,0 +1,9 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {localServer} from './helpers/local-server.mjs';import {LibraryClient} from '../public/library-client.js';import {CaptureSources} from '../public/native-sources.js';
+test('browser device and native endpoint preferences remain separate across mode changes and reload',async t=>{
+ const server=await localServer(t);let cookie='';const library=new LibraryClient({fetch:async(route,options={})=>{const headers=new Headers(options.headers);headers.set('Origin',server.url);if(cookie)headers.set('Cookie',cookie);const r=await fetch(new URL(route,server.url),{...options,headers});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];return r}});await library.init();await library.configure({useDefault:true});
+ const client={capabilities:async()=>({supported:true,ready:true,modes:['browser','mic'],inputDevices:[{id:'native-device',name:'Physical native microphone'}],browserInputDevices:[{id:'browser-device',name:'Physical browser microphone'}]})};
+ const model=new CaptureSources(client,library);await model.load();await model.update({mode:'mic',inputId:'native-device'});await model.update({mode:'browser'});await model.update({inputId:'browser-device'});
+ assert.deepEqual(await model.selection(),{mode:'browser',inputId:'browser-device',outputId:null});assert.equal(model.value.inputId,'native-device');assert.equal(model.value.browserInputId,'browser-device');
+ await model.update({mode:'mic'});assert.deepEqual(await model.selection(),{mode:'mic',inputId:'native-device',outputId:null});
+ await model.update({mode:'browser'});const restored=new CaptureSources(client,library);await restored.load();assert.deepEqual(await restored.selection(),{mode:'browser',inputId:'browser-device',outputId:null});
+});

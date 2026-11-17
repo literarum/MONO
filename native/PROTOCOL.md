@@ -1,0 +1,17 @@
+# MONO native audio protocol v1
+
+The trusted supervisor starts a fixed verified executable with `--protocol 1 --capture-root <private directory>`. Control and metadata use UTF-8 NDJSON over private stdin/stdout pipes, at most 64 KiB per line. Audio never enters JSON. EOF means stop, flush and exit. No shell, user executable, or HTTP file path is accepted.
+
+Commands are `{v:1,id:UUID,method,params}`. The allowlist is `enumerate`, `start`, `pause`, `resume`, `stop`, `commitAck`. Start parameters contain `sessionId`, `mode:mic|system|both`, and nullable `inputId`/`outputId`; a null device means resolve the default once and retain that actual endpoint ID. Every later command identifies that session. `commitAck` identifies track/index/hash and confirms archive durability.
+
+The helper emits `{v:1,event,seq,...}`. `seq` is a strictly increasing integer per helper process. Startup `ready` contains `protocol:1`, `platform`, `supported`, `modes`, `inputDevices`, `outputDevices`; each device has opaque `id`, display `name`, and `default`. `devices` refreshes the same inventories without opening audio streams.
+
+All capture events identify `sessionId`. `state` contains `state:requesting|recording|paused|idle` and integer `monotonicNs`; the first recording state also includes the actual selected endpoint IDs and the common `originMonotonicNs`. Nanoseconds are integers in the helper's monotonic clock domain. The supervisor never assumes that a different process/OS clock has the same epoch. Public HTTP status uses elapsed seconds, not raw nanosecond numbers.
+
+`segment` contains `track:mic|system`, sequential zero-based `index`, `relativeFile:<track>-<six digits>.wav`, `format` (PCM/float FFmpeg sample format), integer `sampleRate`, `channels`, `startMonotonicNs`, `frames`, and lowercase `sha256`. A segment is an independently decodable WAV, normally two seconds, with a shorter final segment allowed. Header/data sizes and frames must agree. The helper flushes, fsyncs and closes the file before emitting; the supervisor validates the relative path, format, frame count and hash, then durably commits into the library before ACK. Files/events without an ACK are never advertised as safely saved.
+
+`level` contains per-track nonnegative finite `peak`/`rms`, `clippedFrames`, and `monotonicNs`. It is throttled to at most20 Hz per track. During silence or explicit pause the helper still sends a heartbeat at least once per second; level messages may be coalesced, segment messages may not be dropped. A bounded queue overflow interrupts capture explicitly.
+
+`gap` contains track, start/end nanoseconds and a bounded reason code. Natural silence advances the recording timeline. Explicit pause acquires no audio and records a visible gap on that same original timeline; later render/mix supplies silence for that interval. Device replacement, disconnect, discontinuity, sleep/wake or access revocation is reported, never silently retargeted.
+
+`error` contains a bounded code from `ACCESS_DENIED`, `DEVICE_LOST`, `DEVICE_BUSY`, `UNSUPPORTED_FORMAT`, `NOT_SUPPORTED`, `IO_ERROR`, `DISCONTINUITY`, `SLEEP`, `INTERNAL`. No key, audio, transcript, private path or raw OS error message is emitted. Stop emits all final segment events before the session's `idle` state. Unexpected EOF, invalid metadata, stop timeout or foreign paths preserve committed parts and mark the record interrupted; they cannot produce a successful saved state.

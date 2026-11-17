@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "architecture": "win-x64",
+  "sourceCommit": "2a571b606854520cf89804d8030c8b328e621689",
+  "sourceDateEpoch": 1790759280,
+  "recipeSha256": "49a336789366d69bf025efa53f9a39debd3bde7e9e9174fa33569648b103886a",
+  "llvmRoot": "llvm-mingw-20261020-ucrt-x86_64",
+  "runtimeFiles": [
+    "ffmpeg.exe",
+    "ffprobe.exe",
+    "avcodec-63.dll",
+    "avdevice-63.dll",
+    "avfilter-12.dll",
+    "avformat-63.dll",
+    "avutil-61.dll",
+    "swresample-7.dll",
+    "swscale-10.dll"
+  ],
+  "inputs": {
+    "ffmpeg": {
+      "name": "ffmpeg.tar.gz",
+      "url": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/2a571b606854520cf89804d8030c8b328e621689",
+      "size": 17336083,
+      "sha256": "f02fc0809a13f37e3d4e1f74254d07e035a5ef01a6d91e727b915b1764d97540"
+    },
+    "llvm": {
+      "name": "llvm.zip",
+      "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/llvm-mingw-20261020-ucrt-x86_64.zip",
+      "size": 190612575,
+      "sha256": "fd5462b7f5d93b2ff981fcd3f9c7e427e47f3203c64ea91c27bcc444eebd74cd"
+    },
+    "make": {
+      "name": "make.pkg.tar.zst",
+      "url": "https://mirror.msys2.org/msys/x86_64/make-4.4.1-3-x86_64.pkg.tar.zst",
+      "size": 514683,
+      "sha256": "af0bdba17f06fe037f0194069adaa31a8fe45f1a11381501896aea1fae37bd5d"
+    },
+    "nasm": {
+      "name": "nasm.zip",
+      "url": "https://www.nasm.us/pub/nasm/releasebuilds/3.02/win64/nasm-3.02-win64.zip",
+      "size": 641314,
+      "sha256": "161d0bfaff53c2f9e9f3e69fd0672323ebabafd1268976a5cec11be92a19aee7"
+    },
+    "zlib": {
+      "name": "zlib.tar.gz",
+      "url": "https://zlib.net/fossils/zlib-1.3.2.tar.gz",
+      "size": 1502830,
+      "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"
+    }
+  }
+}

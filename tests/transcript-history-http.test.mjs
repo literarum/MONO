@@ -1,0 +1,33 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile,readdir,unlink} from 'node:fs/promises';
+import path from 'node:path';
+import {localServer} from './helpers/local-server.mjs';
+
+test('source metadata survives later edits; damaged history blocks only that record and explains recovery over HTTP',async t=>{
+ const server=await localServer(t);let headers=await server.session();
+ const call=async(route,method='GET',body)=>{const r=await fetch(server.url+route,{method,headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,body:await r.json()}};
+ assert.equal((await call('/api/local/library/configure','POST',{useDefault:true})).status,200);
+ let record=(await call('/api/local/records','POST',{title:'Isolated history'})).body;
+ const route='/api/local/records/'+record.id;
+ const first={model:'first-model',language:'ru',rawText:'First source',segments:[{id:7,start:0,end:1,text:'Original'}]};
+ const put=async transcript=>{const r=await fetch(server.url+route+'/transcript',{method:'PUT',headers:{...headers,'Content-Type':'application/json','X-Mono-Version':String(record.version)},body:JSON.stringify(transcript)});assert.equal(r.status,200);record=await r.json()};
+ await put(first);
+ const folder=path.join(server.root,'library','records',record.id,'transcripts');const original=await readFile(path.join(folder,'original.json'));
+ await put({...first,model:'later-model',language:'en',rawText:'Later raw',segments:[{...first.segments[0],text:'Edited'}]});
+ await unlink(path.join(folder,'original.json'));await server.restart();headers=await server.session();
+ assert.equal((await call(route)).status,200);
+ assert.deepEqual(await readFile(path.join(folder,'original.json')),original);
+ const healthy=(await call('/api/local/records','POST',{title:'Healthy neighbor'})).body;
+ const rows=await Promise.all((await readdir(path.join(folder,'revisions'))).map(async name=>JSON.parse(await readFile(path.join(folder,'revisions',name),'utf8'))));
+ rows.sort((a,b)=>a.version-b.version);
+ await unlink(path.join(folder,'objects',rows[0].sourceSha256+'.json'));await unlink(path.join(folder,'original.json'));
+ await server.restart();headers=await server.session();
+ assert.equal((await call('/api/local/records/'+healthy.id)).status,200);
+ const latest=await call(route);assert.equal(latest.body.transcriptHistoryError,'TRANSCRIPT_HISTORY_DAMAGED');
+ assert.equal((await call(route+'/transcript?limit=1')).body.segments[0].text,'Edited');
+ const denied=await call(route,'PATCH',{expectedVersion:record.version,patch:{title:'Must not commit'}});
+ assert.equal(denied.status,503);assert.equal(denied.body.code,'TRANSCRIPT_HISTORY_DAMAGED');
+ assert.match(denied.body.error,/резервной копии/);
+ assert.equal((await call(route)).body.version,record.version);
+});

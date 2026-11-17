@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "python": "3.14.8",
+  "compiler": {
+    "kind": "msvc",
+    "version": "14.51.36260",
+    "toolsetDirectory": "14.51.36231",
+    "architecture": "x86_64"
+  },
+  "windowsSdk": {
+    "version": "10.0.26100.9169",
+    "directory": "10.0.26100.0"
+  },
+  "nuitka": {
+    "version": "4.3.1",
+    "filename": "nuitka-4.3.1.tar.gz",
+    "url": "https://files.pythonhosted.org/packages/da/0f/db5cfdebf906a6de141bfdadcd72a7417ba710ba9c9d307be185a69a7c8d/nuitka-4.3.1.tar.gz",
+    "sha256": "b9c87a694acc424cfffa06abf149fddbdfa85f6daac998df67411b5f4269df0f"
+  },
+  "payloads": [
+    {
+      "id": "msvc-tools",
+      "filename": "Microsoft.VC.14.51.Tools.HostX64.TargetX64.base.vsix",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/1a3f7ee8-40b3-467a-bca3-18a23a5e9a6c/86451403ada42c612d0eb773e479879e37b0e1ef45a6e406ad1b335805dec6fd/Microsoft.VC.14.51.Tools.HostX64.TargetX64.base.vsix",
+      "sha256": "86451403ada42c612d0eb773e479879e37b0e1ef45a6e406ad1b335805dec6fd",
+      "required": [
+        "Contents/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe",
+        "Contents/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/link.exe",
+        "Contents/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/mspdbcore.dll"
+      ]
+    },
+    {
+      "id": "msvc-resources",
+      "filename": "Microsoft.VC.14.51.Tools.HostX64.TargetX64.Res.base.enu.vsix",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/1a3f7ee8-40b3-467a-bca3-18a23a5e9a6c/4726b44efd50a6ed8b1b891c55e4328a0c16ca1e6725bd9a29e0ee561bcae840/Microsoft.VC.14.51.Tools.HostX64.TargetX64.Res.base.enu.vsix",
+      "sha256": "4726b44efd50a6ed8b1b891c55e4328a0c16ca1e6725bd9a29e0ee561bcae840",
+      "required": [
+        "Contents/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/1033/clui.dll",
+        "Contents/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/1033/linkui.dll"
+      ]
+    },
+    {
+      "id": "msvc-headers",
+      "filename": "Microsoft.VC.14.51.CRT.Headers.base.vsix",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/a62262cf-b9f6-4770-9454-7372ad8fcec0/e6d9cc5f0750cbc40a6b2468991c57ed0044fa2e242295a6d51bc02d72502b05/Microsoft.VC.14.51.CRT.Headers.base.vsix",
+      "sha256": "e6d9cc5f0750cbc40a6b2468991c57ed0044fa2e242295a6d51bc02d72502b05",
+      "required": [
+        "Contents/VC/Tools/MSVC/14.51.36231/include/vcruntime.h"
+      ]
+    },
+    {
+      "id": "msvc-libs",
+      "filename": "Microsoft.VC.14.51.CRT.x64.Desktop.base.vsix",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/16ac3a9f-21a9-4b80-a1cb-097bd79ea455/b86f502f4092c11af0c99de3e1b535da17d0116af07e8b18dfec58e0b514485c/Microsoft.VC.14.51.CRT.x64.Desktop.base.vsix",
+      "sha256": "b86f502f4092c11af0c99de3e1b535da17d0116af07e8b18dfec58e0b514485c",
+      "required": [
+        "Contents/VC/Tools/MSVC/14.51.36231/lib/x64/libcmt.lib",
+        "Contents/VC/Tools/MSVC/14.51.36231/lib/x64/libvcruntime.lib"
+      ]
+    },
+    {
+      "id": "msvc-imports",
+      "filename": "Microsoft.VC.14.51.CRT.x64.Store.base.vsix",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/16ac3a9f-21a9-4b80-a1cb-097bd79ea455/1f641df0650a8657f6dc4a9fd030bc11c502a3a735a64a39735b9106c353058a/Microsoft.VC.14.51.CRT.x64.Store.base.vsix",
+      "sha256": "1f641df0650a8657f6dc4a9fd030bc11c502a3a735a64a39735b9106c353058a",
+      "required": [
+        "Contents/VC/Tools/MSVC/14.51.36231/lib/x64/msvcrt.lib",
+        "Contents/VC/Tools/MSVC/14.51.36231/lib/x64/vcruntime.lib",
+        "Contents/VC/Tools/MSVC/14.51.36231/lib/x64/oldnames.lib"
+      ]
+    },
+    {
+      "id": "sdk-common",
+      "filename": "microsoft.windows.sdk.cpp.10.0.26100.9169.nupkg",
+      "url": "https://api.nuget.org/v3-flatcontainer/microsoft.windows.sdk.cpp/10.0.26100.9169/microsoft.windows.sdk.cpp.10.0.26100.9169.nupkg",
+      "sha256": "475269434dcd808a67853773272f972c3229c0e10c3ddc821290e70cc0f6904d",
+      "required": [
+        "c/Include/10.0.26100.0/um/Windows.h",
+        "c/Include/10.0.26100.0/ucrt/stdio.h",
+        "c/bin/10.0.26100.0/x64/rc.exe",
+        "c/bin/10.0.26100.0/x64/rcdll.dll"
+      ]
+    },
+    {
+      "id": "sdk-x64",
+      "filename": "microsoft.windows.sdk.cpp.x64.10.0.26100.9169.nupkg",
+      "url": "https://api.nuget.org/v3-flatcontainer/microsoft.windows.sdk.cpp.x64/10.0.26100.9169/microsoft.windows.sdk.cpp.x64.10.0.26100.9169.nupkg",
+      "sha256": "df6226a051e320942abfbd57848b43d18772996ecd66beadad240f2a56ed2f7b",
+      "required": [
+        "c/ucrt/x64/ucrt.lib",
+        "c/um/x64/kernel32.Lib"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - link "MONO — главная" [ref=e4] [cursor=pointer]:
+      - /url: "#dashboard"
+      - generic [ref=e11]:
+        - text: MONO.
+        - generic [ref=e12]: TRANSCRIBE / STUDIO
+    - generic [ref=e13]: РАБОЧЕЕ ПРОСТРАНСТВО
+    - navigation "Основное меню" [ref=e14]:
+      - button "Обзор" [ref=e15] [cursor=pointer]
+      - button "Студия записи" [ref=e19] [cursor=pointer]
+      - button "Моя библиотека 0" [ref=e23] [cursor=pointer]:
+        - generic [ref=e26]: Моя библиотека
+        - generic [ref=e27]: "0"
+      - button "Обработка" [ref=e28] [cursor=pointer]
+    - generic [ref=e32]:
+      - generic [ref=e33]: СИСТЕМА
+      - button "Настройки" [ref=e34] [cursor=pointer]
+      - generic [ref=e38]:
+        - text: MONO / v0.4.0
+        - generic [ref=e39]: © 2026
+  - generic [ref=e40]:
+    - banner [ref=e41]:
+      - generic [ref=e42]:
+        - generic [ref=e43]: РАБОЧЕЕ ПРОСТРАНСТВО
+        - strong [ref=e46]: Обзор
+      - button "Переключить тему" [ref=e48] [cursor=pointer]
+    - main [ref=e51]:
+      - region [ref=e52]:
+        - generic [ref=e53]:
+          - generic [ref=e55]:
+            - heading "ГОЛОС В ТЕКСТ." [level=1] [ref=e56]: ГОЛОСВ ТЕКСТ.
+            - paragraph [ref=e57]: Все важные слова — на своём месте.Записывайте, расшифровывайте и работайте с идеями без лишних действий.
+            - generic [ref=e58]:
+              - button "Начать запись" [ref=e59] [cursor=pointer]
+              - button "Загрузить аудио" [ref=e64] [cursor=pointer]
+          - generic [ref=e90]: ✳ СОХРАНЯЙТЕ СМЫСЛ. НЕ ТРАТЬТЕ ВРЕМЯ.
+        - heading "Ваше пространство" [level=2] [ref=e94]
+        - generic [ref=e95]:
+          - article [ref=e96]:
+            - generic [ref=e97]: ВСЕГО ЗАПИСЕЙ
+            - strong [ref=e101]: "00"
+            - generic [ref=e102]:
+              - text: В вашей библиотеке
+              - generic [ref=e103]: ↗
+          - article [ref=e104]:
+            - generic [ref=e105]: ДЛИТЕЛЬНОСТЬ
+            - strong [ref=e109]: 0ч 00м
+            - generic [ref=e110]:
+              - text: Общая длина аудио
+              - generic [ref=e111]: ↗
+          - article [ref=e112]:
+            - generic [ref=e113]: ОБРАБОТАНО ЗА МЕСЯЦ
+            - strong [ref=e117]: 0мин
+            - generic [ref=e118]:
+              - text: Расшифрованное аудио
+              - generic [ref=e119]: ↗
+          - article [ref=e120]:
+            - generic [ref=e121]: РАСХОДЫ · ОЦЕНКА
+            - strong [ref=e125]: 0,00 ₽
+            - generic [ref=e126]:
+              - text: По заданному тарифу
+              - generic [ref=e127]: ↗
+        - generic [ref=e128]:
+          - heading "Последние записи" [level=2] [ref=e130]
+          - button "Вся библиотека" [ref=e131] [cursor=pointer]
+        - generic [ref=e135]:
+          - strong [ref=e138]: Здесь появятся ваши записи
+          - paragraph [ref=e139]: Начните запись или загрузите аудио,чтобы создать первую транскрипцию.
+          - button "Открыть студию" [ref=e140] [cursor=pointer]

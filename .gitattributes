@@ -1,0 +1,4 @@
+# The reviewed recipe digest is byte-exact on Windows CI and local checkouts.
+launcher/build_ffmpeg_windows.py text eol=lf
+# Preserve upstream notice bytes, including their original mixed line endings.
+launcher/licenses/** -text

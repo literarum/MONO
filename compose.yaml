@@ -1,0 +1,75 @@
+name: mono-transcribe
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mono-transcribe:0.3.0
+    environment:
+      NODE_ENV: production
+      MONO_DEPLOY_MODE: proxy
+      MONO_HOST: 0.0.0.0
+      PORT: 4173
+      MONO_PUBLIC_ORIGIN: https://${MONO_DOMAIN:?Set MONO_DOMAIN}
+      MONO_DATA_DIR: /data
+      MONO_MAX_UPLOAD_BYTES: ${MONO_MAX_UPLOAD_BYTES:-1073741824}
+      MONO_JOB_TTL_HOURS: ${MONO_JOB_TTL_HOURS:-168}
+      GROQ_API_KEY_FILE: /run/secrets/groq_api_key
+      MONO_PROXY_SECRET_FILE: /run/secrets/mono_proxy_secret
+    secrets: [groq_api_key, mono_proxy_secret]
+    volumes:
+      - mono_data:/data
+    networks: [backend]
+    expose: ["4173"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    init: true
+    pids_limit: 128
+    mem_limit: 2g
+    cpus: 2.0
+    restart: unless-stopped
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD","node","healthcheck.mjs"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 20s
+  caddy:
+    image: caddy:2.10-alpine
+    depends_on:
+      app: {condition: service_healthy}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      MONO_DOMAIN: ${MONO_DOMAIN:?Set MONO_DOMAIN}
+      MONO_BASIC_USER: ${MONO_BASIC_USER:?Set MONO_BASIC_USER}
+      MONO_BASIC_HASH: ${MONO_BASIC_HASH:?Set MONO_BASIC_HASH}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL}
+    secrets: [mono_proxy_secret]
+    volumes:
+      - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./ops/caddy-entrypoint.sh:/entrypoint/mono.sh:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    entrypoint: ["/bin/sh","/entrypoint/mono.sh"]
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+networks:
+  backend: {}
+volumes:
+  mono_data:
+    name: mono_transcribe_data
+  caddy_data: {}
+  caddy_config: {}
+secrets:
+  groq_api_key:
+    file: ./secrets/groq_api_key
+  mono_proxy_secret:
+    file: ./secrets/mono_proxy_secret

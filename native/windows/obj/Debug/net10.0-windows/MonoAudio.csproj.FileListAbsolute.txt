@@ -1,0 +1,14 @@
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\bin\Debug\net10.0-windows\MonoAudio.deps.json
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\bin\Debug\net10.0-windows\MonoAudio.dll
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\bin\Debug\net10.0-windows\MonoAudio.pdb
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\obj\Debug\net10.0-windows\MonoAudio.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\obj\Debug\net10.0-windows\MonoAudio.AssemblyInfoInputs.cache
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\obj\Debug\net10.0-windows\MonoAudio.AssemblyInfo.cs
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\obj\Debug\net10.0-windows\MonoAudio.csproj.CoreCompileInputs.cache
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\obj\Debug\net10.0-windows\MonoAudio.dll
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\obj\Debug\net10.0-windows\refint\MonoAudio.dll
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\obj\Debug\net10.0-windows\MonoAudio.pdb
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\obj\Debug\net10.0-windows\ref\MonoAudio.dll
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\bin\Debug\net10.0-windows\MonoAudio.exe
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\bin\Debug\net10.0-windows\MonoAudio.runtimeconfig.json
+C:\Users\kurushin_gi\Desktop\mono-transcribe\native\windows\obj\Debug\net10.0-windows\MonoAudio.genruntimeconfig.cache

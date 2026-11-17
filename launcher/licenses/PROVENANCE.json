@@ -1,0 +1,10 @@
+{
+  "component": "CPython3.14.8 normal-GIL Windows AMD64",
+  "source": "https://www.python.org/ftp/python/3.14.8/python-3.14.8-amd64.zip",
+  "archiveSha256": "4873947a8afc037846b180312b83c744a4146a851cfd316a75c3125a4d8299da",
+  "member": "LICENSE.txt",
+  "noticeFile": "CPython-3.14.8-LICENSE.txt",
+  "noticeSize": 35407,
+  "noticeSha256": "935cf13e19f8c31b497d20b05d73623431a226b230c3599bc30fa3348979bc68",
+  "scope": "Unmodified complete runtime license; not complete dependency/legal clearance"
+}

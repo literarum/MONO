@@ -1,0 +1,2 @@
+C:\Users\kurushin_gi\Desktop\mono-transcribe\.codex\build\windows\MonoAudio.pdb
+C:\Users\kurushin_gi\Desktop\mono-transcribe\.codex\build\windows\MonoAudio.exe

@@ -1,0 +1,84 @@
+- generic [ref=f13e2]:
+  - dialog "Основное меню" [ref=f13e130]:
+    - generic [ref=f13e5]:
+      - link "MONO — главная" [active] [ref=f13e6] [cursor=pointer]:
+        - /url: "#dashboard"
+        - generic [ref=f13e13]:
+          - text: MONO.
+          - generic [ref=f13e14]: TRANSCRIBE / STUDIO
+      - generic [ref=f13e15]: РАБОЧЕЕ ПРОСТРАНСТВО
+      - navigation "Основное меню" [ref=f13e16]:
+        - button "Обзор" [ref=f13e17] [cursor=pointer]
+        - button "Студия записи" [ref=f13e21] [cursor=pointer]
+        - button "Моя библиотека 2" [ref=f13e25] [cursor=pointer]:
+          - generic [ref=f13e28]: Моя библиотека
+          - generic [ref=f13e29]: "2"
+        - button "Обработка" [ref=f13e30] [cursor=pointer]
+      - generic [ref=f13e34]:
+        - generic [ref=f13e35]: СИСТЕМА
+        - button "Настройки" [ref=f13e36] [cursor=pointer]
+        - generic [ref=f13e40]:
+          - text: MONO / v0.4.0
+          - generic [ref=f13e41]: © 2026
+  - generic:
+    - banner:
+      - generic:
+        - button "Открыть меню" [expanded]
+        - strong: Студия записи
+      - generic:
+        - button "Переключить тему"
+    - generic:
+      - main:
+        - region "Студия записи.":
+          - generic:
+            - generic:
+              - heading "Студия записи." [level=1]
+              - paragraph: Здесь начинается каждая история. Убедитесь, что источник звука подключён.
+          - generic:
+            - generic:
+              - generic:
+                - generic: МОНИТОР ЗАПИСИ
+                - generic: Ожидание
+              - generic:
+                - generic: ГОТОВО К ЗАПИСИ
+                - generic: 00:00:00
+                - generic:
+                  - generic "Визуализация уровня звука"
+                - generic:
+                  - generic: ВХОДЯЩИЙ СИГНАЛ
+                  - generic: −∞ dB
+              - generic:
+                - button "Начать запись"
+              - generic:
+                - generic: Аудио сохраняется в выбранной папке
+                - generic: Без скрытой записи
+            - complementary:
+              - generic:
+                - generic:
+                  - generic: Что записывать
+                  - generic:
+                    - combobox "Что записывать": Микрофон и компьютер
+                - generic:
+                  - generic: Микрофон
+                  - generic:
+                    - combobox "Микрофон": Как в системе
+                - generic:
+                  - generic: Звук компьютера
+                  - generic:
+                    - combobox "Звук компьютера": Как в системе
+                - status: "Для встреч: ваш голос и собеседники. Наушники помогут избежать эха."
+                - button "Обновить устройства"
+              - generic:
+                - generic: 02 / ПЕРЕД НАЧАЛОМ
+                - generic: Проверьте разрешение микрофона
+                - generic: Убедитесь в свободном месте
+                - generic: Предупредите участников встречи
+              - button "Есть готовая запись? Загрузите аудиофайл вместо записи ↗":
+                - strong: Есть готовая запись?
+                - generic: Загрузите аудиофайл вместо записи
+                - generic: ↗
+      - generic:
+        - button "Прокрутить вверх" [disabled]: ▴
+        - generic:
+          - scrollbar "Вертикальная прокрутка"
+        - button "Прокрутить вниз": ▾

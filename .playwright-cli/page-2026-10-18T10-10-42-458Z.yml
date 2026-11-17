@@ -1,0 +1,129 @@
+- generic [ref=f25e1]:
+  - generic [ref=f25e2]:
+    - complementary [ref=f25e3]:
+      - generic [ref=f25e5]:
+        - link "MONO — главная" [ref=f25e6] [cursor=pointer]:
+          - /url: "#dashboard"
+          - generic [ref=f25e13]:
+            - text: MONO.
+            - generic [ref=f25e14]: TRANSCRIBE / STUDIO
+        - generic [ref=f25e15]: РАБОЧЕЕ ПРОСТРАНСТВО
+        - navigation "Основное меню" [ref=f25e16]:
+          - button "Обзор" [ref=f25e17] [cursor=pointer]
+          - button "Студия записи" [ref=f25e21] [cursor=pointer]
+          - button "Моя библиотека 4" [ref=f25e25] [cursor=pointer]:
+            - generic [ref=f25e28]: Моя библиотека
+            - generic [ref=f25e29]: "4"
+          - button "Обработка" [ref=f25e30] [cursor=pointer]
+        - generic [ref=f25e34]:
+          - generic [ref=f25e35]: СИСТЕМА
+          - button "Настройки" [ref=f25e36] [cursor=pointer]
+          - generic [ref=f25e40]:
+            - text: MONO / v0.4.0
+            - generic [ref=f25e41]: © 2026
+    - generic [ref=f25e42]:
+      - banner [ref=f25e43]:
+        - generic [ref=f25e44]:
+          - button "Открыть меню" [ref=f25e45] [cursor=pointer]
+          - strong [ref=f25e48]: Настройки
+        - button "Переключить тему" [ref=f25e50] [cursor=pointer]
+      - generic [ref=f25e53]:
+        - main [ref=f25e54]:
+          - region [ref=f25e55]:
+            - heading "Настройки." [level=1] [ref=f25e58]
+            - generic [ref=f25e59]:
+              - article [ref=f25e60]:
+                - heading "Источники записи" [level=2] [ref=f25e61]
+                - generic [ref=f25e62]:
+                  - generic [ref=f25e63]:
+                    - generic [ref=f25e64]: Что записывать
+                    - combobox "Что записывать" [ref=f25e66] [cursor=pointer]: Микрофон и компьютер
+                  - generic [ref=f25e67]:
+                    - generic [ref=f25e68]: Микрофон
+                    - combobox "Микрофон" [ref=f25e70] [cursor=pointer]: Как в системе
+                  - generic [ref=f25e71]:
+                    - generic [ref=f25e72]: Звук компьютера
+                    - combobox "Звук компьютера" [ref=f25e74] [cursor=pointer]: Как в системе
+                  - status [ref=f25e75]: "Для встреч: ваш голос и собеседники. Наушники помогут избежать эха."
+                  - button "Обновить устройства" [ref=f25e76] [cursor=pointer]
+                - button "Проверить звук" [ref=f25e77] [cursor=pointer]
+              - article [ref=f25e78]:
+                - heading "Оформление" [level=2] [ref=f25e82]
+                - generic [ref=f25e83]: Цветовая тема
+                - combobox "Цветовая тема" [ref=f25e85] [cursor=pointer]: Тёмная
+              - article [ref=f25e86]:
+                - heading "Обработка аудио" [level=2] [ref=f25e90]
+                - paragraph [ref=f25e91]: Оригинал всегда остаётся нетронутым.
+                - generic [ref=f25e92]: Профиль обработки FFmpeg
+                - combobox "Профиль обработки FFmpeg" [ref=f25e94] [cursor=pointer]: Стандартный — фильтр и громкость
+              - article [ref=f25e95]:
+                - heading "Подключение Groq" [level=2] [ref=f25e99]
+                - paragraph [ref=f25e100]: Расшифровка работает через ваш аккаунт Groq. Записывать можно без подключения.
+                - generic [ref=f25e102]:
+                  - status [ref=f25e103]: Groq ещё не подключён.
+                  - generic [ref=f25e104]:
+                    - generic [ref=f25e105]: Ключ Groq
+                    - textbox "Ключ Groq" [ref=f25e106]:
+                      - /placeholder: gsk_…
+                    - button "Подключить" [ref=f25e108] [cursor=pointer]
+                - group [ref=f25e109]:
+                  - generic "Где взять ключ и как оплачивать" [ref=f25e110] [cursor=pointer]
+              - article [ref=f25e111]:
+                - heading "Распознавание" [level=2] [ref=f25e115]
+                - paragraph [ref=f25e116]: "Язык: русский · Whisper Large v3 Turbo."
+                - generic [ref=f25e117]: Термины и имена (подсказка модели)
+                - textbox "Термины и имена (подсказка модели)" [ref=f25e119]:
+                  - /placeholder: "Например: PostgreSQL, Ирина Кузнецова, Groq"
+                - paragraph [ref=f25e120]: Не более 350 символов; Groq также ограничивает подсказку 224 токенами.
+              - article [ref=f25e121]:
+                - heading "Конфиденциальность" [level=2] [ref=f25e125]
+                - paragraph [ref=f25e126]: Ваш контроль над исходными файлами.
+                - generic [ref=f25e127]:
+                  - button "Экспорт библиотеки в папку" [ref=f25e128] [cursor=pointer]
+                  - button "Импорт из папки" [ref=f25e129] [cursor=pointer]
+                - generic [ref=f25e130]:
+                  - button "Подключить папку архива" [ref=f25e131] [cursor=pointer]
+                  - button "Перенести архив" [ref=f25e132] [cursor=pointer]
+                  - button "Перенести записи из браузера" [ref=f25e133] [cursor=pointer]
+                  - generic [ref=f25e134]: C:\Users\kurushin_gi\Desktop\mono-transcribe\.codex\task\native-ui-qa-data\library
+              - article [ref=f25e135]:
+                - heading "Расходы" [level=2] [ref=f25e139]
+                - paragraph [ref=f25e140]: Расчётные значения, не счёт Groq.
+                - generic [ref=f25e141]: Курс USD → RUB
+                - spinbutton "Курс USD → RUB" [ref=f25e142]: "83.0784"
+                - paragraph [ref=f25e143]: "Тариф распознавания: $0,04 за час отправленного аудио."
+              - article [ref=f25e144]:
+                - heading "Состояние системы" [level=2] [ref=f25e148]
+                - paragraph [ref=f25e149]: "FFmpeg: доступен · FFprobe: доступен · Groq: не настроен"
+                - button "Проверить снова" [ref=f25e150] [cursor=pointer]
+                - paragraph [ref=f25e153]: Для транскрибации нужны Groq и FFmpeg на сервере. При удалённом развёртывании данные отправляются на сервер и в Groq; браузерная библиотека остаётся на текущем устройстве.
+        - generic [ref=f25e154]:
+          - button "Прокрутить вверх" [ref=f25e155] [cursor=pointer]: ▴
+          - scrollbar "Вертикальная прокрутка" [ref=f25e157]
+          - button "Прокрутить вниз" [ref=f25e158] [cursor=pointer]: ▾
+  - generic [ref=f25e160]:
+    - dialog [active] [ref=f25e161]:
+      - generic [ref=f25e162]:
+        - generic [ref=f25e163]: 3 из 3 · ВАШ ЗВУК
+        - button "Продолжить позже" [ref=f25e164] [cursor=pointer]: ×
+      - heading "Проверим звук" [level=2] [ref=f25e165]
+      - paragraph [ref=f25e166]: Выберите источник и запишите пять секунд. Для встречи подойдёт «Микрофон и компьютер».
+      - generic [ref=f25e168]:
+        - generic [ref=f25e169]:
+          - generic [ref=f25e170]: Что записывать
+          - combobox "Что записывать" [ref=f25e172] [cursor=pointer]: Микрофон и компьютер
+        - generic [ref=f25e173]:
+          - generic [ref=f25e174]: Микрофон
+          - combobox "Микрофон" [ref=f25e176] [cursor=pointer]: Как в системе
+        - generic [ref=f25e177]:
+          - generic [ref=f25e178]: Звук компьютера
+          - combobox "Звук компьютера" [ref=f25e180] [cursor=pointer]: Как в системе
+        - status [ref=f25e181]: "Для встреч: ваш голос и собеседники. Наушники помогут избежать эха."
+        - button "Обновить устройства" [ref=f25e182] [cursor=pointer]
+      - generic [ref=f25e183]:
+        - button "Записать 5 секунд" [ref=f25e184] [cursor=pointer]
+        - button "Проверить позже" [ref=f25e185] [cursor=pointer]
+    - generic [ref=f25e186]:
+      - button "Прокрутить вверх" [disabled] [ref=f25e187]: ▴
+      - scrollbar "Вертикальная прокрутка" [ref=f25e189]
+      - button "Прокрутить вниз" [ref=f25e190] [cursor=pointer]: ▾

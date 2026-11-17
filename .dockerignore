@@ -1,0 +1,26 @@
+**/.git
+**/.DS_Store
+**/node_modules
+**/*.log
+**/*.zip
+.env
+.env.*
+!/.env.example
+secrets
+local-data
+**/local-data
+previews
+tests
+QA_REPORT.md
+README.md
+ops
+scripts
+.github
+
+# Local native bundling
+.bundle-stage/
+.ffmpeg-runtime/
+dist/
+MONO-DATA/
+*.spec
+__pycache__/

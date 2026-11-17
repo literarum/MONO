@@ -1,0 +1,18 @@
+node_modules/
+local-data/
+*.log
+.env
+.env.*
+!.env.example
+secrets/
+backups/
+coverage/
+*.zip
+
+# Local native bundling
+.bundle-stage/
+.ffmpeg-runtime/
+dist/
+MONO-DATA/
+*.spec
+__pycache__/

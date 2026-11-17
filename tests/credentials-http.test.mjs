@@ -1,0 +1,16 @@
+import test from 'node:test';import assert from 'node:assert/strict';import http from 'node:http';import {once} from 'node:events';import {readFile,readdir} from 'node:fs/promises';import path from 'node:path';import {localServer,wavFixture} from './helpers/local-server.mjs';
+const CANARY='gsk_'+('HttpSecretCanary17'.repeat(4));
+test('actual HTTP setup validates models only, stores in OS vault, survives restart and denies any HTTP key read',async t=>{
+ const requests=[];let responseStatus=200;const provider=http.createServer((req,res)=>{requests.push({method:req.method,url:req.url,authorization:req.headers.authorization});res.writeHead(responseStatus,{'Content-Type':'application/json'});res.end(JSON.stringify(responseStatus===200?{data:[{id:'whisper-large-v3-turbo'}]}:{error:{message:CANARY}}))});provider.listen(0,'127.0.0.1');await once(provider,'listening');t.after(()=>new Promise(r=>provider.close(r)));
+ const server=await localServer(t,{MONO_GROQ_ENDPOINT:`http://127.0.0.1:${provider.address().port}/openai/v1/audio/transcriptions`});let headers=await server.session();
+ const call=async(operation,method='GET',body)=>{const r=await fetch(server.url+'/api/local/credentials/'+operation,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,data:await r.json()}};
+ assert.equal((await fetch(server.url+'/api/local/credentials/status')).status,401);
+ assert.equal((await call('status')).data.configured,false);
+ assert.equal((await fetch(server.url+'/api/local/credentials/configure',{method:'POST',headers:{...headers,Origin:'https://foreign.example'},body:JSON.stringify({key:CANARY})})).status,403);
+ responseStatus=401;let rejected=await call('configure','POST',{key:CANARY});assert.equal(rejected.status,400);assert.equal(rejected.data.code,'INVALID_KEY');assert.ok(!JSON.stringify(rejected).includes(CANARY));assert.equal((await call('status')).data.configured,false);
+ responseStatus=200;const saved=await call('configure','POST',{key:CANARY});assert.equal(saved.status,200);assert.equal(saved.data.verified,true);assert.ok(!JSON.stringify(saved).includes(CANARY));assert.equal((await call('read')).status,404);assert.equal((await call('read','POST',{})).status,404);
+ assert.equal((await (await fetch(server.url+'/api/health')).json()).groq,true);await server.restart();headers=await server.session();assert.equal((await call('status')).data.configured,true);assert.equal((await (await fetch(server.url+'/api/health')).json()).groq,true);
+ assert.ok(requests.every(row=>row.method==='GET'&&row.url==='/openai/v1/models'&&row.authorization==='Bearer '+CANARY));assert.equal(requests.length,2,'One provider request per explicit setup action; no startup validation or audio upload');
+ async function scan(folder){for(const entry of await readdir(folder,{withFileTypes:true})){const file=path.join(folder,entry.name);if(entry.isDirectory())await scan(file);else assert.ok(!(await readFile(file)).includes(Buffer.from(CANARY)),`Plaintext key in ${entry.name}`)}}
+ await scan(server.root);assert.ok(!server.logs().includes(CANARY));await call('delete','POST',{});assert.equal((await call('status')).data.configured,false);assert.equal((await (await fetch(server.url+'/api/health')).json()).groq,false);
+});

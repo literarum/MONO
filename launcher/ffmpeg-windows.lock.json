@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "provider": "BtbN/FFmpeg-Builds",
+  "release": "autobuild-2026-09-30-13-08",
+  "asset": "ffmpeg-n9.0.2-17-g2a571b6068-win64-lgpl-shared-9.0.zip",
+  "sha256": "7157177b8a6cb2174c1650ba8c71b363f2c78cba5330f88c4c02cf5b2b880646",
+  "ffmpegSourceCommit": "2a571b606854520cf89804d8030c8b328e621689",
+  "variant": "lgpl-shared",
+  "architecture": "win-x64"
+}

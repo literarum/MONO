@@ -1,0 +1,31 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {localServer,wavFixture} from './helpers/local-server.mjs';
+test('real file library import, range playback, version conflict, trash and restart preserve original bytes',async t=>{
+ const server=await localServer(t);let headers=await server.session();
+ const json=async(route,method,body)=>{const r=await fetch(server.url+route,{method,headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,data:await r.json()}};
+ const configured=await json('/api/local/library/configure','POST',{useDefault:true});assert.equal(configured.status,200);
+ const data=wavFixture(),upload=await fetch(server.url+'/api/local/records/import',{method:'POST',headers:{...headers,'Content-Type':'audio/wav','X-Mono-Record':encodeURIComponent(JSON.stringify({title:'Встреча — проверка',mime:'audio/wav',duration:.1,source:'Импорт'}))},body:data});
+ assert.equal(upload.status,201);let record=await upload.json();assert.equal(record.size,data.length);assert.ok(!JSON.stringify(record).includes(server.root));
+ const audio=server.url+'/api/local/records/'+record.id+'/audio';assert.equal((await fetch(audio)).status,401);
+ const range=await fetch(audio,{headers:{...headers,Range:'bytes=0-3'}});assert.equal(range.status,206);assert.equal(await range.text(),'RIFF');assert.equal(range.headers.get('content-range'),`bytes 0-3/${data.length}`);
+ assert.equal((await fetch(audio,{headers:{...headers,Range:'bytes=0-1,3-4'}})).status,416);
+ const head=await fetch(audio,{method:'HEAD',headers});assert.equal(head.headers.get('content-length'),String(data.length));
+ assert.equal((await json('/api/local/records/'+record.id,'PATCH',{expectedVersion:0,patch:{title:'Wrong'}})).status,409);
+ const patched=await json('/api/local/records/'+record.id,'PATCH',{expectedVersion:record.version,patch:{title:'Исправленное название'}});assert.equal(patched.status,200);record=patched.data;
+ const trashed=await json('/api/local/records/'+record.id+'/trash','POST',{expectedVersion:record.version});assert.equal(trashed.status,200);assert.equal((await fetch(audio,{headers})).status,404);
+ const trash=await json('/api/local/records?trash=true','GET');assert.equal(trash.data.items.length,1);assert.equal(trash.data.items[0].id,record.id);assert.equal(trash.data.items[0].trashed,true);
+ const restored=await json('/api/local/records/'+record.id+'/restore','POST',{expectedVersion:trashed.data.version});assert.equal(restored.status,200);
+ await server.restart();headers=await server.session();
+ const after=await fetch(audio,{headers});assert.equal(after.status,200);assert.deepEqual(Buffer.from(await after.arrayBuffer()),data);
+ const list=await json('/api/local/records','GET');assert.equal(list.data.items[0].title,'Исправленное название');
+});
+test('large transcripts use paged wire responses and preserve the original when edited',async t=>{
+ const server=await localServer(t),headers=await server.session();
+ await fetch(server.url+'/api/local/library/configure',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({useDefault:true})});
+ const created=await fetch(server.url+'/api/local/records',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({title:'Большая расшифровка'})});let record=await created.json();
+ const transcript={model:'test-fixture',segments:Array.from({length:900},(_,i)=>({id:i,start:i,end:i+1,text:'Проверка длинной расшифровки. '.repeat(10)}))};
+ const put=await fetch(server.url+'/api/local/records/'+record.id+'/transcript',{method:'PUT',headers:{...headers,'Content-Type':'application/json','X-Mono-Version':String(record.version)},body:JSON.stringify(transcript)});assert.equal(put.status,200);record=await put.json();assert.equal(record.transcriptSummary.segmentCount,900);assert.ok(!record.transcript);
+ const page=await fetch(server.url+'/api/local/records/'+record.id+'/transcript?offset=50&limit=25',{headers});const pageData=await page.json();assert.equal(page.status,200);assert.equal(pageData.segments.length,25);assert.equal(pageData.segments[0].id,50);assert.equal(pageData.nextOffset,75);
+ transcript.segments[0].text='Исправленный текст';
+ const edited=await fetch(server.url+'/api/local/records/'+record.id+'/transcript',{method:'PUT',headers:{...headers,'Content-Type':'application/json','X-Mono-Version':String(record.version)},body:JSON.stringify(transcript)});assert.equal(edited.status,200);
+ const result=await fetch(server.url+'/api/local/records/'+record.id+'/transcript?offset=0&limit=1',{headers});const segment=(await result.json()).segments[0];assert.equal(segment.text,'Исправленный текст');assert.equal(segment.original,'Проверка длинной расшифровки. '.repeat(10));
+});

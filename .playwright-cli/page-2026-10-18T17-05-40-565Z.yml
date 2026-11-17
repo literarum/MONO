@@ -1,0 +1,67 @@
+- generic [ref=f19e2]:
+  - complementary [ref=f19e3]:
+    - generic [ref=f19e5]:
+      - link "MONO — главная" [ref=f19e6] [cursor=pointer]:
+        - /url: "#dashboard"
+        - generic [ref=f19e13]:
+          - text: MONO.
+          - generic [ref=f19e14]: TRANSCRIBE / STUDIO
+      - generic [ref=f19e15]: РАБОЧЕЕ ПРОСТРАНСТВО
+      - navigation "Основное меню" [ref=f19e16]:
+        - button "Обзор" [ref=f19e17] [cursor=pointer]
+        - button "Студия записи" [ref=f19e21] [cursor=pointer]
+        - button "Моя библиотека 0" [ref=f19e25] [cursor=pointer]:
+          - generic [ref=f19e28]: Моя библиотека
+          - generic [ref=f19e29]: "0"
+        - button "Обработка" [ref=f19e30] [cursor=pointer]
+      - generic [ref=f19e34]:
+        - generic [ref=f19e35]: СИСТЕМА
+        - button "Настройки" [ref=f19e36] [cursor=pointer]
+        - generic [ref=f19e40]:
+          - text: MONO / v0.4.0
+          - generic [ref=f19e41]: © 2026
+  - generic [ref=f19e42]:
+    - banner [ref=f19e43]:
+      - generic [ref=f19e44]:
+        - generic [ref=f19e45]: РАБОЧЕЕ ПРОСТРАНСТВО
+        - strong [ref=f19e48]: Обзор
+      - button "Переключить тему" [ref=f19e50] [cursor=pointer]
+    - main [ref=f19e54]:
+      - region [ref=f19e55]:
+        - generic [ref=f19e56]:
+          - generic [ref=f19e58]:
+            - heading "ГОЛОС В ТЕКСТ." [level=1] [ref=f19e59]: ГОЛОСВ ТЕКСТ.
+            - paragraph [ref=f19e60]: Все важные слова — на своём месте.Записывайте, расшифровывайте и работайте с идеями без лишних действий.
+            - generic [ref=f19e61]:
+              - button "Начать запись" [ref=f19e62] [cursor=pointer]
+              - button "Загрузить аудио" [ref=f19e67] [cursor=pointer]
+          - generic [ref=f19e93]: ✳ СОХРАНЯЙТЕ СМЫСЛ. НЕ ТРАТЬТЕ ВРЕМЯ.
+        - heading "Ваше пространство" [level=2] [ref=f19e97]
+        - generic [ref=f19e98]:
+          - article [ref=f19e99]:
+            - generic [ref=f19e100]: ВСЕГО ЗАПИСЕЙ
+            - strong [ref=f19e104]: "00"
+            - generic [ref=f19e105]:
+              - text: В вашей библиотеке
+              - generic [ref=f19e106]: ↗
+          - article [ref=f19e107]:
+            - generic [ref=f19e108]: ДЛИТЕЛЬНОСТЬ
+            - strong [ref=f19e112]: 0ч 00м
+            - generic [ref=f19e113]:
+              - text: Общая длина аудио
+              - generic [ref=f19e114]: ↗
+          - article [ref=f19e115]:
+            - generic [ref=f19e116]: ОБРАБОТАНО ЗА МЕСЯЦ
+            - strong [ref=f19e120]: 0мин
+            - generic [ref=f19e121]:
+              - text: Расшифрованное аудио
+              - generic [ref=f19e122]: ↗
+          - article [ref=f19e123]:
+            - generic [ref=f19e124]: РАСХОДЫ · ОЦЕНКА
+            - strong [ref=f19e128]: 0,00 ₽
+            - generic [ref=f19e129]:
+              - text: По заданному тарифу
+              - generic [ref=f19e130]: ↗
+        - generic [ref=f19e131]:
+          - heading "Последние записи" [level=2] [ref=f19e133]
+          - button "Вся библиотека" [ref=f19e134] [cursor=pointer]

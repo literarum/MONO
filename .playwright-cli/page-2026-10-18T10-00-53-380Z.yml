@@ -1,0 +1,76 @@
+- generic [ref=f13e2]:
+  - complementary "Основное меню" [ref=f13e132]:
+    - generic [ref=f13e5]:
+      - link "MONO — главная" [ref=f13e6] [cursor=pointer]:
+        - /url: "#dashboard"
+        - generic [ref=f13e13]:
+          - text: MONO.
+          - generic [ref=f13e14]: TRANSCRIBE / STUDIO
+      - generic [ref=f13e15]: РАБОЧЕЕ ПРОСТРАНСТВО
+      - navigation "Основное меню" [ref=f13e16]:
+        - button "Обзор" [ref=f13e17] [cursor=pointer]
+        - button "Студия записи" [ref=f13e21] [cursor=pointer]
+        - button "Моя библиотека 2" [ref=f13e25] [cursor=pointer]:
+          - generic [ref=f13e28]: Моя библиотека
+          - generic [ref=f13e29]: "2"
+        - button "Обработка" [ref=f13e30] [cursor=pointer]
+      - generic [ref=f13e34]:
+        - generic [ref=f13e35]: СИСТЕМА
+        - button "Настройки" [ref=f13e36] [cursor=pointer]
+        - generic [ref=f13e40]:
+          - text: MONO / v0.4.0
+          - generic [ref=f13e41]: © 2026
+  - generic [ref=f13e42]:
+    - banner [ref=f13e43]:
+      - generic [ref=f13e44]:
+        - button "Открыть меню" [active] [ref=f13e45] [cursor=pointer]
+        - strong [ref=f13e48]: Студия записи
+      - button "Переключить тему" [ref=f13e50] [cursor=pointer]
+    - generic [ref=f13e53]:
+      - main [ref=f13e54]:
+        - region [ref=f13e55]:
+          - generic [ref=f13e57]:
+            - heading "Студия записи." [level=1] [ref=f13e58]
+            - paragraph [ref=f13e59]: Здесь начинается каждая история. Убедитесь, что источник звука подключён.
+          - generic [ref=f13e60]:
+            - generic [ref=f13e61]:
+              - generic [ref=f13e62]:
+                - generic [ref=f13e63]: МОНИТОР ЗАПИСИ
+                - generic [ref=f13e64]: Ожидание
+              - generic [ref=f13e66]:
+                - generic [ref=f13e67]: ГОТОВО К ЗАПИСИ
+                - generic [ref=f13e68]: 00:00:00
+                - generic "Визуализация уровня звука" [ref=f13e70]
+                - generic [ref=f13e72]:
+                  - generic [ref=f13e73]: ВХОДЯЩИЙ СИГНАЛ
+                  - generic [ref=f13e75]: −∞ dB
+              - button "Начать запись" [ref=f13e77] [cursor=pointer]
+              - generic [ref=f13e80]:
+                - generic [ref=f13e81]: Аудио сохраняется в выбранной папке
+                - generic [ref=f13e85]: Без скрытой записи
+            - complementary [ref=f13e89]:
+              - generic [ref=f13e90]:
+                - generic [ref=f13e91]:
+                  - generic [ref=f13e92]: Что записывать
+                  - combobox "Что записывать" [ref=f13e94] [cursor=pointer]: Микрофон и компьютер
+                - generic [ref=f13e95]:
+                  - generic [ref=f13e96]: Микрофон
+                  - combobox "Микрофон" [ref=f13e98] [cursor=pointer]: Как в системе
+                - generic [ref=f13e99]:
+                  - generic [ref=f13e100]: Звук компьютера
+                  - combobox "Звук компьютера" [ref=f13e102] [cursor=pointer]: Как в системе
+                - status [ref=f13e103]: "Для встреч: ваш голос и собеседники. Наушники помогут избежать эха."
+                - button "Обновить устройства" [ref=f13e104] [cursor=pointer]
+              - generic [ref=f13e105]:
+                - generic [ref=f13e106]: 02 / ПЕРЕД НАЧАЛОМ
+                - generic [ref=f13e107]: Проверьте разрешение микрофона
+                - generic [ref=f13e111]: Убедитесь в свободном месте
+                - generic [ref=f13e115]: Предупредите участников встречи
+              - button "Есть готовая запись? Загрузите аудиофайл вместо записи ↗" [ref=f13e119] [cursor=pointer]:
+                - strong [ref=f13e122]: Есть готовая запись?
+                - generic [ref=f13e123]: Загрузите аудиофайл вместо записи
+                - generic [ref=f13e124]: ↗
+      - generic [ref=f13e125]:
+        - button "Прокрутить вверх" [disabled] [ref=f13e126]: ▴
+        - scrollbar "Вертикальная прокрутка" [ref=f13e128]
+        - button "Прокрутить вниз" [ref=f13e129] [cursor=pointer]: ▾

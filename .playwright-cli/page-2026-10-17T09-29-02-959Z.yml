@@ -1,0 +1,79 @@
+- generic [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - link "MONO — главная" [ref=e6] [cursor=pointer]:
+          - /url: "#dashboard"
+          - generic [ref=e13]:
+            - text: MONO.
+            - generic [ref=e14]: TRANSCRIBE / STUDIO
+        - generic [ref=e15]: РАБОЧЕЕ ПРОСТРАНСТВО
+        - navigation "Основное меню" [ref=e16]:
+          - button "Обзор" [ref=e17] [cursor=pointer]
+          - button "Студия записи" [ref=e21] [cursor=pointer]
+          - button "Моя библиотека 0" [ref=e25] [cursor=pointer]:
+            - generic [ref=e28]: Моя библиотека
+            - generic [ref=e29]: "0"
+          - button "Обработка" [ref=e30] [cursor=pointer]
+        - generic [ref=e34]:
+          - generic [ref=e35]: СИСТЕМА
+          - button "Настройки" [ref=e36] [cursor=pointer]
+          - generic [ref=e40]:
+            - text: MONO / v0.4.0
+            - generic [ref=e41]: © 2026
+      - generic [ref=e42]:
+        - button "Прокрутить вверх" [ref=e43] [cursor=pointer]: ▴
+        - generic [ref=e44]:
+          - scrollbar "Вертикальная прокрутка"
+        - button "Прокрутить вниз" [ref=e45] [cursor=pointer]: ▾
+  - generic [ref=e46]:
+    - banner [ref=e47]:
+      - generic [ref=e48]:
+        - generic [ref=e49]: РАБОЧЕЕ ПРОСТРАНСТВО
+        - strong [ref=e52]: Обзор
+      - button "Переключить тему" [ref=e54] [cursor=pointer]
+    - generic [ref=e57]:
+      - main [ref=e58]:
+        - region [ref=e59]:
+          - generic [ref=e60]:
+            - generic [ref=e62]:
+              - heading "ГОЛОС В ТЕКСТ." [level=1] [ref=e63]: ГОЛОСВ ТЕКСТ.
+              - paragraph [ref=e64]: Все важные слова — на своём месте.Записывайте, расшифровывайте и работайте с идеями без лишних действий.
+              - generic [ref=e65]:
+                - button "Начать запись" [ref=e66] [cursor=pointer]
+                - button "Загрузить аудио" [ref=e71] [cursor=pointer]
+            - generic [ref=e97]: ✳ СОХРАНЯЙТЕ СМЫСЛ. НЕ ТРАТЬТЕ ВРЕМЯ.
+          - heading "Ваше пространство" [level=2] [ref=e101]
+          - generic [ref=e102]:
+            - article [ref=e103]:
+              - generic [ref=e104]: ВСЕГО ЗАПИСЕЙ
+              - strong [ref=e108]: "00"
+              - generic [ref=e109]:
+                - text: В вашей библиотеке
+                - generic [ref=e110]: ↗
+            - article [ref=e111]:
+              - generic [ref=e112]: ДЛИТЕЛЬНОСТЬ
+              - strong [ref=e116]: 0ч 00м
+              - generic [ref=e117]:
+                - text: Общая длина аудио
+                - generic [ref=e118]: ↗
+            - article [ref=e119]:
+              - generic [ref=e120]: ОБРАБОТАНО ЗА МЕСЯЦ
+              - strong [ref=e124]: 0мин
+              - generic [ref=e125]:
+                - text: Расшифрованное аудио
+                - generic [ref=e126]: ↗
+            - article [ref=e127]:
+              - generic [ref=e128]: РАСХОДЫ · ОЦЕНКА
+              - strong [ref=e132]: 0,00 ₽
+              - generic [ref=e133]:
+                - text: По заданному тарифу
+                - generic [ref=e134]: ↗
+          - generic [ref=e135]:
+            - heading "Последние записи" [level=2] [ref=e137]
+            - button "Вся библиотека" [ref=e138] [cursor=pointer]
+      - generic [ref=e142]:
+        - button "Прокрутить вверх" [ref=e143] [cursor=pointer]: ▴
+        - generic [ref=e144]:
+          - scrollbar "Вертикальная прокрутка"
+        - button "Прокрутить вниз" [ref=e145] [cursor=pointer]: ▾

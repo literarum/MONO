@@ -1,0 +1,31 @@
+.scroll-shell{position:relative;min-width:0;min-height:0;max-width:100%}
+.scroll-viewport{scrollbar-width:none!important;overscroll-behavior:auto;overflow:auto!important}
+.scroll-viewport::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}
+.scroll-shell.has-scroll-y{padding-right:var(--scroll-gutter)}
+.scroll-shell.has-scroll-x{padding-bottom:var(--scroll-gutter)}
+.scroll-rail{position:absolute;display:flex;align-items:center;gap:var(--micro-2);padding:var(--micro-2);z-index:1;color:var(--dim);user-select:none;-webkit-user-select:none}
+.scroll-y{right:0;top:0;bottom:0;width:var(--scroll-gutter);flex-direction:column}
+.scroll-x{left:0;right:var(--scroll-gutter);bottom:0;height:var(--scroll-gutter);flex-direction:row}
+.scroll-arrow{border:0;border-radius:4px;display:grid;place-items:center;padding:0;width:12px;height:16px;flex:0 0 16px;font-size:11px;line-height:1;background:transparent;color:inherit;touch-action:none}
+.scroll-x .scroll-arrow{width:16px;height:12px}
+.scroll-arrow:hover:not(:disabled){background:var(--border);color:var(--text)}
+.scroll-arrow:disabled{opacity:.2}
+.scroll-track{position:relative;flex:1;min-height:0;min-width:0;width:10px;border-radius:8px;background:transparent;touch-action:none}
+.scroll-x .scroll-track{height:10px;width:auto}
+.scroll-thumb{position:absolute;left:2px;top:0;width:6px;min-height:0;border-radius:8px;background:var(--dim);opacity:.6;touch-action:none;transition:background var(--motion-feedback),opacity var(--motion-feedback)}
+.scroll-x .scroll-thumb{left:0;top:2px;height:6px;width:0}
+.scroll-thumb:hover,.scroll-thumb:active,.scroll-thumb:focus-visible{background:var(--muted);opacity:1}
+.main-scroll-shell{flex:1;min-height:0;height:0}
+.main-scroll-shell.has-scroll-y,.sidebar>.scroll-shell.has-scroll-y{padding-right:0}
+.main-scroll-shell>main{height:100%;width:100%;scroll-behavior:auto}
+.select-popup>.scroll-shell{min-height:0;flex:1;display:flex}
+.select-popup .select-options{flex:1;max-height:inherit}
+.sidebar>.scroll-shell{flex:1;width:100%;min-height:0;display:flex}
+.sidebar-inner{flex:1;min-width:0;display:flex;flex-direction:column;padding:var(--space-8) var(--space-4) var(--space-4);width:100%}
+.sidebar-inner .sidebar-bottom{margin-top:auto;padding-top:var(--space-8)}
+.modal-backdrop>.scroll-shell{width:min(520px,100%);max-height:90dvh}
+.modal-backdrop .modal-panel{width:100%;max-height:90dvh}
+.transcript-paragraph>.scroll-shell{width:100%}
+.scroll-shell>textarea{display:block;width:100%}
+@media print{.scroll-rail{display:none!important}.scroll-shell,.scroll-viewport{overflow:visible!important;height:auto!important;padding:0!important}}
+@media(forced-colors:active){.scroll-thumb{background:CanvasText}.scroll-arrow{color:CanvasText}}

@@ -1,0 +1,8 @@
+# Compiler-only environment, after requirements-build-windows-bootstrap.lock.
+# Install together with --no-build-isolation --require-hashes.
+packaging==26.3 \
+    --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
+wheel==0.48.0 \
+    --hash=sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab
+Nuitka==4.3.1 \
+    --hash=sha256:b9c87a694acc424cfffa06abf149fddbdfa85f6daac998df67411b5f4269df0f

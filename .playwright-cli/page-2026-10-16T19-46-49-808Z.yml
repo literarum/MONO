@@ -1,0 +1,69 @@
+- generic [ref=f4e2]:
+  - complementary "Основное меню" [ref=f4e134]:
+    - generic [ref=f4e5]:
+      - link "MONO — главная" [ref=f4e6] [cursor=pointer]:
+        - /url: "#dashboard"
+        - generic [ref=f4e13]:
+          - text: MONO.
+          - generic [ref=f4e14]: TRANSCRIBE / STUDIO
+      - generic [ref=f4e15]: РАБОЧЕЕ ПРОСТРАНСТВО
+      - navigation "Основное меню" [ref=f4e16]:
+        - button "Обзор" [ref=f4e17] [cursor=pointer]
+        - button "Студия записи" [ref=f4e21] [cursor=pointer]
+        - button "Моя библиотека 0" [ref=f4e25] [cursor=pointer]:
+          - generic [ref=f4e28]: Моя библиотека
+          - generic [ref=f4e29]: "0"
+        - button "Обработка" [ref=f4e30] [cursor=pointer]
+      - generic [ref=f4e34]:
+        - generic [ref=f4e35]: СИСТЕМА
+        - button "Настройки" [ref=f4e36] [cursor=pointer]
+        - generic [ref=f4e40]:
+          - text: MONO / v0.4.0
+          - generic [ref=f4e41]: © 2026
+  - generic [ref=f4e42]:
+    - banner [ref=f4e43]:
+      - generic [ref=f4e44]:
+        - generic [ref=f4e45]: РАБОЧЕЕ ПРОСТРАНСТВО
+        - strong [ref=f4e48]: Студия записи
+      - button "Переключить тему" [ref=f4e50] [cursor=pointer]
+    - generic [ref=f4e53]:
+      - main [ref=f4e54]:
+        - region [ref=f4e135]:
+          - generic [ref=f4e137]:
+            - heading "Студия записи." [level=1] [ref=f4e138]
+            - paragraph [ref=f4e139]: Здесь начинается каждая история. Убедитесь, что источник звука подключён.
+          - generic [ref=f4e140]:
+            - generic [ref=f4e141]:
+              - generic [ref=f4e142]:
+                - generic [ref=f4e143]: МОНИТОР ЗАПИСИ
+                - generic [ref=f4e144]: Ожидание
+              - generic [ref=f4e146]:
+                - generic [ref=f4e147]: ГОТОВО К ЗАПИСИ
+                - generic [ref=f4e148]: 00:00:00
+                - generic "Визуализация уровня звука" [ref=f4e150]
+                - generic [ref=f4e152]:
+                  - generic [ref=f4e153]: ВХОДЯЩИЙ СИГНАЛ
+                  - generic [ref=f4e155]: −∞ dB
+              - button "Начать запись" [ref=f4e157] [cursor=pointer]
+              - generic [ref=f4e160]:
+                - generic [ref=f4e161]: Данные сохраняются на этом устройстве
+                - generic [ref=f4e165]: Без скрытой записи
+            - complementary [ref=f4e169]:
+              - generic [ref=f4e170]:
+                - generic [ref=f4e171]: 01 / ИСТОЧНИК АУДИО
+                - generic [ref=f4e172]: Что вы хотите записать?
+                - combobox "Что вы хотите записать?" [ref=f4e174] [cursor=pointer]: Микрофон
+                - paragraph [ref=f4e175]: Звук вкладки или экрана доступен только при поддержке браузером и с вашего разрешения.
+              - generic [ref=f4e176]:
+                - generic [ref=f4e177]: 02 / ПЕРЕД НАЧАЛОМ
+                - generic [ref=f4e178]: Проверьте разрешение микрофона
+                - generic [ref=f4e182]: Убедитесь в свободном месте
+                - generic [ref=f4e186]: Предупредите участников встречи
+              - button "Есть готовая запись? Загрузите аудиофайл вместо записи ↗" [ref=f4e190] [cursor=pointer]:
+                - strong [ref=f4e193]: Есть готовая запись?
+                - generic [ref=f4e194]: Загрузите аудиофайл вместо записи
+                - generic [ref=f4e195]: ↗
+      - generic [ref=f4e116]:
+        - button "Прокрутить вверх" [disabled] [ref=f4e117]: ▴
+        - scrollbar "Вертикальная прокрутка" [ref=f4e119]
+        - button "Прокрутить вниз" [ref=f4e120] [cursor=pointer]: ▾

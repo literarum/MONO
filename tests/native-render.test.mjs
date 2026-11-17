@@ -1,0 +1,37 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,writeFile,readFile,rm,mkdir} from 'node:fs/promises';import path from 'node:path';import {tmpdir} from 'node:os';import {createHash} from 'node:crypto';import {spawnSync} from 'node:child_process';
+let renderNative;try{({renderNative}=await import('../backend/audio/native-render.mjs'))}catch{}
+function wav({rate=16000,channels=1,frames=32000,impulse=16000,amplitude=.5,antiPhase=false}={}){
+ const b=Buffer.alloc(44+frames*channels*2);b.write('RIFF');b.writeUInt32LE(b.length-8,4);b.write('WAVEfmt ',8);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(channels,22);b.writeUInt32LE(rate,24);b.writeUInt32LE(rate*channels*2,28);b.writeUInt16LE(channels*2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(frames*channels*2,40);
+ for(let channel=0;channel<channels;channel++)if(impulse>=0&&impulse<frames)b.writeInt16LE(Math.round(amplitude*32767)*(antiPhase&&channel===1?-1:1),44+(impulse*channels+channel)*2);return b;
+}
+async function fixture(t){assert.ok(renderNative,'Native timeline renderer is missing');const root=await mkdtemp(path.join(tmpdir(),"mono-render-quote's-"));t.after(()=>rm(root,{recursive:true,force:true,maxRetries:10,retryDelay:50}));await mkdir(path.join(root,'work'));return root}
+async function part(root,name,bytes,start,end){const file=path.join(root,name);await writeFile(file,bytes);return {path:file,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),start,end}}
+function decode(file,{start}={}){const result=spawnSync('ffmpeg',['-v','error',...(start!==undefined?['-ss',String(start)]:[]),'-i',file,...(start!==undefined?['-t','1']:[]),'-f','f32le','-c:a','pcm_f32le','pipe:1'],{maxBuffer:16*1024**2});assert.equal(result.status,0,result.stderr?.toString());return result.stdout}
+function impulses(bytes,channels=1,threshold=.1){const positions=[],stride=4*channels,count=bytes.length/stride;for(let frame=0;frame<count;frame++){const value=Math.abs(bytes.readFloatLE(frame*stride));if(value>threshold&&value>(frame?Math.abs(bytes.readFloatLE((frame-1)*stride)):-1)&&value>(frame+1<count?Math.abs(bytes.readFloatLE((frame+1)*stride)):-1))positions.push(frame)}return positions}
+test('real FFmpeg preserves the six-second timeline and explicit pause, rather than concatenating WAV headers or deleting silence',async t=>{
+ const root=await fixture(t);const first=await part(root,'one.wav',wav(),0,2),second=await part(root,'two.wav',wav(),4,6);const hashes=[first,second].map(p=>p.sha256);
+ const result=await renderNative({duration:6,tracks:[{id:'mic',sampleRate:16000,channels:1,parts:[first,second]}]},{directory:path.join(root,'work'),output:path.join(root,'reference.flac')});
+ assert.equal(result.frames,288000);assert.equal(result.sampleRate,48000);const samples=decode(result.path);assert.equal(samples.length/4,288000);const peaks=impulses(samples,1,.4);assert.deepEqual(peaks,[48000,240000]);assert.ok(samples.subarray(48000*2*4,48000*4*4).every(byte=>byte===0));
+ const continuous=wav({frames:96000,impulse:16000});continuous.writeInt16LE(16384,44+80000*2);const reference=path.join(root,'continuous.wav'),converted=path.join(root,'continuous.flac');await writeFile(reference,continuous);const oracle=spawnSync('ffmpeg',['-v','error','-i',reference,'-ar','48000','-c:a','flac','-sample_fmt','s32','-bits_per_raw_sample','24',converted]);assert.equal(oracle.status,0,oracle.stderr?.toString());assert.deepEqual(samples,decode(converted),'All decoded samples must match a separately generated continuous timeline');
+ assert.deepEqual(await Promise.all([first,second].map(async p=>createHash('sha256').update(await readFile(p.path)).digest('hex'))),hashes);
+});
+test('stereo anti-phase remains audible in the original reference and two-track mix keeps headroom',async t=>{
+ const root=await fixture(t);const system=await part(root,'stereo.wav',wav({channels:2,antiPhase:true}),0,2);
+ const result=await renderNative({duration:2,tracks:[{id:'system',sampleRate:16000,channels:2,parts:[system]}]},{directory:path.join(root,'work'),output:path.join(root,'stereo.flac')});const samples=decode(result.path);assert.equal(result.channels,2);const frame=48000;assert.ok(samples.readFloatLE(frame*8)>.49);assert.ok(samples.readFloatLE(frame*8+4)<-.49);
+ const mic=await part(root,'mic.wav',wav({amplitude:.99}),0,2);const output=await part(root,'system.wav',wav({amplitude:.99}),0,2);const mix=await renderNative({duration:2,tracks:[{id:'mic',sampleRate:16000,channels:1,parts:[mic]},{id:'system',sampleRate:16000,channels:1,parts:[output]}]},{directory:path.join(root,'work'),output:path.join(root,'mix.flac')});const decoded=decode(mix.path);let peak=0;for(let p=0;p<decoded.length;p+=4)peak=Math.max(peak,Math.abs(decoded.readFloatLE(p)));assert.ok(peak>.4&&peak<.9,'Mix must remain audible with explicit clipping protection');
+});
+test('corrupt source and cancellation never publish a ready output',async t=>{
+ const root=await fixture(t);const source=await part(root,'source.wav',wav(),0,2);await writeFile(source.path,Buffer.alloc(source.size));const output=path.join(root,'bad.flac');await assert.rejects(renderNative({duration:2,tracks:[{id:'mic',sampleRate:16000,channels:1,parts:[source]}]},{directory:path.join(root,'work'),output}),e=>e.code==='AUDIO_DAMAGED');
+ const controller=new AbortController();controller.abort();await assert.rejects(renderNative({duration:2,tracks:[{id:'mic',sampleRate:16000,channels:1,parts:[source]}]},{directory:path.join(root,'work'),output,signal:controller.signal}),e=>e.code==='CANCELLED');
+ await assert.rejects(readFile(output),e=>e.code==='ENOENT');
+});
+test('measured source-clock drift is compensated across the full reference timeline',async t=>{
+ const root=await fixture(t),source=await part(root,'clock.wav',wav(),0,2.0002);const parts=Array.from({length:100},(_,i)=>({...source,start:i*2.0002,end:(i+1)*2.0002}));
+ const result=await renderNative({duration:200.02,tracks:[{id:'mic',sampleRate:16000,channels:1,parts}]},{directory:path.join(root,'work'),output:path.join(root,'clock.flac')});assert.equal(result.frames,9600960);
+ const tail=decode(result.path,{start:199});const peaks=impulses(tail,1,.2);assert.equal(peaks.length,1);assert.ok(Math.abs(peaks[0]/48000-.0198)<.001,`Impulse drift ${peaks[0]/48000-.0198}s; nominal concatenation would miss by19.8ms`);
+});
+test('actual running FFmpeg is cancelled and removes only its own partial output',async t=>{
+ const root=await fixture(t),source=await part(root,'cancel.wav',wav(),0,2),controller=new AbortController(),output=path.join(root,'cancel.flac');let progress=0;
+ await assert.rejects(renderNative({duration:14400,tracks:[{id:'mic',sampleRate:16000,channels:1,parts:[source]}]},{directory:path.join(root,'work'),output,signal:controller.signal,onProgress:seconds=>{if(seconds>0){progress++;controller.abort()}}}),e=>e.code==='CANCELLED');assert.ok(progress>0,'Cancellation must reach the actual running encoder');await assert.rejects(readFile(output),e=>e.code==='ENOENT');assert.equal(createHash('sha256').update(await readFile(source.path)).digest('hex'),source.sha256);
+ const existing=path.join(root,'keep.flac');await writeFile(existing,'unrelated sentinel');await assert.rejects(renderNative({duration:2,tracks:[{id:'mic',sampleRate:16000,channels:1,parts:[source]}]},{directory:path.join(root,'work'),output:existing}));assert.equal(await readFile(existing,'utf8'),'unrelated sentinel');
+});

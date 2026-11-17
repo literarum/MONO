@@ -1,0 +1,20 @@
+:root {
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
+  --space-5:20px; --space-6:24px; --space-8:32px; --space-10:40px;
+  --space-12:48px; --space-16:64px; --micro-1:1px; --micro-2:2px;
+  --page-inset:var(--space-10); --card-inset:var(--space-6);
+  --control-inset:var(--space-3); --control-gap:var(--space-2);
+  --section-gap:var(--space-8); --card-gap:var(--space-4);
+  --control-height:44px; --control-compact:40px; --control-large:48px;
+  --radius-control:12px; --radius-card:20px; --radius-layer:24px;
+  --tracking-body:0; --tracking-title:-.045em; --tracking-label:.1em;
+  --line-body:1.65; --line-title:1.12;
+  --icon-sm:16px; --icon-md:20px; --icon-lg:24px;
+  --ease-out:cubic-bezier(.2,.8,.2,1); --motion-feedback:120ms;
+  --motion-popup:160ms; --motion-panel:220ms;
+  --layer-player:10; --layer-sidebar:30; --layer-backdrop:25;
+  --layer-dialog:100; --layer-popup:120; --layer-toast:200;
+  --scroll-gutter:16px; --scroll-thumb-min:24px;
+}
+@media(max-width:1240px){:root{--page-inset:var(--space-6)}}
+@media(max-width:650px){:root{--page-inset:var(--space-4);--card-inset:var(--space-5)}}
