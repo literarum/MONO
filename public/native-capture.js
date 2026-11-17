@@ -30,7 +30,9 @@ export class NativeCaptureController{
   if(this.closed||this.starting||this.command||captureActive(this.snapshot)||!this.snapshot.connected)return Promise.reject(new LibraryError('CAPTURE_BUSY','Сначала дождитесь состояния записи.'));
   this.publish({state:'requesting',recordId:null,sessionId:null,duration:0,levels:{},errorCode:null,pendingAction:'start'});
   this.preparing=new AbortController();const preparing=this.preparing,signal=preparing.signal;const timeout=setTimeout(()=>preparing.abort(),10000);timeout.unref?.();
-  this.starting=this.mutate(async()=>{await this.onIntent({signal});signal.throwIfAborted();return this.client.start(options,{test,signal})}).catch(async error=>{
+  this.starting=this.mutate(async()=>{await this.onIntent({signal});signal.throwIfAborted();
+   // The 10 s budget covers coordination only. A first-run microphone prompt waits for the person; each engine bounds its own stages.
+   clearTimeout(timeout);return this.client.start(options,{test,signal})}).catch(async error=>{
    // An aborted readiness check never submits start. An uncertain POST is never
    // replayed: query the supervisor while retaining the visible active state.
    await this.refresh().catch(()=>{});

@@ -59,7 +59,13 @@ public sealed class SegmentAssembler : IDisposable
         if(completed||data.Length%format.Alignment!=0||firstNs<0)throw new InvalidOperationException("INVALID_AUDIO");
         if(data.IsEmpty)return;
         long delta=firstNs-CursorNs;
-        if(delta < -2_000_000)throw new InvalidOperationException("DISCONTINUITY");
+        if(delta < -2_000_000){
+            // A packet reported after a discontinuity can overlap audio already placed
+            // on the timeline (e.g. loopback silence padding). Drop only the overlap.
+            long overlap=ClockMath.NsToFrames(-delta,format.Rate);
+            if(overlap*format.Alignment>=data.Length)return;
+            data=data[checked((int)(overlap*format.Alignment))..];firstNs+=ClockMath.FramesToNs(overlap,format.Rate);delta=firstNs-CursorNs;
+        }
         if(delta>2_000_000)PadTo(firstNs);
         anchorNs=firstNs;anchorFrames=frames;Write(data,firstNs);
     }

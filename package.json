@@ -10,7 +10,7 @@
     "check": "node --check server.mjs && node --check public/app.js && node --check public/db.js && node --check public/backup-core.js && node --check public/sw.js && node --check healthcheck.mjs",
     "smoke": "node --test tests/proxy.test.mjs",
     "launcher:smoke": "python3 launcher/mono_launcher.py --dev --smoke",
-    "launcher:test": "python3 -m unittest discover -s launcher/tests -v"
+    "launcher:test": "cd launcher && python3 -m unittest discover -s tests -v"
   },
   "engines": {
     "node": ">=20"

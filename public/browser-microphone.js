@@ -1,8 +1,15 @@
 import {LibraryError} from './library-client.js';
 import {pcmWave} from './microphone-pcm.js';
 import {captureDiagnostic} from './capture-diagnostic.js';
+import {captureErrors} from './capture-client.js';
+/** Native-only failures raised before any capture was submitted: safe to retry with the browser microphone. */
+const NATIVE_UNAVAILABLE=new Set(['HELPER_UNAVAILABLE','NOT_SUPPORTED','CAPTURE_NOT_READY','CAPTURE_HELPER_UNAVAILABLE']);
+/** A person may need time to read a first-run permission prompt. */
+const PERMISSION_PROMPT_MS=120000;
+/** 2 s chunks: tolerate ~30 s of slow archive IO (antivirus scans, HDD spin-up) before failing. */
+const MAX_QUEUED_CHUNKS=15,SEGMENT_TIMEOUT_MS=30000,HEARTBEAT_GRACE_MS=20000;
 const active=value=>['requesting','recording','paused','stopping'].includes(value?.state);
-function waitFor(promise,signal,onLate=()=>{}){
+function waitFor(promise,signal,onLate=()=>{},timeoutMs=10000){
  return new Promise((resolve,reject)=>{
   let settled=false;
   const finish=(error,value)=>{if(settled){if(!error)onLate(value);return}settled=true;clearTimeout(timer);signal?.removeEventListener('abort',aborted);error?reject(error):resolve(value)};
@@ -15,7 +22,7 @@ function waitFor(promise,signal,onLate=()=>{}){
 function microphoneError(error,stage){
  if(error instanceof LibraryError||error.name==='AbortError')return error;
  const code={NotAllowedError:'ACCESS_DENIED',SecurityError:'ACCESS_DENIED',NotFoundError:'DEVICE_LOST',OverconstrainedError:'DEVICE_LOST',NotReadableError:'DEVICE_BUSY'}[error.name]||'BROWSER_AUDIO_ERROR';
- const message={ACCESS_DENIED:'Разрешите микрофон в запросе браузера.',DEVICE_LOST:'Выбранный микрофон недоступен этому окну. Обновите список и выберите его снова.',DEVICE_BUSY:'Windows не смогла открыть микрофон. Он может быть занят другим приложением; выберите другой вход или освободите его.'}[code];
+ const message={ACCESS_DENIED:'Разрешите микрофон в запросе браузера.',DEVICE_LOST:'Выбранный микрофон недоступен этому окну. Обновите список и выберите его снова.',DEVICE_BUSY:'Система не смогла открыть микрофон. Он может быть занят другим приложением; выберите другой вход или освободите его.'}[code];
  return new LibraryError(code,message||(stage==='worklet'?'Не удалось подготовить запись в этом окне. Обновите окно MONO и повторите.':'Не удалось подготовить запись. Перезапустите MONO и повторите.'));
 }
 /** Explicit browser mode, under the same durable server owner as native capture. */
@@ -36,14 +43,15 @@ export class BrowserMicrophoneClient{
  checkAccess(){return this.native.checkAccess()}
  async requestDevices(inputId=null){
   if(this.runtime||active(await this.native.status()))throw new LibraryError('CAPTURE_BUSY','Сначала остановите запись.');
-  let stream,stage='access';try{stream=await waitFor(this.devices.getUserMedia({audio:inputId?{deviceId:{exact:inputId}}:true,video:false}),undefined,late=>late.getTracks().forEach(track=>track.stop()));stage='devices';return await this.inputs()}catch(error){stream?.getTracks().forEach(track=>track.stop());stream=null;const normalized=microphoneError(error,stage);await this.diagnose('refresh',stage,error,normalized);throw normalized}finally{stream?.getTracks().forEach(track=>track.stop())}
+  let stream,stage='access';try{stream=await waitFor(this.devices.getUserMedia({audio:inputId?{deviceId:{exact:inputId}}:true,video:false}),undefined,late=>late.getTracks().forEach(track=>track.stop()),await this.permissionTimeout());stage='devices';return await this.inputs()}catch(error){stream?.getTracks().forEach(track=>track.stop());stream=null;const normalized=microphoneError(error,stage);await this.diagnose('refresh',stage,error,normalized);throw normalized}finally{stream?.getTracks().forEach(track=>track.stop())}
  }
  async diagnose(operation,stage,error,normalized){
   if(error?.name==='AbortError')return;
   // Optional local metadata cannot mask the original error or delay it unboundedly.
   await this.library.json('/capture/browser_diagnostic',{method:'POST',body:captureDiagnostic(operation,stage,error,normalized.code),signal:AbortSignal.timeout(750)}).catch(()=>{});
  }
- call(operation,body){return this.library.json('/capture/browser_'+operation,{method:'POST',body,signal:AbortSignal.timeout(4000)})}
+ async call(operation,body){try{return await this.library.json('/capture/browser_'+operation,{method:'POST',body,signal:AbortSignal.timeout(4000)})}catch(error){if(error instanceof LibraryError&&captureErrors[error.code])error.message=captureErrors[error.code];throw error}}
+ async permissionTimeout(){try{const state=(await globalThis.navigator?.permissions?.query({name:'microphone'}))?.state;return state==='granted'?10000:PERMISSION_PROMPT_MS}catch{return PERMISSION_PROMPT_MS}}
  async status(options){
   let value;
   try{value=await this.native.status(options)}catch(error){if(this.runtime)void this.fail(this.runtime,error);throw error}
@@ -56,24 +64,34 @@ export class BrowserMicrophoneClient{
   return value;
  }
  async start(options,{test=false,signal}={}){
-  if(options.mode!=='browser')return this.native.start(options,{test,signal});
+  if(options.mode!=='browser'){
+   try{return await this.native.start(options,{test,signal})}
+   catch(error){
+    // Builds without a native helper (macOS, Linux, dev checkouts) still record from the microphone.
+    if(!(options.mode==='mic'&&this.supported&&NATIVE_UNAVAILABLE.has(error?.code)))throw error;
+    return this.start({mode:'browser',inputId:null,outputId:null},{test,signal});
+   }
+  }
   if(!this.supported)throw new LibraryError('BROWSER_AUDIO_UNAVAILABLE','Этот браузер не поддерживает запись микрофона.');
   if(this.runtime||this.opening)throw new LibraryError('CAPTURE_BUSY','Сначала остановите текущую запись.');
   const opening=new AbortController();this.opening=opening;const intent=signal?AbortSignal.any([signal,opening.signal]):opening.signal;
   let stream,context,runtime,stage='status';
   try{
    if(active(await this.native.status()))throw new LibraryError('CAPTURE_BUSY','Сначала остановите текущую запись.');
-   stage='access';intent.throwIfAborted();stream=await waitFor(this.devices.getUserMedia({audio:{channelCount:{ideal:1},echoCancellation:false,noiseSuppression:false,autoGainControl:false,...(options.inputId?{deviceId:{exact:options.inputId}}:{})},video:false}),intent,late=>late.getTracks().forEach(track=>track.stop()));
+   stage='access';intent.throwIfAborted();const accessTimeout=await this.permissionTimeout();stream=await waitFor(this.devices.getUserMedia({audio:{channelCount:{ideal:1},echoCancellation:false,noiseSuppression:false,autoGainControl:false,...(options.inputId?{deviceId:{exact:options.inputId}}:{})},video:false}),intent,late=>late.getTracks().forEach(track=>track.stop()),accessTimeout);
    stage='context';intent.throwIfAborted();context=this.contextFactory();await waitFor(context.suspend(),intent);stage='worklet';await waitFor(context.audioWorklet.addModule('/microphone-worklet.js'),intent);intent.throwIfAborted();
    stage='graph';const node=this.nodeFactory(context),source=context.createMediaStreamSource(stream),gain=context.createGain();gain.gain.value=0;
-   runtime={stream,context,node,source,gain,sessionId:null,pending:Promise.resolve(),queued:0,nextIndex:0,ackedFrames:0,requests:new Map(),failed:false,cleaned:false};
+   runtime={stream,context,node,source,gain,sessionId:null,heartbeatAt:performance.now(),pending:Promise.resolve(),queued:0,nextIndex:0,ackedFrames:0,requests:new Map(),failed:false,cleaned:false};
    node.port.onmessage=event=>this.message(runtime,event.data);node.onprocessorerror=()=>void this.fail(runtime,new LibraryError('BROWSER_AUDIO_ERROR','Обработка микрофона остановилась.'));
    stage='acquire';const value=await this.call('start',{sampleRate:context.sampleRate,inputId:options.inputId||null,test});runtime.sessionId=value.sessionId;this.runtime=runtime;
    for(const track of stream.getTracks())track.addEventListener('ended',()=>{if(!runtime.stopPromise&&!runtime.cleaned)void this.fail(runtime,new LibraryError('DEVICE_LOST','Микрофон отключён.'))},{once:true});
    stage='graph';source.connect(node);node.connect(gain);gain.connect(context.destination);stage='resume';await waitFor(context.resume(),intent);intent.throwIfAborted();
    runtime.heartbeat=setInterval(()=>{
     if(runtime.pinging||runtime.cleaned)return;
-    runtime.pinging=true;void this.call('heartbeat',{sessionId:runtime.sessionId}).then(state=>{if(!active(state))return this.release(runtime);if(state.state==='stopping'&&!runtime.stopPromise)void this.stop().catch(()=>{})}).catch(error=>this.fail(runtime,error)).finally(()=>runtime.pinging=false);
+    runtime.pinging=true;void this.call('heartbeat',{sessionId:runtime.sessionId}).then(state=>{runtime.heartbeatAt=performance.now();if(!active(state))return this.release(runtime);if(state.state==='stopping'&&!runtime.stopPromise)void this.stop().catch(()=>{})}).catch(error=>{
+     // A rejected session is final; a slow or briefly unavailable archive is not.
+     if(error?.status>=400&&error.status<500||performance.now()-runtime.heartbeatAt>HEARTBEAT_GRACE_MS)return this.fail(runtime,error);
+    }).finally(()=>runtime.pinging=false);
    },1000);runtime.heartbeat.unref?.();
    if(test){runtime.testTimer=setTimeout(()=>{void this.stop().catch(()=>{})},5000);runtime.testTimer.unref?.()}
    return value;
@@ -96,10 +114,10 @@ export class BrowserMicrophoneClient{
   if(data.type!=='chunk')return;
   try{
    if(data.index!==runtime.nextIndex++||!Number.isInteger(data.frames)||data.frames<1||data.frames>runtime.context.sampleRate*2||!(data.pcm instanceof ArrayBuffer)||data.pcm.byteLength!==data.frames*2)throw new LibraryError('INVALID_CAPTURE_PROTOCOL','Получен неверный аудиофрагмент.');
-   if(++runtime.queued>4)throw new LibraryError('CAPTURE_QUEUE_OVERFLOW','Архив не успевает сохранять запись.');
+   if(++runtime.queued>MAX_QUEUED_CHUNKS)throw new LibraryError('CAPTURE_QUEUE_OVERFLOW','Архив не успевает сохранять запись.');
    const bytes=pcmWave(data.pcm,runtime.context.sampleRate);
    runtime.pending=runtime.pending.then(async()=>{
-    const ack=await this.library.json('/capture/browser_segment',{method:'PUT',headers:{'X-Mono-Session':runtime.sessionId,'X-Mono-Index':String(data.index)},body:new Blob([bytes],{type:'audio/wav'}),signal:AbortSignal.timeout(4000)});
+    const ack=await this.library.json('/capture/browser_segment',{method:'PUT',headers:{'X-Mono-Session':runtime.sessionId,'X-Mono-Index':String(data.index)},body:new Blob([bytes],{type:'audio/wav'}),signal:AbortSignal.timeout(SEGMENT_TIMEOUT_MS)});
     if(ack.index!==data.index||ack.frames!==runtime.ackedFrames+data.frames)throw new LibraryError('INVALID_CAPTURE_PROTOCOL','Сохранение фрагмента не подтверждено.');
     runtime.ackedFrames=ack.frames;runtime.queued--;return ack;
    });runtime.pending.catch(error=>void this.fail(runtime,error));

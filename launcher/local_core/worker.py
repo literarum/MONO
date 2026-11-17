@@ -1,5 +1,5 @@
 """Private stdin/stdout worker. Never expose this process as a network server."""
-import json, sys,threading,queue
+import json, sys,threading,queue,time
 from collections import OrderedDict
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
@@ -121,7 +121,14 @@ def main():
             recent[request_id]=True
             if len(recent)>4096:recent.popitem(last=False)
             if eof.is_set() and request['method'] in ['capture.start','capture.test','capture.browser_start']:raise CoreError('CANCELLED','Приложение завершает работу')
-            reply={'v':1,'id':request_id,'result':dispatch(request['method'],request.get('params',{}))}
+            began=time.monotonic()
+            try:reply={'v':1,'id':request_id,'result':dispatch(request['method'],request.get('params',{}))}
+            finally:
+                # This loop is single-threaded: while one long request runs, capture
+                # heartbeats and segments wait in the queue. Never count that wait
+                # as a lost microphone/helper.
+                stalled=time.monotonic()-began
+                if stalled>1 and config is not None and config._capture is not None:config._capture.grace(stalled)
         except Exception as error:reply=error_reply(request_id,error)
         encoded=json.dumps(reply,ensure_ascii=False,separators=(',',':'))
         if len(encoded.encode('utf-8'))>MAX_LINE:encoded=json.dumps(error_reply(request_id,CoreError('TOO_LARGE','Результат слишком большой')))

@@ -4,7 +4,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: mono-transcribe:0.3.0
+    image: mono-transcribe:0.4.0
     environment:
       NODE_ENV: production
       MONO_DEPLOY_MODE: proxy

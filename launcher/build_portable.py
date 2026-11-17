@@ -201,6 +201,12 @@ def build(stage: Path, output: Path, *, onefile: bool = False) -> Path:
             plist["LSApplicationCategoryType"] = "public.app-category.productivity"
             with plist_file.open("wb") as stream:
                 plistlib.dump(plist, stream)
+            # PyInstaller already signed the bundle; editing Info.plist breaks that
+            # seal and macOS then refuses to launch it or to show the microphone
+            # (TCC) prompt. Re-seal ad hoc; release signing replaces this identity.
+            identity = os.environ.get("MONO_CODESIGN_IDENTITY", "-")
+            subprocess.run(["codesign", "--force", "--deep", "--sign", identity, str(app)], check=True)
+            subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
     return output
 
 

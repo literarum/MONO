@@ -27,7 +27,7 @@ internal sealed class CaptureTrack : IDisposable
     }
     void Capture()
     {
-        IDeviceEnumerator? enumerator=null;IDevice? device=null;IAudioClient? client=null;IAudioCaptureClient? input=null;IntPtr mix=IntPtr.Zero;bool started=false,first=true;string operation="resolve-device";
+        IDeviceEnumerator? enumerator=null;IDevice? device=null;IAudioClient? client=null;IAudioCaptureClient? input=null;IntPtr mix=IntPtr.Zero;bool started=false;string operation="resolve-device";
         try{
             enumerator=(IDeviceEnumerator)new DeviceEnumeratorCom();var flow=loopback?DataFlow.Render:DataFlow.Capture;
             ComAudio.Check(requestedId is null?enumerator.GetDefaultAudioEndpoint(flow,DeviceRole.Console,out device):enumerator.GetDevice(requestedId,out device));
@@ -45,7 +45,7 @@ internal sealed class CaptureTrack : IDisposable
                 if(session.PauseRequested&&!producerPaused){
                     ReadPackets();ComAudio.Check(client.Stop());started=false;producerPaused=true;Enqueue(new AudioPacket(PacketKind.Pause,[],session.PauseNs));
                     session.ResumeGate.Wait(session.Cancellation);if(session.Cancellation.IsCancellationRequested)break;
-                    Enqueue(new AudioPacket(PacketKind.Resume,[],session.ResumeNs));ComAudio.Check(client.Start());started=true;producerPaused=false;first=true;lastPacket=NativeSession.NowNs;ResumeCompleted.Set();
+                    Enqueue(new AudioPacket(PacketKind.Resume,[],session.ResumeNs));ComAudio.Check(client.Start());started=true;producerPaused=false;lastPacket=NativeSession.NowNs;ResumeCompleted.Set();
                 }
                 int signaled=WaitHandle.WaitAny([sampleEvent,session.Cancellation.WaitHandle],50);if(signaled==1)break;
                 int read=ReadPackets();if(read>0)lastPacket=NativeSession.NowNs;
@@ -61,13 +61,16 @@ internal sealed class CaptureTrack : IDisposable
                     byte[] data;long stamp;
                     try{
                         if(frames==0)break;
-                        if((flags&4)!=0||!first&&(flags&1)!=0)throw new AudioFailure("DISCONTINUITY");
+                        // DATA_DISCONTINUITY (0x1) is routine after loopback silence, device glitches
+                        // and stream restarts; the QPC stamp lets the writer insert the exact gap.
+                        // TIMESTAMP_ERROR (0x4) only invalidates the stamp, not the audio.
+                        bool timestampError=(flags&4)!=0;
                         int size=checked((int)(frames*Format.Alignment));if(size>QueueLimit)throw new AudioFailure("UNSUPPORTED_FORMAT");data=new byte[size];
                         if((flags&2)!=0){if(Format.Silence!=0)Array.Fill(data,Format.Silence);}else Marshal.Copy(pointer,data,0,size);
-                        stamp=checked((long)qpc*100);
+                        stamp=timestampError?-1:checked((long)qpc*100);
                     }finally{ComAudio.Check(input.ReleaseBuffer(frames));}
-                    first=false;count++;
-                    if(stamp<session.OriginNs){
+                    count++;
+                    if(stamp>=0&&stamp<session.OriginNs){
                         long before=session.OriginNs-stamp;int trim=checked((int)Math.Min(frames,ClockMath.NsToFrames(before,Format.Rate)+1));data=data.AsSpan(trim*Format.Alignment).ToArray();stamp+=ClockMath.FramesToNs(trim,Format.Rate);
                     }
                     if(data.Length>0)Enqueue(new AudioPacket(PacketKind.Audio,data,stamp));
@@ -96,7 +99,7 @@ internal sealed class CaptureTrack : IDisposable
                     }
                     if(packet.Kind==PacketKind.Resume){assembler.ResumeAt(packet.StartNs);paused=false;continue;}
                     if(!session.PublishGate.IsSet&&!session.Cancellation.IsCancellationRequested)WaitHandle.WaitAny([session.PublishGate.WaitHandle,session.Cancellation.WaitHandle]);
-                    assembler.AppendPacket(packet.Data,packet.StartNs);UpdateLevel(packet.Data,Format);
+                    assembler.AppendPacket(packet.Data,packet.StartNs<0?assembler.CursorNs:packet.StartNs);UpdateLevel(packet.Data,Format);
                 }else if(loopback&&!paused&&session.RecordingPublished&&!session.PauseRequested&&!session.Cancellation.IsCancellationRequested){assembler.PadTo(Math.Max(session.OriginNs,NativeSession.NowNs-safetyNs));Peak=0;Rms=0;}
             }
             if(loopback&&!paused&&session.RecordingPublished)assembler.PadTo(session.StopNs);

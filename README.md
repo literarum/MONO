@@ -85,7 +85,7 @@ python launcher/mono_launcher.py --dev
 python launcher/mono_launcher.py --dev --smoke
 npm run check
 npm test
-python -m unittest discover -s launcher/tests -v
+PYTHONPATH=launcher python -m unittest discover -s launcher/tests -v
 ```
 
 `--dev` разрешает использовать системные runtime. Готовая сборка без него

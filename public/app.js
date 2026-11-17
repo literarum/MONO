@@ -117,7 +117,10 @@ function closeModal(){
 function statusLabel(r){
   if(r.status==='completed')return 'Готово';
   if(r.status==='processing'||r.status==='queued')return 'Обрабатывается';
-  if(r.status==='recording')return 'Идёт запись';
+  if(r.status==='recording'||r.status==='requesting')return 'Идёт запись';
+  if(r.status==='paused')return 'Запись на паузе';
+  if(r.status==='importing')return 'Импорт не завершён';
+  if(r.status==='damaged')return 'Аудио повреждено';
   if(r.status==='uploading')return 'Загрузка / восстановление';
   if(r.status==='failed')return 'Ошибка обработки';
   if(r.status==='cancelled')return 'Отменено';
@@ -191,7 +194,7 @@ async function renderLibrary(){
   });
   if(sort==='oldest')records=records.sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
   if(sort==='name')records=records.sort((a,b)=>a.title.localeCompare(b.title,'ru'));
-  $('#library-count').textContent=`${records.length} ${records.length===1?'ЗАПИСЬ':'ЗАПИСЕЙ'}`;
+  $('#library-count').textContent=`${records.length} ${({one:'ЗАПИСЬ',few:'ЗАПИСИ'})[new Intl.PluralRules('ru-RU').select(records.length)]||'ЗАПИСЕЙ'}`;
   $('#library-list').innerHTML=records.length?records.map(r=>`
    <article class="record-card glass"><div class="record-card-head"><span class="item-icon">${icon('file')}</span><span class="record-status">${statusLabel(r)}</span></div>
    <h3 title="${h(r.title)}">${h(r.title)}</h3><p class="record-sub">${fmtDate(r.createdAt)} · ${h(r.source||'Импорт')}</p>
@@ -267,7 +270,7 @@ function chosenMime(){
 }
 async function beginRecord(){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
- if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');await nativeController.start(await captureSources.selection())}catch(error){notify(error.message,'error')}return}
+ if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');await nativeController.start(await captureSources.selection())}catch(error){if(error?.name!=='AbortError')notify(error.message||'Не удалось начать запись.','error')}return}
  if(state.recordBusy||state.capture)return;
  state.recordBusy=true;
  let capture=null;

@@ -8,7 +8,7 @@ def fail(code):raise CoreError(code,code)
 class BrowserSession:
  def __init__(self,config,now_ns=time.monotonic_ns):
   self.config=config;self.clock=now_ns;self.state='idle';self.error=None;self.session_id=None;self.record_id=None
-  self.frames=0;self.saved_bytes=0;self.rate=0;self.next_index=0;self.pause_frame=None;self.pause_ranges=[];self.last_transition=0;self.last_seen=0;self.levels={};self.stop_deadline=None;self.test_deadline=None
+  self.frames=0;self.saved_bytes=0;self.rate=0;self.next_index=0;self.pause_frame=None;self.pause_ranges=[];self.last_transition=0;self.last_seen=0;self.levels={};self.level_seen=0;self.stop_deadline=None;self.test_deadline=None
  @property
  def active(self):return self.state in ['recording','paused','stopping']
  def status(self):
@@ -21,7 +21,7 @@ class BrowserSession:
   if type(rate) is not int or not 8000<=rate<=192000:fail('INVALID_CAPTURE_FORMAT')
   if device is not None and (not isinstance(device,str) or not 1<=len(device)<=4096):fail('INVALID_CAPTURE')
   if type(params.get('test',False)) is not bool:fail('INVALID_CAPTURE')
-  if self.config.transfers.active or self.config.pending_stages:fail('LIBRARY_BUSY')
+  if self.config.transfers.active:fail('LIBRARY_BUSY')
   self.library=self.config.get_library();self.session_id=str(uuid.uuid4());self.origin=self.clock();self.last_seen=self.origin;self.last_audio=self.origin
   self.rate=rate;self.frames=0;self.saved_bytes=0;self.next_index=0;self.pause_frame=None;self.pause_ranges=[];self.last_transition=0;self.levels={};self.error=None;self.stop_deadline=None
   record=self.library.create_record({'title':'Проверка звука' if params.get('test') else 'Запись '+time.strftime('%d.%m.%Y %H:%M'),'mime':'audio/wav','source':'Микрофон','status':'recording'})
@@ -55,9 +55,9 @@ class BrowserSession:
    value=sample/32768;peak=max(peak,abs(value));squares+=value*value;clips+=int(sample in [-32768,32767])
   start=self.origin+round(self.frames*1_000_000_000/self.rate);end=self.origin+round((self.frames+frames)*1_000_000_000/self.rate)
   info={key:descriptor[key] for key in ['sampleRate','channels','bitsPerSample','formatTag']};info.update(startMonotonicNs=start,endMonotonicNs=end)
-  receipt=self.library.commit_segment(self.record_id,'mic',index,file,frames,checksum,format_info=info)
+  receipt=self.library.commit_segment(self.record_id,'mic',index,file,frames,checksum,format_info=info,record_updates={'duration':(self.frames+frames)/self.rate})
   self.frames+=frames;self.next_index+=1;self.last_seen=self.clock();self.last_audio=self.last_seen;self.level_seen=self.last_seen;self.levels={'mic':{'peak':peak,'rms':math.sqrt(squares/frames),'clippedFrames':clips}}
-  raw=self.library._raw(self.record_id);raw['duration']=self.frames/self.rate;raw['version']+=1;self.library._commit(raw);self.saved_bytes=raw['size']
+  self.saved_bytes=self.library._raw(self.record_id)['size']
   ack={'sessionId':self.session_id,'index':index,'frames':self.frames,'count':frames,'sha256':checksum,'version':receipt['version']}
   return {**ack,'state':self.status()}
  def transition_frame(self,params):
@@ -94,6 +94,10 @@ class BrowserSession:
   except (CoreError,OSError,sqlite3.Error):self.error='ARCHIVE_SAVE_FAILED'
   return self.status()
  def abort(self,params):self.check(params);return self.interrupt()
+ def grace(self,seconds):
+  ns=int(seconds*1_000_000_000);self.last_seen+=ns;self.last_audio+=ns
+  if self.stop_deadline is not None:self.stop_deadline+=ns
+  if self.test_deadline is not None:self.test_deadline+=ns
  def tick(self):
   if not self.active:return
   now=self.clock()
