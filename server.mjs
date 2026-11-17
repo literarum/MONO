@@ -3,7 +3,7 @@ import {createReadStream, createWriteStream, existsSync, readFileSync} from 'nod
 import {mkdir, readFile, writeFile, rename, readdir, stat, unlink, statfs} from 'node:fs/promises';
 import {pipeline} from 'node:stream/promises';
 import {Transform,Readable} from 'node:stream';
-import {spawn, spawnSync} from 'node:child_process';
+import {spawn} from 'node:child_process';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID, timingSafeEqual,createHash} from 'node:crypto';
@@ -53,7 +53,29 @@ const saving=new Map();
 const uploadingKeys=new Set();
 const MAX_CONCURRENT_UPLOADS=2;
 let uploadsInFlight=0;
-const config={ffmpeg:available('ffmpeg'),ffprobe:available('ffprobe'),groq:!!GROQ_KEY};
+const config={ffmpeg:false,ffprobe:false,groq:!!GROQ_KEY};
+// Absolute paths from the launcher; plain names rely on PATH (Docker, dev).
+const TOOLS={ffmpeg:process.env.MONO_FFMPEG||'ffmpeg',ffprobe:process.env.MONO_FFPROBE||'ffprobe'};
+// Detection is asynchronous and patient: the first launch of a ~100 MB ffmpeg.exe
+// under antivirus scanning can take many seconds. A 2 s synchronous probe used to
+// mark FFmpeg "missing" for the whole session.
+function probeTool(name){
+  startupPhase('runtime.'+name+'.begin');
+  return new Promise(resolve=>{
+    let child;try{child=spawn(TOOLS[name],['-version'],{stdio:'ignore',windowsHide:true})}catch{resolve(false);return}
+    const timer=setTimeout(()=>{child.kill('SIGKILL');resolve(false)},60000);
+    child.on('error',()=>{clearTimeout(timer);resolve(false)});
+    child.on('close',code=>{clearTimeout(timer);resolve(code===0)});
+  }).then(ok=>{config[name]=ok;startupPhase('runtime.'+name+'.end');return ok});
+}
+let toolsChecking=null;
+function detectTools({force=false}={}){
+  if(toolsChecking)return toolsChecking;
+  if(!force&&config.ffmpeg&&config.ffprobe)return Promise.resolve(true);
+  toolsChecking=Promise.all([probeTool('ffmpeg'),probeTool('ffprobe')]).then(([a,b])=>a&&b).finally(()=>{toolsChecking=null});
+  return toolsChecking;
+}
+const toolsReady=detectTools();
 const originalMedia=new OriginalMedia(localWorker);
 const preparation=new AudioPreparation(localWorker,originalMedia);
 const keyManager=new KeyManager({worker:localWorker,externalKey:GROQ_KEY,endpoint:new URL('/openai/v1/models',GROQ_ENDPOINT).href,onChange:status=>{
@@ -66,7 +88,6 @@ const knownTypes={
   '.svg':'image/svg+xml','.json':'application/json; charset=utf-8','.webmanifest':'application/manifest+json',
   '.png':'image/png','.ico':'image/x-icon'
 };
-function available(binary){startupPhase('runtime.'+binary+'.begin');try{return spawnSync(binary,['-version'],{stdio:'ignore',timeout:2000}).status===0}catch{return false}finally{startupPhase('runtime.'+binary+'.end')}}
 const json=(res,status,body)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(body))};
 function errorText(e){return (e instanceof Error?e.message:String(e)).slice(0,300)}
 function fail(res,status,message){json(res,status,{error:message})}
@@ -97,7 +118,7 @@ let stopping=false;
 const startedAt=Date.now();
 function publicHealth(){
   const pending=[...jobs.values()].filter(j=>j.status==='queued').length;
-  return {...config,version:'0.4.0',mode:DEPLOY_MODE,maxUploadBytes:MAX_BYTES,
+  return {...config,toolsChecking:Boolean(toolsChecking),version:'0.4.0',mode:DEPLOY_MODE,maxUploadBytes:MAX_BYTES,
     retentionHours:JOB_TTL_HOURS,instanceId:process.env.MONO_LAUNCHER_INSTANCE_ID||null,queue:pending,processing:[...jobs.values()].filter(j=>j.status==='processing').length,
     uploadsInFlight,uptimeSeconds:Math.floor((Date.now()-startedAt)/1000),stopping};
 }
@@ -234,6 +255,7 @@ async function reapExpiredJobs(){
   }
 }
 async function doWork(job){
+  await toolsReady;if(!config.ffmpeg||!config.ffprobe)await detectTools({force:true});
   if(!config.ffmpeg||!config.ffprobe||!config.groq){
     await update(job,{status:'failed',stage:'Ошибка конфигурации',error:'Для обработки нужны FFmpeg, FFprobe и GROQ_API_KEY'});return;
   }
@@ -409,15 +431,20 @@ async function route(req,res){
   let url;
   try{url=new URL(req.url,'http://local.invalid')}catch{fail(res,400,'Неверный URL');return}
   if(!acceptableOrigin(req)){fail(res,403,'Запрос отклонён: неверный Origin/Host');return}
-  if(await localRoute(req,res,url,DEPLOY_MODE,{runtime:()=>({ffmpeg:config.ffmpeg,ffprobe:config.ffprobe}),preparation,keyManager,resolveOriginal:(id,options)=>originalMedia.ensure(id,options),submitLibraryJob,isLibraryBusy:()=>uploadsInFlight>0||[...jobs.values()].some(job=>['queued','processing'].includes(job.status))}))return;
+  if(await localRoute(req,res,url,DEPLOY_MODE,{runtime:async()=>{await toolsReady;if(!config.ffmpeg||!config.ffprobe)await detectTools({force:true});return {ffmpeg:config.ffmpeg,ffprobe:config.ffprobe}},preparation,keyManager,resolveOriginal:(id,options)=>originalMedia.ensure(id,options),submitLibraryJob,isLibraryBusy:()=>uploadsInFlight>0||[...jobs.values()].some(job=>['queued','processing'].includes(job.status))}))return;
   let pathname;
   try{pathname=decodeURIComponent(url.pathname)}catch{fail(res,400,'Некорректное кодирование URL');return}
   if(DEPLOY_MODE==='local'&&(/^\/api\/jobs(?:\/|$)/.test(pathname)||pathname==='/api/metrics')){
     const denied=authorizeLocalRequest(req);if(denied){req.resume();fail(res,denied,'Доступ отклонён');return}
   }
   if(pathname.startsWith('/api/')){
-    if(req.method==='GET'&&pathname==='/api/health'){json(res,200,publicHealth());return}
+    if(req.method==='GET'&&pathname==='/api/health'){
+      // ?wait=tools: answer only after FFmpeg/FFprobe detection (re-run if missing).
+      if(url.searchParams.get('wait')==='tools'){await toolsReady;if(!config.ffmpeg||!config.ffprobe)await detectTools({force:true})}
+      json(res,200,publicHealth());return;
+    }
     if(req.method==='GET'&&pathname==='/api/ready'){
+      await toolsReady;
       const ready=config.ffmpeg&&config.ffprobe&&config.groq&&!stopping;
       json(res,ready?200:503,{ready,...publicHealth()});return;
     }
@@ -558,7 +585,7 @@ async function main(){
   server.listen(PORT,HOST,()=>{
     startupPhase('listening');
     console.log(JSON.stringify({event:'listening',host:HOST,port:server.address().port,pid:process.pid}));
-    console.log(`Groq: ${config.groq?'configured':'not configured'}; FFmpeg: ${config.ffmpeg?'ready':'unavailable'}`);
+    void toolsReady.then(()=>console.log(`Groq: ${config.groq?'configured':'not configured'}; FFmpeg: ${config.ffmpeg&&config.ffprobe?'ready':'unavailable ('+TOOLS.ffmpeg+')'}`));
     void pump();
   });
 }

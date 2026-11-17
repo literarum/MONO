@@ -36,7 +36,7 @@ class CaptureProcessRecoveryTests(unittest.TestCase):
         expected_hash=hashlib.sha256(expected.getvalue()).hexdigest()
         for phase in ['before-move','after-move','before-manifest','after-manifest']:
             with self.subTest(phase=phase),tempfile.TemporaryDirectory() as folder:
-                root=Path(folder);child=subprocess.run([sys.executable,__file__,'--crash-child',phase,str(root)],capture_output=True,timeout=12,env={**os.environ,'PYTHONUTF8':'1'})
+                root=Path(folder);child=subprocess.run([sys.executable,__file__,'--crash-child',phase,str(root)],capture_output=True,timeout=12,env={**os.environ,'PYTHONUTF8':'1','PYTHONPATH':os.pathsep.join(filter(None,[str(Path(__file__).resolve().parents[1]),os.environ.get('PYTHONPATH')]))})
                 self.assertEqual(child.returncode,73,child.stderr.decode('utf-8',errors='replace'))
                 library=Library.open(root/'library')
                 try:

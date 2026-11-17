@@ -11,7 +11,7 @@ async function timed(promise,ms){let timer;try{return await Promise.race([promis
 
 export async function preflight({worker,runtime,keyManager,now=()=>performance.now()}){
  const checks=[];
- const tools=runtime();
+ const tools=await runtime();
  checks.push(tools.ffmpeg&&tools.ffprobe?check('audio-tools','ok','FFmpeg','Обработка и прослушивание звука доступны.')
   :check('audio-tools','caution','FFmpeg не найден','Запись работает, но прослушивание, подготовка и расшифровка недоступны.','Переустановите MONO или установите FFmpeg.'));
  let status=null;const started=now();
@@ -36,6 +36,7 @@ export async function preflight({worker,runtime,keyManager,now=()=>performance.n
  try{const capture=await timed(worker.call('capture.capabilities'),9000);
   if(capture.browserActive)checks.push(check('capture','ok','Модуль записи','Идёт запись через браузер.'));
   else if(capture.ready)checks.push(check('capture','ok','Системный модуль записи',`Доступно: ${(capture.modes||[]).map(mode=>({mic:'микрофон',system:'звук компьютера',both:'микрофон и компьютер'})[mode]||mode).join(', ')}.`));
+  else if(capture.reason==='NOT_SUPPORTED')checks.push(check('capture','caution','Звуковые устройства не найдены','Системный модуль записи работает, но Windows не сообщает ни микрофона, ни устройства вывода.','Подключите микрофон или наушники и нажмите «Проверить снова».'));
   else checks.push(check('capture','advisory','Системный модуль записи не установлен','Микрофон записывается через окно браузера. Звук компьютера недоступен.'));
  }catch{checks.push(check('capture','advisory','Системный модуль записи не ответил','Микрофон записывается через окно браузера.'))}
  try{const key=await timed(keyManager.status(),3000);

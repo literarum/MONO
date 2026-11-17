@@ -39,6 +39,7 @@ class CompiledCorePackagingTests(unittest.TestCase):
             manifest=json.loads((stage/'runtime/manifest.json').read_text());self.assertEqual(manifest['compiledCore']['pythonTag'],'cp314-win_amd64')
             for name in ['NUITKA_LICENSE.txt','NUITKA_RUNTIME_EXCEPTION.txt','PROVENANCE.json']:self.assertTrue((stage/'runtime/licenses/core'/name).is_file())
             mono.verify_runtime_manifest(stage)
+    @unittest.skipUnless(sys.platform not in ('win32','darwin') or os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','On Windows/macOS packaging requires release inputs (native helper bundle); set MONO_RELEASE_TOOLCHAIN=1')
     def test_explicit_missing_compiled_input_cannot_fall_back_to_source(self):
         with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,{'MONO_BUILD_CORE_BUNDLE':str(Path(folder)/'missing')}):
             with self.assertRaisesRegex(RuntimeError,'core|Core|compiled'):builder.prepare(Path(folder)/'stage')

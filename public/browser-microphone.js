@@ -25,6 +25,13 @@ function microphoneError(error,stage){
  const message={ACCESS_DENIED:'Разрешите микрофон в запросе браузера.',DEVICE_LOST:'Выбранный микрофон недоступен этому окну. Обновите список и выберите его снова.',DEVICE_BUSY:'Система не смогла открыть микрофон. Он может быть занят другим приложением; выберите другой вход или освободите его.'}[code];
  return new LibraryError(code,message||(stage==='worklet'?'Не удалось подготовить запись в этом окне. Обновите окно MONO и повторите.':'Не удалось подготовить запись. Перезапустите MONO и повторите.'));
 }
+/** Chrome/Edge list the system default as 'default' ("По умолчанию - X") and, on
+ * Windows, a 'communications' alias. Keep the default (marked) and drop the alias. */
+export function listDevices(devices,kind,fallback){
+ return devices.filter(d=>d.kind===kind&&d.deviceId&&d.deviceId!=='communications').map((d,index)=>({id:d.deviceId,name:d.label||`${fallback} ${index+1}`,default:d.deviceId==='default',labelled:Boolean(d.label)}));
+}
+/** "По умолчанию - Микрофон (Realtek)" → "Микрофон (Realtek)". */
+export function deviceName(device){return device?String(device.name).replace(/^(?:default|по умолчанию|standard|défaut)\s*[-–—:]\s*/i,''):''}
 /** Explicit browser mode, under the same durable server owner as native capture. */
 export class BrowserMicrophoneClient{
  constructor(native,{devices=globalThis.navigator?.mediaDevices,contextFactory=null,nodeFactory=null,page=globalThis.window}={}){
@@ -34,10 +41,11 @@ export class BrowserMicrophoneClient{
   this.page=page;this.onHide=()=>{void this.close()};page?.addEventListener('pagehide',this.onHide);
  }
  init(){return this.native.init()}
- async inputs(){return (await this.devices.enumerateDevices()).filter(d=>d.kind==='audioinput').map((d,index)=>({id:d.deviceId,name:d.label||'Микрофон '+(index+1),default:d.deviceId==='default'})).filter(d=>d.id)}
+ async inputs(){return listDevices(await this.devices.enumerateDevices(),'audioinput','Микрофон')}
+ async outputs(){return listDevices(await this.devices.enumerateDevices(),'audiooutput','Динамики')}
  async capabilities(options){
-  const value=await this.native.capabilities(options),inputs=this.supported?await this.inputs():[];
-  return {...value,nativeReady:value.ready,supported:value.supported||this.supported,ready:value.ready||this.supported,modes:[...(this.supported?['browser']:[]),...value.modes],browserInputDevices:inputs};
+  const value=await this.native.capabilities(options),inputs=this.supported?await this.inputs():[],outputs=this.supported?await this.outputs().catch(()=>[]):[];
+  return {...value,nativeReady:value.ready,supported:value.supported||this.supported,ready:value.ready||this.supported,modes:[...(this.supported?['browser']:[]),...value.modes],browserInputDevices:inputs,browserOutputDevices:outputs};
  }
  devicesList(){return this.capabilities()}
  checkAccess(){return this.native.checkAccess()}

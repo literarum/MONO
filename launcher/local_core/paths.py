@@ -10,12 +10,21 @@ def identifier(value):
     if not valid:raise CoreError('INVALID_ID','INVALID_ID')
     return value
 
+# Only these reparse points redirect a path. Others are ordinary storage:
+# OneDrive/cloud placeholders (IO_REPARSE_TAG_CLOUD*), deduplication, WOF, etc.
+REDIRECTING_REPARSE_TAGS={0xA000000C,0xA0000003}  # IO_REPARSE_TAG_SYMLINK, IO_REPARSE_TAG_MOUNT_POINT (junction)
+def is_link(st):
+    if stat.S_ISLNK(st.st_mode):return True
+    return bool(getattr(st,'st_file_attributes',0)&0x400) and getattr(st,'st_reparse_tag',0) in REDIRECTING_REPARSE_TAGS
 def reject_links(path):
-    for part in [path,*path.parents]:
+    for depth,part in enumerate([path,*path.parents]):
         if not part.exists() and not part.is_symlink():continue
         st=part.lstat()
-        if stat.S_ISLNK(st.st_mode) or getattr(st,'st_file_attributes',0)&0x400:
-            raise CoreError('UNSAFE_PATH','UNSAFE_PATH')
+        if not is_link(st):continue
+        # Root-owned ancestor links are operating-system layout (macOS /var and
+        # /tmp -> /private/...), never user-controlled redirection.
+        if depth>0 and os.name!='nt' and st.st_uid==0:continue
+        raise CoreError('UNSAFE_PATH','UNSAFE_PATH')
 
 def confined(root,*parts):
     path=root.joinpath(*parts)

@@ -19,7 +19,9 @@ internal static class Program
     static void ValidateRoot(string value)
     {
         root=Path.GetFullPath(value);if(!Directory.Exists(root))throw new AudioFailure("IO_ERROR");
-        for(DirectoryInfo? directory=new(root);directory is not null;directory=directory.Parent)if((directory.Attributes&FileAttributes.ReparsePoint)!=0)throw new AudioFailure("IO_ERROR");
+        // Reject redirection (symlink/junction) only. OneDrive and other cloud placeholders are
+        // reparse points too, but store data in place; LinkTarget is null for them.
+        for(DirectoryInfo? directory=new(root);directory is not null;directory=directory.Parent)if(directory.LinkTarget is not null)throw new AudioFailure("IO_ERROR");
     }
     static string? DeviceId(JsonElement parameters,string key)
     {

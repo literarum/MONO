@@ -14,7 +14,8 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function serverStart(server){server.listen(0,'127.0.0.1');await once(server,'listening');return server.address().port}
 async function awaitHealth(url){
  for(let i=0;i<80;i++){
-  try{const res=await fetch(url+'/api/health');if(res.ok)return await res.json()}catch{}
+  // FFmpeg detection is asynchronous; ask the server to answer once it has finished.
+  try{const res=await fetch(url+'/api/health?wait=tools');if(res.ok)return await res.json()}catch{}
   await delay(100);
  }
  throw new Error('Server did not start');

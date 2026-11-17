@@ -16,10 +16,14 @@ def sha256(file):
     with Path(file).open('rb') as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
 
 def plain(path):
+    # Stdlib-only twin of local_core.paths.reject_links (this validator must not
+    # import local_core): only symlinks/junctions redirect; cloud placeholders do
+    # not; root-owned ancestor links are OS layout (macOS /var -> /private/var).
     path=Path(path)
-    for part in [path,*path.parents]:
+    for depth,part in enumerate([path,*path.parents]):
         value=part.lstat()
-        if stat.S_ISLNK(value.st_mode) or getattr(value,'st_file_attributes',0)&0x400:raise ValueError('Linked compiled core path')
+        linked=stat.S_ISLNK(value.st_mode) or bool(getattr(value,'st_file_attributes',0)&0x400) and getattr(value,'st_reparse_tag',0) in (0xA000000C,0xA0000003)
+        if linked and not (depth>0 and os.name!='nt' and value.st_uid==0):raise ValueError('Linked compiled core path')
 
 def amd64(file):
     with file.open('rb') as stream:
