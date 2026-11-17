@@ -36,6 +36,7 @@ export async function preflight({worker,runtime,keyManager,now=()=>performance.n
  try{const capture=await timed(worker.call('capture.capabilities'),9000);
   if(capture.browserActive)checks.push(check('capture','ok','Модуль записи','Идёт запись через браузер.'));
   else if(capture.ready)checks.push(check('capture','ok','Системный модуль записи',`Доступно: ${(capture.modes||[]).map(mode=>({mic:'микрофон',system:'звук компьютера',both:'микрофон и компьютер'})[mode]||mode).join(', ')}.`));
+  else if(capture.reason==='NOT_SUPPORTED')checks.push(check('capture','caution','Звуковые устройства не найдены','Системный модуль записи работает, но Windows не сообщает ни микрофона, ни устройства вывода.','Подключите микрофон или наушники и нажмите «Проверить снова».'));
   else checks.push(check('capture','advisory','Системный модуль записи не установлен','Микрофон записывается через окно браузера. Звук компьютера недоступен.'));
  }catch{checks.push(check('capture','advisory','Системный модуль записи не ответил','Микрофон записывается через окно браузера.'))}
  try{const key=await timed(keyManager.status(),3000);
