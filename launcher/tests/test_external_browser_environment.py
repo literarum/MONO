@@ -35,6 +35,8 @@ class ExternalBrowserEnvironmentTests(unittest.TestCase):
         stack.enter_context(patch.object(mono,'_windows_dll_directory_api',return_value=api,create=True))
         return stack
 
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
+
     def test_frozen_windows_chrome_gets_neutral_loader_and_clean_child_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundle=str(Path(tmp)/'frozen bundle')

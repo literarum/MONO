@@ -82,6 +82,9 @@ class LauncherTests(unittest.TestCase):
                 self.assertTrue((folder/"browser-profile").is_dir())
 
 
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
+
+
     def test_corrupt_runtime_refused(self):
         import importlib.util
         spec=importlib.util.spec_from_file_location("bundle_build",ROOT/"launcher"/"build_portable.py")
@@ -119,6 +122,8 @@ class LauncherTests(unittest.TestCase):
                         finally:mono.close_logger(logger)
             self.assertEqual(mono.current_engine(folder),"native")
 
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
+
     def test_packager_stage_contains_server_and_runtime_checksums(self):
         import importlib.util
         spec=importlib.util.spec_from_file_location("bundle_build",ROOT/"launcher"/"build_portable.py")
@@ -134,6 +139,9 @@ class LauncherTests(unittest.TestCase):
                 self.assertEqual(builder.sha256(p),item["sha256"])
             self.assertTrue((stage/"backend"/"public"/"index.html").is_file())
             self.assertTrue((stage/"backend"/"server.mjs").is_file())
+
+
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
 
 
     def test_embedded_node_ffmpeg_stage_starts_without_system_fallback(self):

@@ -15,9 +15,12 @@ class CredentialVault:
         elif sys.platform=='darwin':
             from local_core.vault_macos import MacVault
             self.backend=MacVault(self.directory)
-        else:raise CoreError('VAULT_UNAVAILABLE','Системное хранилище ключей недоступно')
+        else:self.backend=None  # No supported OS vault (Linux): status reports it; writes refuse.
+    def _require(self):
+        if self.backend is None:raise CoreError('VAULT_UNAVAILABLE','Системное хранилище ключей недоступно')
+        return self.backend
     def _payload(self):
-        data=self.backend.read()
+        data=self._require().read()
         if data is None:return None
         try:
             value=json.loads(data.decode('utf-8'))
@@ -33,9 +36,9 @@ class CredentialVault:
         if not valid_key(key):raise CoreError('INVALID_KEY','Проверьте ключ Groq')
         try:datetime.fromisoformat(verified_at)
         except (ValueError,TypeError):raise CoreError('INVALID_KEY_STATUS','Проверка ключа не завершена') from None
-        self.backend.store(json.dumps({'schema':1,'key':key,'verifiedAt':verified_at},separators=(',',':')).encode('utf-8'))
+        self._require().store(json.dumps({'schema':1,'key':key,'verifiedAt':verified_at},separators=(',',':')).encode('utf-8'))
         # The OS write must succeed before a success status is returned.
         return {'configured':True,'verified':True,'masked':'•••• '+key[-4:],'errorCode':None}
     def read(self):
         value=self._payload();return value['key'] if value else None
-    def delete(self):self.backend.delete();return {'configured':False,'verified':False,'masked':None,'errorCode':None}
+    def delete(self):self._require().delete();return {'configured':False,'verified':False,'masked':None,'errorCode':None}

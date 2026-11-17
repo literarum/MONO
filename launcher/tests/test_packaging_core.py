@@ -1,3 +1,4 @@
+import sys,os
 import importlib.util, tempfile, unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -19,12 +20,14 @@ class PackagingCoreTests(unittest.TestCase):
                 with self.assertRaises(FileExistsError):builder.build(Path(temp)/'stage',output)
                 run.assert_not_called()
             self.assertEqual(sentinel.read_bytes(),b'preserve release')
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_package_contains_real_server_dependencies_and_private_worker(self):
         with tempfile.TemporaryDirectory() as temp:
             stage=builder.prepare(Path(temp)/'stage')
             self.assertTrue((stage/'backend/backend/local/routes.mjs').is_file(),'Node module dependency omitted')
             self.assertTrue((stage/'launcher/local_core/worker.py').is_file(),'Python worker omitted')
             self.assertTrue((stage/'launcher/local_core/schema.sql').is_file(),'SQLite schema omitted')
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_altered_private_worker_is_rejected_by_runtime_integrity_check(self):
         spec=importlib.util.spec_from_file_location('launcher_integrity',ROOT/'launcher/mono_launcher.py');mono=importlib.util.module_from_spec(spec);spec.loader.exec_module(mono)
         with tempfile.TemporaryDirectory() as temp:

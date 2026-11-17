@@ -6,6 +6,7 @@ def load(name,path):
     spec=importlib.util.spec_from_file_location(name,path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 builder=load('native_package_builder',ROOT/'launcher/build_portable.py');mono=load('native_package_launcher',ROOT/'launcher/mono_launcher.py')
 class NativePackagingTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_frozen_manifest_is_bound_to_the_executable(self):
         with tempfile.TemporaryDirectory() as folder:
             stage=builder.prepare(Path(folder)/'stage');file=stage/'runtime/manifest.json'
@@ -15,11 +16,13 @@ class NativePackagingTests(unittest.TestCase):
                 manifest=json.loads(file.read_text());manifest['application']=[v for v in manifest['application'] if v['path']!='public/app.js'];file.write_text(json.dumps(manifest))
                 (stage/'backend/public/app.js').unlink()
                 with self.assertRaisesRegex(mono.LaunchError,'identity|Identity'):mono.verify_runtime_manifest(stage)
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_duplicate_runtime_entry_cannot_replace_a_required_binary(self):
         with tempfile.TemporaryDirectory() as folder:
             stage=builder.prepare(Path(folder)/'stage');file=stage/'runtime/manifest.json';manifest=json.loads(file.read_text())
             manifest['runtime'][2]=copy.deepcopy(manifest['runtime'][0]);file.write_text(json.dumps(manifest))
             with self.assertRaises(mono.LaunchError):mono.verify_runtime_manifest(stage)
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_packager_freezes_staged_sources_and_rejects_post_prepare_mutation(self):
         with tempfile.TemporaryDirectory() as folder:
             stage=builder.prepare(Path(folder)/'stage');entry=stage/'launcher/mono_launcher.py'
@@ -41,6 +44,7 @@ class NativePackagingTests(unittest.TestCase):
             console.flush()
             self.assertEqual(raw.getvalue().decode('utf-8'),'ERROR: '+message+'\n')
         finally:console.close()
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_schema_is_available_at_the_frozen_python_package_path(self):
         import local_core.library as implementation
         with tempfile.TemporaryDirectory() as folder:
@@ -51,6 +55,7 @@ class NativePackagingTests(unittest.TestCase):
                 library=implementation.Library.open(Path(folder)/'library')
                 try:self.assertEqual(library.list_records()['items'],[])
                 finally:library.close()
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_windows_stage_requires_native_capture_binary_and_licenses(self):
         with tempfile.TemporaryDirectory() as folder:
             stage=builder.prepare(Path(folder)/'stage');manifest=json.loads((stage/'runtime/manifest.json').read_text())
@@ -70,6 +75,7 @@ class NativePackagingTests(unittest.TestCase):
                 env=mono.server_environment(roots={'data':Path(folder)/'data'},executables={'node':'/runtime/node','ffmpeg':'/runtime/ffmpeg','ffprobe':'/runtime/ffprobe'})
                 self.assertNotEqual(env.get('MONO_AUDIO_HELPER'),'untrusted-program.exe')
                 self.assertEqual(Path(env['MONO_AUDIO_HELPER']).parent,Path(folder)/'runtime/native')
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_bundle_verification_cli_does_not_start_the_server_or_open_an_archive(self):
         with tempfile.TemporaryDirectory() as folder:
             stage=builder.prepare(Path(folder)/'stage');output=io.StringIO()

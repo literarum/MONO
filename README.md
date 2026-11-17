@@ -86,7 +86,12 @@ python launcher/mono_launcher.py --dev --smoke
 npm run check
 npm test
 PYTHONPATH=launcher python -m unittest discover -s launcher/tests -v
+npm run test:e2e   # запись в реальном Chromium; нужен Playwright
 ```
+
+Тесты, которым нужен закреплённый релизный тулчейн Windows (Python 3.14.8, MSVC,
+собранный FFmpeg), пропускаются, пока не задано `MONO_RELEASE_TOOLCHAIN=1`. Тесты
+системного хранилища ключей выполняются только на Windows и macOS.
 
 `--dev` разрешает использовать системные runtime. Готовая сборка без него
 **не подбирает случайные версии системного Node/FFmpeg**.

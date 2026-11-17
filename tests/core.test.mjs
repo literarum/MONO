@@ -49,3 +49,28 @@ test('reject invalid segmentation settings and preserve text from malformed time
   assert.equal(segments.length,1);
   assert.equal(segments[0].text,'Нельзя терять текст');
 });
+
+test('silence hallucinations are removed by Whisper skip rule, credit phrases and loop collapse',()=>{
+ const plan=planSegments(60)[0];
+ const result=normalizeSegments([{plan,data:{text:'ignored',segments:[
+  {start:0,end:2,text:'Добрый день, коллеги.',no_speech_prob:0.01,avg_logprob:-0.2},
+  {start:2,end:4,text:'Субтитры сделал DimaTorzok',no_speech_prob:0.1,avg_logprob:-0.3},
+  {start:4,end:6,text:'Редактор субтитров А.Семкин Корректор А.Егорова'},
+  {start:6,end:8,text:'Что-то в тишине',no_speech_prob:0.9,avg_logprob:-1.4},
+  {start:8,end:9,text:'Продолжение следует...',no_speech_prob:0.8,avg_logprob:-0.5},
+  {start:9,end:10,text:'Спасибо за внимание.',no_speech_prob:0.05,avg_logprob:-0.3},
+  {start:10,end:11,text:'Да.'},{start:11,end:12,text:'Да.'},
+  {start:12,end:13,text:'Повтор'},{start:13,end:14,text:'Повтор'},{start:14,end:15,text:'повтор'},{start:15,end:16,text:'Повтор'}
+ ]}}]);
+ assert.deepEqual(result.map(s=>s.text),['Добрый день, коллеги.','Спасибо за внимание.','Да.','Да.','Повтор']);
+ assert.equal(result.at(-1).end,16,'collapsed loop keeps the full time span');
+});
+test('a chunk that is only a hallucination yields no text, even through the plain-text fallback',()=>{
+ const plan=planSegments(30)[0];
+ assert.deepEqual(normalizeSegments([{plan,data:{text:'Субтитры создавал DimaTorzok'}}]),[]);
+ assert.deepEqual(normalizeSegments([{plan,data:{text:'Субтитры сделал DimaTorzok',segments:[{start:0,end:3,text:'Субтитры сделал DimaTorzok'}]}}]),[]);
+});
+test('natural speech resembling an outro is kept without a no-speech signal',()=>{
+ const plan=planSegments(30)[0];
+ assert.equal(normalizeSegments([{plan,data:{segments:[{start:0,end:2,text:'Продолжение следует'}]}}]).length,1);
+});

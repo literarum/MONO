@@ -108,8 +108,13 @@ def main():
         except (OSError,UnicodeError):requests.put(CoreError('INVALID_JSON','Некорректное сообщение'))
         finally:eof.set();requests.put(None)
     threading.Thread(target=read_requests,name='mono-private-control',daemon=True).start()
+    from local_core.keep_awake import KeepAwake
+    awake=KeepAwake()
     while True:
-        if config is not None and config._capture is not None:config._capture.tick()
+        if config is not None and config._capture is not None:
+            config._capture.tick()
+            # Same thread every time: Windows execution-state assertions are per thread.
+            awake.set(config._capture.active)
         try:line=requests.get(timeout=.05)
         except queue.Empty:continue
         if line is None:break
@@ -133,6 +138,7 @@ def main():
         encoded=json.dumps(reply,ensure_ascii=False,separators=(',',':'))
         if len(encoded.encode('utf-8'))>MAX_LINE:encoded=json.dumps(error_reply(request_id,CoreError('TOO_LARGE','Результат слишком большой')))
         print(encoded,flush=True)
+    awake.set(False)
     if config:config.close()
     return 0
 

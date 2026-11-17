@@ -1,3 +1,4 @@
+import sys,importlib.util
 """Source-build contract: real pinned inputs, unsafe input denial, legacy neighbors."""
 import hashlib,json,os,subprocess,tempfile,unittest,zipfile,tarfile,io
 from pathlib import Path
@@ -38,6 +39,8 @@ class SourceBuildTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError,'Unsafe|inventory'):build.extract(archive,root/'out')
                 self.assertFalse((root/'escape').exists())
 
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
+
     def test_configuration_covers_audio_assembly_and_zlib_without_gpl_or_network(self):
         import build_ffmpeg_windows as build
         # Minimal syntactically valid declaration inputs test option selection;
@@ -52,6 +55,7 @@ class SourceBuildTests(unittest.TestCase):
         self.assertIn('concat',next(x for x in options if x.startswith('--enable-filter=')))
 
 class SourceBundleConsumerTests(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get('MONO_TEST_SOURCE_FFMPEG_BUNDLE'),'Requires MONO_TEST_SOURCE_FFMPEG_BUNDLE (built Windows FFmpeg)')
     def test_real_source_bundle_and_notices_roundtrip_and_tamper_denial(self):
         from ffmpeg_bundle import read_bundle,stage_support,verify_support,SOURCE_NOTICES
         directory=Path(os.environ['MONO_TEST_SOURCE_FFMPEG_BUNDLE']);value=read_bundle(directory)
@@ -69,6 +73,8 @@ class SourceBundleConsumerTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):verify_support(runtime,support)
                 file.write_bytes(original)
 
+    @unittest.skipUnless(os.environ.get('MONO_TEST_SOURCE_FFMPEG_BUNDLE'),'Requires MONO_TEST_SOURCE_FFMPEG_BUNDLE (built Windows FFmpeg)')
+
     def test_source_recipe_lock_and_archives_cannot_be_self_consistently_replaced(self):
         import shutil,copy
         from ffmpeg_bundle import read_bundle
@@ -85,6 +91,8 @@ class SourceBundleConsumerTests(unittest.TestCase):
                 file.write_bytes(raw)
             (root/'PROVENANCE.json').write_text(json.dumps(original),encoding='utf-8');read_bundle(root)
 
+    @unittest.skipUnless(os.environ.get('MONO_TEST_SOURCE_FFMPEG_BUNDLE'),'Requires MONO_TEST_SOURCE_FFMPEG_BUNDLE (built Windows FFmpeg)')
+
     def test_release_gate_rejects_legacy_schema_before_any_child_execution(self):
         from ffmpeg_bundle import read_bundle,stage_support,require_source_support,LICENSES
         import copy
@@ -95,6 +103,8 @@ class SourceBundleConsumerTests(unittest.TestCase):
             legacy['files']=[v for v in legacy['files'] if v['path'].endswith('.dll') or v['path'].removeprefix('licenses/ffmpeg/') in LICENSES|{'PROVENANCE.json'}]
             with patch('subprocess.run',side_effect=AssertionError('No child may run')):
                 with self.assertRaisesRegex(RuntimeError,'requires source-built'):require_source_support(root,legacy)
+
+    @unittest.skipUnless(os.environ.get('MONO_TEST_SOURCE_FFMPEG_BUNDLE'),'Requires MONO_TEST_SOURCE_FFMPEG_BUNDLE (built Windows FFmpeg)')
 
     def test_copy_changed_after_input_validation_is_not_blessed_by_new_hash(self):
         import shutil

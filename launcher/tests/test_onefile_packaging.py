@@ -7,6 +7,7 @@ ROOT=Path(__file__).resolve().parents[2]
 spec=importlib.util.spec_from_file_location('onefile_builder_test',ROOT/'launcher/build_portable.py');builder=importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
 
 class OnefilePackagingTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_onefile_selects_standard_bootloader_and_keeps_onedir_default(self):
         for onefile in [False,True]:
             with self.subTest(onefile=onefile),tempfile.TemporaryDirectory() as folder:
@@ -27,6 +28,7 @@ class OnefilePackagingTests(unittest.TestCase):
                 with self.assertRaises(FileExistsError):builder.build(base/'missing-stage',output,onefile=True)
                 validate.assert_not_called();run.assert_not_called()
             self.assertEqual(sentinel.read_bytes(),b'keep')
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_cli_routes_explicit_flag_and_preserves_existing_output(self):
         with tempfile.TemporaryDirectory() as folder:
             base=Path(folder);stage=base/'stage';(stage/'runtime').mkdir(parents=True);(stage/'runtime/manifest.json').write_text('{}');output=base/'output'

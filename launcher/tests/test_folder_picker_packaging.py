@@ -1,3 +1,4 @@
+import os
 import builtins,contextlib,importlib.util,io,json,socket,sys,threading,unittest
 from pathlib import Path
 from unittest.mock import Mock,patch
@@ -23,6 +24,8 @@ class FolderPickerPackagingTests(unittest.TestCase):
                 try:self.assertFalse(mono.healthy(url=f'http://127.0.0.1:{listener.getsockname()[1]}',timeout=2))
                 finally:thread.join(4)
                 self.assertFalse(thread.is_alive());self.assertEqual(errors,[])
+
+    @unittest.skipUnless(importlib.util.find_spec('tkinter'),'Requires tkinter for the native folder dialog')
 
     def test_real_dialog_dependency_import_does_not_create_a_window(self):
         import tkinter
