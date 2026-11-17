@@ -13,7 +13,7 @@ export function mountScrollArea(viewport,{axes='y'}={}){
   rail.className=`scroll-rail scroll-${axis}`;track.className='scroll-track';thumb.className='scroll-thumb';
   thumb.tabIndex=0;thumb.role='scrollbar';thumb.setAttribute('aria-label',y?'Вертикальная прокрутка':'Горизонтальная прокрутка');thumb.setAttribute('aria-controls',viewport.id);thumb.setAttribute('aria-orientation',y?'vertical':'horizontal');thumb.setAttribute('aria-valuemin','0');
   for(const [btn,dir] of [[before,-1],[after,1]]){
-   btn.type='button';btn.className='scroll-arrow';btn.textContent=y?(dir<0?'▴':'▾'):(dir<0?'‹':'›');btn.setAttribute('aria-label','Прокрутить '+(y?(dir<0?'вверх':'вниз'):(dir<0?'влево':'вправо')));
+   btn.type='button';btn.className='scroll-arrow';btn.tabIndex=-1;btn.textContent=y?(dir<0?'▴':'▾'):(dir<0?'‹':'›');btn.setAttribute('aria-label','Прокрутить '+(y?(dir<0?'вверх':'вниз'):(dir<0?'влево':'вправо')));
    const step=()=>viewport[pos]+=dir*40;
    btn.addEventListener('click',step,{signal});btn.addEventListener('pointerdown',()=>{stopHold();hold=setTimeout(()=>repeat=setInterval(step,50),280)},{signal});
   }

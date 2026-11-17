@@ -409,7 +409,7 @@ async function route(req,res){
   let url;
   try{url=new URL(req.url,'http://local.invalid')}catch{fail(res,400,'Неверный URL');return}
   if(!acceptableOrigin(req)){fail(res,403,'Запрос отклонён: неверный Origin/Host');return}
-  if(await localRoute(req,res,url,DEPLOY_MODE,{preparation,keyManager,resolveOriginal:(id,options)=>originalMedia.ensure(id,options),submitLibraryJob,isLibraryBusy:()=>uploadsInFlight>0||[...jobs.values()].some(job=>['queued','processing'].includes(job.status))}))return;
+  if(await localRoute(req,res,url,DEPLOY_MODE,{runtime:()=>({ffmpeg:config.ffmpeg,ffprobe:config.ffprobe}),preparation,keyManager,resolveOriginal:(id,options)=>originalMedia.ensure(id,options),submitLibraryJob,isLibraryBusy:()=>uploadsInFlight>0||[...jobs.values()].some(job=>['queued','processing'].includes(job.status))}))return;
   let pathname;
   try{pathname=decodeURIComponent(url.pathname)}catch{fail(res,400,'Некорректное кодирование URL');return}
   if(DEPLOY_MODE==='local'&&(/^\/api\/jobs(?:\/|$)/.test(pathname)||pathname==='/api/metrics')){

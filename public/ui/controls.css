@@ -50,3 +50,6 @@ input[type=range]::-moz-range-thumb{width:12px;height:12px;border:2px solid var(
 .inline-actions{display:flex;flex-wrap:wrap;align-items:center;gap:var(--control-gap)}
 @media(max-width:650px){.select-wrap.toolbar-select{width:calc(50% - var(--space-2));flex:1 1 40%}.select-wrap.speed-select{flex:0 0 68px;width:68px}}
 @media(forced-colors:active){input[type=checkbox],input[type=radio]{appearance:auto}.select-control,.select-popup{border:1px solid CanvasText}.select-option[aria-selected=true]{outline:1px solid Highlight}}
+
+/* Touch input: Apple HIG minimum hit target 44×44 pt (pointer devices keep the compact 40 px). */
+@media (pointer:coarse){body .btn,body .btn-small,body .select{min-height:var(--control-height)}body .icon-btn{width:var(--control-height);height:var(--control-height)}}

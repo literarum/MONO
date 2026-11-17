@@ -52,3 +52,32 @@ body[data-theme=light] .art-ring{border-color:rgba(0,0,0,.13)}body[data-theme=li
 .audio-review{display:grid;gap:var(--space-4);padding-block:var(--space-6);margin-bottom:var(--space-6);border-block:1px solid var(--border);min-width:0}.review-header h2{margin:0 0 var(--space-2);font-size:18px;letter-spacing:var(--tracking-title)}.review-header p{margin:0;font-size:12px;color:var(--muted);line-height:var(--line-body)}.review-prepare{display:flex;gap:var(--control-gap);align-items:end;flex-wrap:wrap}.review-profile-field{flex:1 1 200px;min-width:0}.review-profile-field .field-label{display:block;margin-bottom:var(--space-2)}.review-prepare .btn{min-height:var(--control-height)}.audio-review .field-hint{margin:0}.review-variants{display:flex;padding:var(--space-1);gap:var(--space-1);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-control)}.review-variants button{flex:1;min-width:0;min-height:var(--control-compact);padding:var(--space-2) var(--space-3);border:0;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;transition:background var(--motion-feedback),color var(--motion-feedback)}.review-variants button[aria-pressed=true]{background:var(--surface2);color:var(--text);box-shadow:0 1px 5px #0001}.review-variants button:disabled{opacity:.45;cursor:default}.review-options{display:grid;gap:var(--space-4)}.review-match{display:flex;align-items:center;gap:var(--space-3);font-size:12px;line-height:1.5}.review-volume{display:flex;align-items:center;gap:var(--space-4);font-size:12px;color:var(--muted)}.review-volume .seek{max-width:200px}.review-status{min-height:1.65em}.review-measurements{font-size:12px;color:var(--muted)}.review-measurements summary{cursor:pointer;padding-block:var(--space-2)}.review-measurements dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--space-2) var(--space-4);margin:var(--space-3) 0 0}.review-measurements dt,.review-measurements dd{margin:0}.review-measurements dd{text-align:right;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 @media(max-width:650px){.review-prepare .btn{flex:1}.review-profile-field{flex-basis:100%}.review-measurements dl{grid-template-columns:1fr}.review-measurements dd{text-align:left}.review-variants button{font-size:12px;padding-inline:var(--space-2)}}
 @media print{.audio-review{display:none!important}}
+
+/* ── HIG pass (2026-11-17) ─────────────────────────────────────────────
+   Text in controls never drops below 13 px; touch input gets 44 px targets
+   (controls.css); the primary action stays reachable on small screens. */
+.sr-only{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.btn,.btn-small{font-size:13px}
+/* Record is the one action of the studio: a red dot is the universal cue. */
+#start-record svg{color:#ff3b30}
+.studio-display{min-height:clamp(220px,34vh,335px)}
+@media (max-width:760px){
+ .btn,.btn-small{min-height:var(--control-height);font-size:13px;padding:0 14px}
+ #view-record .page-heading p{display:none}
+ /* Voice-Memos pattern: the transport stays under the thumb while scrolling. */
+ .studio-buttons{position:sticky;bottom:max(12px,env(safe-area-inset-bottom));z-index:5;padding:8px;border-radius:var(--radius-card);background:var(--glass);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);border:1px solid var(--border)}
+ .studio-buttons .btn{flex:1 1 140px}
+}
+/* Pre-flight check: crew-alerting colours (red warning, amber caution, blue advisory). */
+.preflight{--pf-ok:#30d158;--pf-advisory:#64d2ff;--pf-caution:#ffd60a;--pf-warning:#ff453a}
+body[data-theme=light] .preflight{--pf-ok:#248a3d;--pf-advisory:#0071a4;--pf-caution:#9a6700;--pf-warning:#d70015}
+.preflight-head{display:flex;align-items:center;gap:10px}
+.preflight-light{width:10px;height:10px;border-radius:50%;background:var(--pf-ok);box-shadow:0 0 0 4px color-mix(in srgb,var(--pf-ok) 18%,transparent);flex:none}
+.preflight[data-level=advisory] .preflight-light{background:var(--pf-advisory);box-shadow:0 0 0 4px color-mix(in srgb,var(--pf-advisory) 18%,transparent)}
+.preflight[data-level=caution] .preflight-light{background:var(--pf-caution);box-shadow:0 0 0 4px color-mix(in srgb,var(--pf-caution) 18%,transparent)}
+.preflight[data-level=warning] .preflight-light{background:var(--pf-warning);box-shadow:0 0 0 4px color-mix(in srgb,var(--pf-warning) 22%,transparent)}
+.preflight-summary{font-size:14px}
+.preflight-list{list-style:none;margin:14px 0;padding:0;display:grid;gap:10px}
+.preflight-item{display:grid;gap:2px;padding-left:14px;border-left:3px solid var(--pf-ok);font-size:13px;line-height:1.45}
+.preflight-item[data-level=advisory]{border-color:var(--pf-advisory)}.preflight-item[data-level=caution]{border-color:var(--pf-caution)}.preflight-item[data-level=warning]{border-color:var(--pf-warning)}
+.preflight-item span{color:var(--muted)}

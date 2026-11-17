@@ -13,6 +13,7 @@ import {mountGuidance,mountHelp} from './help.js';
 import {MediaInterlock} from './media-interlock.js';
 import {AudioReview} from './audio-review.js';
 import {captureSelection,selectionKey} from './transcription-selection.js';
+import {Preflight,mountPreflight} from './preflight.js';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const setText=(selector,value)=>{const element=$(selector);if(element.textContent!==value)element.textContent=value};
@@ -27,13 +28,13 @@ const shortTime=n=>{
 const sizeText=n=>n>=1024**2?`${(n/1024**2).toFixed(1)} МБ`:`${Math.round(n/1024)} КБ`;
 const money=n=>new Intl.NumberFormat('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n);
 const MODEL_PRICE=.04;
-const DEFAULTS={theme:'dark',profile:'standard',rate:83.0784,prompt:''};
+const DEFAULTS={theme:'system',profile:'standard',rate:83.0784,prompt:''};
 const settings={...DEFAULTS,...readSettings()};
 const state={records:[],view:'dashboard',recorder:null,recordingId:null,capture:null,health:null,
   editorId:null,editorPage:0,playerURL:null,pollBusy:false,recordBusy:false,pendingEdits:new Map(),failedEdits:new Map(),visibleSegments:new Map()};
 let credentialForm=null,pendingTranscriptionId=null;
 let nativeController=null,captureSources=null,nativeCompleted=null,nativeFrame=0,nativeInitializing=null,setupWindow=null,setupOpening=null;
-let mediaInterlock=null,audioReview=null;
+let mediaInterlock=null,audioReview=null,preflight=null;
 function pauseAudition(){audioReview?.player.pause();if(mediaInterlock)mediaInterlock.pauseAll();else document.querySelectorAll('audio,video').forEach(media=>media.pause())}
 function canAudition(){if(storageDetails().local&&(!nativeController?.snapshot.connected||captureActive(nativeController.snapshot))){notify('Завершите запись перед прослушиванием, чтобы звук плеера не попал в неё.','error');return false}return true}
 async function playAudition(media){if(!canAudition())return;try{if(storageDetails().local){if(!mediaInterlock)throw new Error('Дождитесь подключения модуля записи.');await mediaInterlock.play(media)}else await media.play()}catch(error){if(error.name!=='AbortError')notify(error.message||'Не удалось воспроизвести аудио.','error')}}
@@ -77,9 +78,13 @@ async function initializeNative(local){
   mediaInterlock=new MediaInterlock({status:options=>client.status(options),channel:typeof BroadcastChannel==='function'?new BroadcastChannel('mono-media'):null});
   nativeController=new NativeCaptureController(client,{onState:onNativeState,onError:error=>notify(error.message,'error'),onIntent:options=>mediaInterlock.beforeCapture(options)});
   const studio=$('#audio-source').closest('.side-card');studio.replaceChildren();mountCaptureSources(studio,{model:captureSources,onError:error=>notify(error.message,'error')});
-  const card=document.createElement('article');card.className='glass settings-card';card.innerHTML='<h2>Источники записи</h2><div class="settings-capture-sources"></div><button type="button" class="btn btn-outline btn-small" id="check-native-sound">Проверить звук</button>';$('#view-settings .settings-grid').prepend(card);mountCaptureSources(card.querySelector('.settings-capture-sources'),{model:captureSources,onError:error=>notify(error.message,'error')});card.querySelector('button#check-native-sound').onclick=()=>void showSetup('sound').catch(error=>notify(error.message,'error'));
+  const card=document.createElement('article');card.className='glass settings-card';card.innerHTML='<div class="settings-card-icon"><svg><use href="#i-mic"/></svg></div><h2>Источники записи</h2><div class="settings-capture-sources"></div><button type="button" class="btn btn-outline btn-small" id="check-native-sound">Проверить звук</button>';$('#view-settings .settings-grid').prepend(card);mountCaptureSources(card.querySelector('.settings-capture-sources'),{model:captureSources,onError:error=>notify(error.message,'error')});card.querySelector('button#check-native-sound').onclick=()=>void showSetup('sound').catch(error=>notify(error.message,'error'));
   const guide=$('.studio-side>.side-card:not(.capture-sources)');guide.replaceChildren();mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
   const help=document.createElement('article');help.className='glass settings-card';mountHelp(help);$('#view-settings .settings-grid').append(help);
+  // Pre-flight check: compact (problems only) in the studio, full in settings.
+  preflight=new Preflight(local);
+  const studioCheck=document.createElement('div');studioCheck.className='glass side-card';$('.studio-side').prepend(studioCheck);mountPreflight(studioCheck,{model:preflight,compact:true,onError:()=>{}});
+  const settingsCheck=document.createElement('article');settingsCheck.className='glass settings-card';settingsCheck.innerHTML='<div class="settings-card-icon"><svg><use href="#i-check"/></svg></div><h2>Предполётная проверка</h2><div></div>';$('#view-settings .settings-grid').prepend(settingsCheck);mountPreflight(settingsCheck.lastElementChild,{model:preflight,onError:error=>notify(error.message,'error')});
  }
  await nativeController.connect();
  await captureSources.load();
@@ -197,7 +202,7 @@ function renderDashboard(){
   const usd=list.filter(r=>r.estimatedUSD &&
     monthOf(r.transcriptionStartedAt||r.completedAt||r.createdAt)===month
   ).reduce((s,r)=>s+r.estimatedUSD,0);
-  $('#metric-total').textContent=String(list.length).padStart(2,'0');
+  $('#metric-total').textContent=String(list.length);
   $('#metric-duration').innerHTML=`${Math.floor(totalSeconds/3600)}<small>ч</small> ${String(Math.floor(totalSeconds%3600/60)).padStart(2,'0')}<small>м</small>`;
   $('#metric-month').innerHTML=`${Math.round(monthSeconds/60)}<small>мин</small>`;
   $('#metric-cost').innerHTML=`${money(usd*settings.rate)} <small>₽</small>`;
@@ -298,7 +303,7 @@ function chosenMime(){
 }
 async function beginRecord(){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
- if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');await nativeController.start(await captureSources.selection())}catch(error){if(error?.name!=='AbortError')notify(error.message||'Не удалось начать запись.','error')}return}
+ if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}await nativeController.start(await captureSources.selection())}catch(error){if(error?.name!=='AbortError')notify(error.message||'Не удалось начать запись.','error')}return}
  if(state.recordBusy||state.capture)return;
  state.recordBusy=true;
  let capture=null;
