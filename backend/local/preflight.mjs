@@ -11,7 +11,7 @@ async function timed(promise,ms){let timer;try{return await Promise.race([promis
 
 export async function preflight({worker,runtime,keyManager,now=()=>performance.now()}){
  const checks=[];
- const tools=runtime();
+ const tools=await runtime();
  checks.push(tools.ffmpeg&&tools.ffprobe?check('audio-tools','ok','FFmpeg','Обработка и прослушивание звука доступны.')
   :check('audio-tools','caution','FFmpeg не найден','Запись работает, но прослушивание, подготовка и расшифровка недоступны.','Переустановите MONO или установите FFmpeg.'));
  let status=null;const started=now();

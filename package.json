@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test",
-    "check": "for f in server.mjs core.mjs healthcheck.mjs public/*.js public/ui/*.js backend/*/*.mjs; do node --check \"$f\" || exit 1; done",
+    "check": "node scripts/check-syntax.mjs",
     "smoke": "node --test tests/proxy.test.mjs",
     "launcher:smoke": "python3 launcher/mono_launcher.py --dev --smoke",
     "launcher:test": "cd launcher && python3 -m unittest discover -s tests -v",

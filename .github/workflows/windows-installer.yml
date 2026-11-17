@@ -1,0 +1,114 @@
+name: Windows installer
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    name: Build, install and verify MONO-Setup.exe
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      MONO_VERSION: 0.4.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Native capture module — unit tests (also compiles the sources)
+        shell: pwsh
+        run: dotnet run --project native/windows/tests/MonoAudio.Tests.csproj -c Release
+
+      - name: Native capture module — publish MonoAudio.exe
+        shell: pwsh
+        run: |
+          dotnet publish native/windows/MonoAudio.csproj -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:DebugType=None -o .build/helper --nologo
+          if (!(Test-Path .build/helper/MonoAudio.exe)) { throw 'MonoAudio.exe was not produced' }
+
+      - name: FFmpeg (BtbN LGPL build, checksum verified)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $release = gh api repos/BtbN/FFmpeg-Builds/releases/tags/latest | ConvertFrom-Json
+          $asset = $release.assets | Where-Object { $_.name -match '^ffmpeg-n[0-9.]+-latest-win64-lgpl-[0-9.]+\.zip$' } | Sort-Object name -Descending | Select-Object -First 1
+          if (-not $asset) { throw 'No LGPL win64 release asset found' }
+          New-Item -ItemType Directory .build/ffmpeg | Out-Null
+          Invoke-WebRequest $asset.browser_download_url -OutFile .build/ffmpeg/ffmpeg.zip
+          $sums = $release.assets | Where-Object name -eq 'checksums.sha256'
+          if ($sums) {
+            $lines = (Invoke-WebRequest $sums.browser_download_url).Content -split "`n"
+            $expected = ($lines | Where-Object { $_ -match [regex]::Escape($asset.name) }) -split '\s+' | Select-Object -First 1
+            $actual = (Get-FileHash .build/ffmpeg/ffmpeg.zip -Algorithm SHA256).Hash.ToLower()
+            if ($expected -and $expected -ne $actual) { throw "FFmpeg checksum mismatch: $actual vs $expected" }
+            "Checksum OK: $actual"
+          } else { Write-Warning 'checksums.sha256 not published; relying on HTTPS from GitHub releases' }
+          Expand-Archive .build/ffmpeg/ffmpeg.zip .build/ffmpeg/x
+          $bin = Get-ChildItem .build/ffmpeg/x -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          "FFMPEG_DIR=$($bin.DirectoryName)" >> $env:GITHUB_ENV
+          $license = Get-ChildItem .build/ffmpeg/x -Recurse -Filter LICENSE.txt | Select-Object -First 1
+          "FFMPEG_LICENSE=$($license.FullName)" >> $env:GITHUB_ENV
+
+      - name: Stage payload
+        shell: pwsh
+        run: |
+          $node = (Get-Command node).Source
+          python installer/windows/stage.py --stage .build/installer-stage --python-home "$env:pythonLocation" `
+            --node "$node" --ffmpeg-dir "$env:FFMPEG_DIR" --ffmpeg-license "$env:FFMPEG_LICENSE" --helper .build/helper/MonoAudio.exe
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) { choco install innosetup --no-progress -y | Out-Null }
+          & $iscc /Qp "/DAppVersion=$env:MONO_VERSION" installer/windows/MONO.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed: $LASTEXITCODE" }
+
+      - name: Silent install, start and verify the installed app
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem .build/installer -Filter 'MONO-Setup-*.exe' | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP 'MONO Transcribe'
+          $p = Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/CURRENTUSER','/NORESTART',"/DIR=`"$dir`"",'/TASKS=desktopicon' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Setup exit code $($p.ExitCode)" }
+          # Nothing from the runner's PATH may be used: hide node/ffmpeg/python.
+          $env:Path = "$env:SystemRoot\system32;$env:SystemRoot"
+          $env:MONO_HOME = Join-Path $env:RUNNER_TEMP 'mono-home'
+          $out = & "$dir\runtime\python\python.exe" "$dir\app\launcher\mono_launcher.py" --dev --smoke 2>&1 | Out-String
+          $out
+          if ($out -notmatch '"ok": true' -or $out -notmatch [regex]::Escape("$dir\runtime\ffmpeg\ffmpeg.exe".Replace('\','\\'))) { throw 'Installed app did not start with its bundled runtimes' }
+          if (!(Test-Path "$env:USERPROFILE\Desktop\MONO Transcribe.lnk") -and !(Test-Path "$env:PUBLIC\Desktop\MONO Transcribe.lnk")) { Write-Warning 'Desktop shortcut not found on runner desktop' }
+
+      - name: Installed app — preflight sees FFmpeg, core and capture module
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'MONO Transcribe'
+          $env:Path = "$env:SystemRoot\system32;$env:SystemRoot"
+          $env:MONO_HOME = Join-Path $env:RUNNER_TEMP 'mono-home-2'
+          $job = Start-Process "$dir\runtime\python\python.exe" -ArgumentList "`"$dir\app\launcher\mono_launcher.py`"",'--dev','--smoke','--smoke-hold','40' -PassThru -WindowStyle Hidden
+          $health = $null
+          for ($i = 0; $i -lt 60 -and -not $health; $i++) { Start-Sleep 1; try { $health = Invoke-RestMethod 'http://127.0.0.1:4173/api/health?wait=tools' -TimeoutSec 70 } catch {} }
+          $health | ConvertTo-Json
+          if (-not $health.ffmpeg -or -not $health.ffprobe) { throw 'Installed app reports FFmpeg missing' }
+          $session = Invoke-WebRequest 'http://127.0.0.1:4173/api/local/session' -SessionVariable web -UseBasicParsing
+          $caps = Invoke-RestMethod 'http://127.0.0.1:4173/api/local/capture/capabilities' -WebSession $web
+          $caps | ConvertTo-Json -Depth 5
+          Stop-Process -Id $job.Id -Force -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MONO-Setup-windows
+          path: .build/installer/MONO-Setup-*.exe
+          if-no-files-found: error

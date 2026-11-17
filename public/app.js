@@ -62,11 +62,12 @@ function onNativeState(value){
   Object.assign(state.capture,{id:value.recordId,paused:value.state==='paused',stopping:value.state==='stopping',snapshot:value});state.recordingId=value.recordId;pauseAudition();
   if(!nativeFrame)nativeFrame=requestAnimationFrame(drawWave);
  }else if(state.capture?.native){state.capture=null;state.recordingId=null}
- $('#start-record').hidden=active;$('#start-record').disabled=!value.connected;
+ // Never a dead control: without a connection, pressing Start reconnects and explains.
+ $('#start-record').hidden=active;$('#start-record').disabled=false;
  $('#pause-record').hidden=!active;$('#stop-record').hidden=!active;
  $('#pause-record').disabled=!value.connected||Boolean(value.pendingAction)||!['recording','paused'].includes(value.state);
  $('#stop-record').disabled=value.state==='stopping';$('#pause-record').innerHTML=icon(value.state==='paused'?'play':'pause')+(value.state==='paused'?' Продолжить':' Пауза');
- setText('#record-saved',!value.connected?'Связь потеряна. Остановка и сохранение не подтверждены.':value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве: '+durationText(value.duration)+captureHealthHint(value):value.errorCode?captureFailureMessage(value):'Аудио сохраняется в выбранной папке');
+ setText('#record-saved',!value.connected?(active?'Связь потеряна. Остановка и сохранение не подтверждены.':'Подключаемся к модулю записи…'+(nativeController?.lastError?.code?` (${nativeController.lastError.code})`:'')):value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве: '+durationText(value.duration)+captureHealthHint(value):value.errorCode?captureFailureMessage(value):'Аудио сохраняется в выбранной папке');
  updateRecordUI();
  if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void refresh().catch(e=>notify(e.message,'error'));if(wasActive)notify(value.state==='ready'?'Запись сохранена в библиотеке.':captureFailureMessage(value),value.state==='ready'?'info':'error')}
 }
@@ -77,7 +78,7 @@ async function initializeNative(local){
   const client=new BrowserMicrophoneClient(new CaptureClient({library:local}));captureSources=new CaptureSources(client,local);
   mediaInterlock=new MediaInterlock({status:options=>client.status(options),channel:typeof BroadcastChannel==='function'?new BroadcastChannel('mono-media'):null});
   nativeController=new NativeCaptureController(client,{onState:onNativeState,onError:error=>notify(error.message,'error'),onIntent:options=>mediaInterlock.beforeCapture(options)});
-  const studio=$('#audio-source').closest('.side-card');studio.replaceChildren();mountCaptureSources(studio,{model:captureSources,onError:error=>notify(error.message,'error')});
+  const studio=$('#audio-source').closest('.side-card');studio.replaceChildren();mountCaptureSources(studio,{model:captureSources,onError:error=>notify(error.message,'error'),onNotice:message=>notify(message)});
   const card=document.createElement('article');card.className='glass settings-card';card.innerHTML='<div class="settings-card-icon"><svg><use href="#i-mic"/></svg></div><h2>Источники записи</h2><div class="settings-capture-sources"></div><button type="button" class="btn btn-outline btn-small" id="check-native-sound">Проверить звук</button>';$('#view-settings .settings-grid').prepend(card);mountCaptureSources(card.querySelector('.settings-capture-sources'),{model:captureSources,onError:error=>notify(error.message,'error')});card.querySelector('button#check-native-sound').onclick=()=>void showSetup('sound').catch(error=>notify(error.message,'error'));
   const guide=$('.studio-side>.side-card:not(.capture-sources)');guide.replaceChildren();mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
   const help=document.createElement('article');help.className='glass settings-card';mountHelp(help);$('#view-settings .settings-grid').append(help);
@@ -303,7 +304,7 @@ function chosenMime(){
 }
 async function beginRecord(){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
- if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}await nativeController.start(await captureSources.selection())}catch(error){if(error?.name!=='AbortError')notify(error.message||'Не удалось начать запись.','error')}return}
+ if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');if(!nativeController.snapshot.connected){try{await nativeController.connect()}catch(error){notify(`Модуль записи не отвечает${error?.code?' ('+error.code+')':''}. Откройте «Настройки → Предполётная проверка».`,'error');void preflight?.run({force:true}).catch(()=>{});return}}const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}await nativeController.start(await captureSources.selection())}catch(error){if(error?.name!=='AbortError')notify(error.message||'Не удалось начать запись.','error')}return}
  if(state.recordBusy||state.capture)return;
  state.recordBusy=true;
  let capture=null;
@@ -433,6 +434,17 @@ function drawWave(){
  c.globalAlpha=1;
  if(state.capture){if(!r?.native)updateRecordUI();nativeFrame=requestAnimationFrame(drawWave)}
 }
+/** Connect Groq in place (sheet), then continue what the person was doing. */
+function connectGroq(onConnected){
+ modal('Подключите Groq','<p class="field-hint">Расшифровка работает через ваш аккаунт Groq. Ключ хранится в защищённом хранилище системы и не покидает этот компьютер.</p><div class="groq-sheet"></div>');
+ const host=$('#modal .groq-sheet');let done=false;
+ void localLibraryClient().then(local=>{
+  mountCredentials(host,{client:new CredentialsClient(local),onChange:value=>{
+   if(!value.configured||done)return;done=true;closeModal();void credentialForm?.refresh();void checkHealth().finally(()=>{notify('Groq подключён.');void Promise.resolve().then(onConnected).catch(error=>notify(error.message,'error'))});
+  }});
+  host.querySelector('input')?.focus();
+ }).catch(error=>notify(error.message,'error'));
+}
 async function startTranscription(rec){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
  if(!rec||rec.status==='recording'||!rec.size){notify('Нет доступного аудиофайла.','error');return}
@@ -442,6 +454,11 @@ async function startTranscription(rec){
   modal('Повторная транскрибация',`Вариант: ${selection.title}.\n\nЭто создаст новый платный запрос и заменит текущую расшифровку. Исходный звук останется на устройстве. Продолжить?`,
    [{text:'Повторить',primary:true,run:()=>uploadTranscription(rec,true,selection)}]);return;
  }
+ if(!state.health?.ffmpeg||!state.health?.ffprobe){
+  // Tool detection may still be running (first FFmpeg launch under antivirus): wait for it.
+  try{state.health=await (await fetch('/api/health?wait=tools',{cache:'no-store',signal:AbortSignal.timeout(70000)})).json()}catch{}
+ }
+ if(storageDetails().local&&!state.health?.groq){connectGroq(()=>startTranscription(rec));return}
  if(!state.health?.groq||!state.health?.ffmpeg||!state.health?.ffprobe){
   if(storageDetails().local&&!state.health?.groq)pendingTranscriptionId=rec.id;
   modal(storageDetails().local&&!state.health?.groq?'Подключите распознавание':'Обработка пока недоступна',storageDetails().local?'Подключите Groq в настройках. Запись уже сохранена; после подключения можно продолжить с неё.':'Проверьте подключение Groq и обработчик аудио на сервере приложения.',

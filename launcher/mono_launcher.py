@@ -115,6 +115,51 @@ def logger_for(folder: Path) -> logging.Logger:
     return logger
 
 
+def _registry_path_dirs() -> list[str]:
+    """PATH as stored now in the registry. A shortcut started by Explorer keeps the
+    PATH Explorer had at login, so tools installed afterwards (winget) are invisible."""
+    if os.name != "nt":
+        return []
+    import winreg
+    entries = []
+    for hive, key in ((winreg.HKEY_CURRENT_USER, "Environment"),
+                      (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")):
+        try:
+            with winreg.OpenKey(hive, key) as handle:
+                value, _ = winreg.QueryValueEx(handle, "Path")
+                entries += [os.path.expandvars(part) for part in str(value).split(";") if part.strip()]
+        except OSError:
+            continue
+    return entries
+
+
+def _well_known_dirs(name: str) -> list[Path]:
+    home = Path.home()
+    if os.name == "nt":
+        local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+        program = Path(os.environ.get("ProgramFiles") or r"C:\Program Files")
+        dirs = [local / "Microsoft" / "WinGet" / "Links", Path(r"C:\ProgramData\chocolatey\bin"), home / "scoop" / "shims",
+                Path(r"C:\ffmpeg\bin"), program / "ffmpeg" / "bin", program / "nodejs"]
+        packages = local / "Microsoft" / "WinGet" / "Packages"
+        if name in ("ffmpeg", "ffprobe") and packages.is_dir():
+            dirs += sorted({p.parent for p in packages.glob("Gyan.FFmpeg*/*/bin/ffmpeg.exe")}, reverse=True)
+        return dirs
+    return [Path("/opt/homebrew/bin"), Path("/usr/local/bin"), Path("/usr/bin"), home / ".local" / "bin"]
+
+
+def _pinned_runtime() -> dict:
+    """Tool paths recorded at installation: runtime.json next to the application
+    (Windows setup; paths relative to it) or in the data folder (source installers)."""
+    for file in (assets_root() / "runtime.json", data_root() / "runtime.json"):
+        try:
+            value = json.loads(file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(value, dict):
+            return {key: str((file.parent / item).resolve()) if isinstance(item, str) else item for key, item in value.items()}
+    return {}
+
+
 def executable_path(name: str, *, root: Path, allow_system: bool) -> str:
     filename = f"{name}.exe" if os.name == "nt" else name
     candidates = [root / "runtime" / "bin" / filename]
@@ -124,9 +169,16 @@ def executable_path(name: str, *, root: Path, allow_system: bool) -> str:
         if file.is_file():
             return str(file)
     if allow_system:
-        which = shutil.which(name)
+        pinned = _pinned_runtime().get(name)
+        if isinstance(pinned, str) and Path(pinned).is_file():
+            return pinned
+        which = shutil.which(name) or shutil.which(name, path=os.pathsep.join(_registry_path_dirs()))
         if which:
             return which
+        for directory in _well_known_dirs(name):
+            file = directory / filename
+            if file.is_file():
+                return str(file)
     raise LaunchError(
         f"Не найден {filename}. В готовой сборке он должен находиться в runtime/bin.\n"
         "Для запуска из исходников установите Node.js и FFmpeg, затем запустите с --dev."
@@ -238,6 +290,10 @@ def server_environment(*, roots: dict[str, Path], executables: dict[str, str],
     if not developer or bundled():
         env.pop("MONO_GROQ_ENDPOINT", None)
         env['MONO_AUDIO_HELPER']=str(assets_root()/'runtime/native'/('MonoAudio.exe' if os.name=='nt' else 'MonoAudio'))
+    else:
+        helper = _pinned_runtime().get("audioHelper")
+        if isinstance(helper, str) and Path(helper).is_file():
+            env["MONO_AUDIO_HELPER"] = helper
     env.update({
         "MONO_DEPLOY_MODE": "local",
         "MONO_LAUNCHER": "1",
@@ -253,7 +309,8 @@ def server_environment(*, roots: dict[str, Path], executables: dict[str, str],
     if not env.get("GROQ_API_KEY") and not env.get("GROQ_API_KEY_FILE") and config_key.is_file():
         env["GROQ_API_KEY_FILE"] = str(config_key)
     # FFmpeg and FFprobe are found using PATH from the selected runtime bundle.
-    binaries = [str(Path(executables["ffmpeg"]).parent), str(Path(executables["node"]).parent)]
+    binaries = [str(Path(executables[name]).parent) for name in ("ffmpeg", "ffprobe", "node")]
+    env["MONO_FFMPEG"] = executables["ffmpeg"]; env["MONO_FFPROBE"] = executables["ffprobe"]
     env["PATH"] = os.pathsep.join(dict.fromkeys(binaries)) + os.pathsep + env.get("PATH", "")
     return env
 
