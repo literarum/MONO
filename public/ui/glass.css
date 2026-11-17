@@ -115,3 +115,9 @@ h1,h2,.studio-timer{font-family:var(--font-display)}
  .glass::after,.settings-card::after,.studio-panel::after,.hero::after,.record-card::after{display:none}
 }
 @media (prefers-reduced-motion:reduce){.btn:active{transform:none}}
+
+/* Sheets and dialogs: thicker material so the text behind never competes (HIG legibility). */
+.setup-panel,.modal-panel{background:var(--glass-fill-strong)!important;-webkit-backdrop-filter:blur(40px) saturate(160%);backdrop-filter:blur(40px) saturate(160%)}
+body[data-theme=light] .setup-panel,body[data-theme=light] .modal-panel{background:rgba(250,250,252,.95)!important}
+body:not([data-theme=light]) .setup-panel,body:not([data-theme=light]) .modal-panel{background:rgba(28,30,38,.95)!important}
+.setup-backdrop,.modal-backdrop{background:rgba(0,0,0,.28)!important;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
