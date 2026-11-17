@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="/ui/controls.css">
 <link rel="stylesheet" href="/ui/scroll-area.css">
 <link rel="stylesheet" href="/ui/motion.css">
+<link rel="stylesheet" href="/ui/glass.css">
 </head>
 <body data-theme="dark">
 <svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -47,26 +48,27 @@
 <symbol id="i-alert" viewBox="0 0 24 24"><path d="m12 2 10 18H2zM12 9v5m0 3v.2"/></symbol>
 </svg>
 
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><filter id="liquid-lens" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="7" result="noise"/><feGaussianBlur in="noise" stdDeviation="2" result="soft"/><feDisplacementMap in="SourceGraphic" in2="soft" scale="8" xChannelSelector="R" yChannelSelector="G"/></filter></svg>
 <div class="app-shell" id="app">
 <aside class="sidebar glass" id="sidebar">
  <a href="#dashboard" class="brand" aria-label="MONO — главная"><span class="brand-mark"><i></i><i></i><i></i><i></i><i></i></span><span class="brand-type">MONO<span class="brand-dot">.</span><small>TRANSCRIBE / STUDIO</small></span></a>
- <div class="side-group-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+ <div class="side-group-label">Рабочее пространство</div>
  <nav class="nav" aria-label="Основное меню">
-  <button class="nav-link selected" data-view="dashboard"><svg><use href="#i-grid"/></svg><span>Обзор</span></button>
-  <button class="nav-link" data-view="record"><svg><use href="#i-mic"/></svg><span>Студия записи</span></button>
-  <button class="nav-link" data-view="library"><svg><use href="#i-library"/></svg><span>Моя библиотека</span><span id="nav-count" class="nav-count">0</span></button>
-  <button class="nav-link" data-view="jobs"><svg><use href="#i-activity"/></svg><span>Обработка</span></button>
+  <button aria-label="Обзор" class="nav-link selected" data-view="dashboard"><svg><use href="#i-grid"/></svg><span class="nav-long">Обзор</span><span class="nav-short" aria-hidden="true">Обзор</span></button>
+  <button aria-label="Студия записи" class="nav-link" data-view="record"><svg><use href="#i-mic"/></svg><span class="nav-long">Студия записи</span><span class="nav-short" aria-hidden="true">Запись</span></button>
+  <button aria-label="Моя библиотека" class="nav-link" data-view="library"><svg><use href="#i-library"/></svg><span class="nav-long">Моя библиотека</span><span class="nav-short" aria-hidden="true">Записи</span><span id="nav-count" class="nav-count">0</span></button>
+  <button aria-label="Расшифровка" class="nav-link" data-view="jobs"><svg><use href="#i-activity"/></svg><span class="nav-long">Расшифровка</span><span class="nav-short" aria-hidden="true">Текст</span></button>
  </nav>
  <div class="sidebar-bottom">
-  <div class="side-group-label">СИСТЕМА</div>
-  <button class="nav-link" data-view="settings"><svg><use href="#i-settings"/></svg><span>Настройки</span></button>
+  <div class="side-group-label">Система</div>
+  <button aria-label="Настройки" class="nav-link" data-view="settings"><svg><use href="#i-settings"/></svg><span class="nav-long">Настройки</span><span class="nav-short" aria-hidden="true">Настройки</span></button>
   
   <div class="sidebar-foot">MONO / v0.4.0 <span>© 2026</span></div>
  </div>
 </aside>
 <div class="main-column">
 <header class="topbar glass">
- <div class="top-left"><button class="icon-btn mobile-menu" id="mobile-menu" aria-label="Открыть меню"><svg><use href="#i-menu"/></svg></button><span class="top-subtitle">РАБОЧЕЕ ПРОСТРАНСТВО</span><svg class="top-chevron"><use href="#i-chevron"/></svg><strong id="current-breadcrumb">Обзор</strong></div>
+ <div class="top-left"><button class="icon-btn mobile-menu" id="mobile-menu" aria-label="Открыть меню"><svg><use href="#i-menu"/></svg></button><span class="top-subtitle">Рабочее пространство</span><svg class="top-chevron"><use href="#i-chevron"/></svg><strong id="current-breadcrumb">Обзор</strong></div>
  <div class="top-right"><button id="theme-toggle" class="icon-btn" aria-label="Переключить тему" title="Переключить тему"><svg><use href="#i-sun"/></svg></button></div>
 </header>
 <main id="main" tabindex="-1">
@@ -116,7 +118,7 @@
 </section>
 
 <section class="view" id="view-jobs" aria-labelledby="jobs-heading">
- <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> TRANSCRIPTION / PIPELINE</div><h1 id="jobs-heading">Обработка<span class="heading-period">.</span></h1><p>Следите за реальным состоянием обработки. Прогресс не имитируется.</p></div><span class="page-counter">03 / 04</span></div>
+ <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> TRANSCRIPTION / PIPELINE</div><h1 id="jobs-heading">Расшифровка<span class="heading-period">.</span></h1><p>Следите за реальным состоянием обработки. Прогресс не имитируется.</p></div><span class="page-counter">03 / 04</span></div>
  <h2 class="sr-only">Задания расшифровки</h2><div id="jobs-list" class="jobs-list"></div>
 </section>
 

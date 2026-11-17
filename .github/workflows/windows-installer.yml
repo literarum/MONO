@@ -97,14 +97,24 @@ jobs:
           $dir = Join-Path $env:RUNNER_TEMP 'MONO Transcribe'
           $env:Path = "$env:SystemRoot\system32;$env:SystemRoot"
           $env:MONO_HOME = Join-Path $env:RUNNER_TEMP 'mono-home-2'
+          $env:MONO_DEFAULT_LIBRARY_ROOT = Join-Path $env:RUNNER_TEMP 'MONO Library'
           $job = Start-Process "$dir\runtime\python\python.exe" -ArgumentList "`"$dir\app\launcher\mono_launcher.py`"",'--dev','--smoke','--smoke-hold','40' -PassThru -WindowStyle Hidden
           $health = $null
           for ($i = 0; $i -lt 60 -and -not $health; $i++) { Start-Sleep 1; try { $health = Invoke-RestMethod 'http://127.0.0.1:4173/api/health?wait=tools' -TimeoutSec 70 } catch {} }
           $health | ConvertTo-Json
           if (-not $health.ffmpeg -or -not $health.ffprobe) { throw 'Installed app reports FFmpeg missing' }
-          $session = Invoke-WebRequest 'http://127.0.0.1:4173/api/local/session' -SessionVariable web -UseBasicParsing
-          $caps = Invoke-RestMethod 'http://127.0.0.1:4173/api/local/capture/capabilities' -WebSession $web
+          $session = Invoke-RestMethod 'http://127.0.0.1:4173/api/local/session' -SessionVariable web
+          $headers = @{ 'X-Mono-CSRF' = $session.csrf; 'Origin' = 'http://127.0.0.1:4173' }
+          # Same as the first-run assistant: create the archive in the default place.
+          Invoke-RestMethod 'http://127.0.0.1:4173/api/local/library/configure' -Method Post -WebSession $web -Headers $headers -ContentType 'application/json' -Body '{"useDefault":true}' | ConvertTo-Json
+          $pre = Invoke-RestMethod 'http://127.0.0.1:4173/api/local/preflight' -WebSession $web -TimeoutSec 60
+          $pre | ConvertTo-Json -Depth 5
+          if (-not $pre.canRecord) { throw 'Pre-flight check blocks recording on a fresh install' }
+          $caps = Invoke-RestMethod 'http://127.0.0.1:4173/api/local/capture/capabilities' -WebSession $web -TimeoutSec 30
+          for ($i = 0; $i -lt 20 -and -not $caps.ready -and $caps.supported -ne $false; $i++) { Start-Sleep 1; $caps = Invoke-RestMethod 'http://127.0.0.1:4173/api/local/capture/capabilities' -WebSession $web }
           $caps | ConvertTo-Json -Depth 5
+          # The runner has no audio endpoints; the helper must still start and answer.
+          if ($caps.reason -eq 'HELPER_UNAVAILABLE') { throw 'Bundled MonoAudio.exe was not found by the installed app' }
           Stop-Process -Id $job.Id -Force -ErrorAction SilentlyContinue
 
       - uses: actions/upload-artifact@v4

@@ -179,7 +179,7 @@ function renderRoute({preserveDrawer=false}={}){
   if(view==='settings')document.querySelectorAll('.archive-recovery-notice').forEach(notice=>notice.remove());
   $$('.view').forEach(el=>el.classList.toggle('active',el.id==='view-'+view));
   $$('.nav-link[data-view]').forEach(el=>(el.classList.toggle('selected',el.dataset.view===view),el.setAttribute('aria-current',el.dataset.view===view?'page':'false')));
-  const titles={dashboard:'Обзор',record:'Студия записи',library:'Библиотека',jobs:'Обработка',editor:'Редактор',settings:'Настройки'};
+  const titles={dashboard:'Обзор',record:'Студия записи',library:'Библиотека',jobs:'Расшифровка',editor:'Редактор',settings:'Настройки'};
   $('#current-breadcrumb').textContent=titles[view];
   if(!preserveDrawer)closeDrawer('route');
   if(view==='library')renderLibrary();
