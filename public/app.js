@@ -13,6 +13,7 @@ import {mountGuidance,mountHelp} from './help.js';
 import {MediaInterlock} from './media-interlock.js';
 import {AudioReview} from './audio-review.js';
 import {captureSelection,selectionKey} from './transcription-selection.js';
+import {Preflight,mountPreflight} from './preflight.js';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const setText=(selector,value)=>{const element=$(selector);if(element.textContent!==value)element.textContent=value};
@@ -27,16 +28,30 @@ const shortTime=n=>{
 const sizeText=n=>n>=1024**2?`${(n/1024**2).toFixed(1)} МБ`:`${Math.round(n/1024)} КБ`;
 const money=n=>new Intl.NumberFormat('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n);
 const MODEL_PRICE=.04;
-const DEFAULTS={theme:'dark',profile:'standard',rate:83.0784,prompt:''};
+const DEFAULTS={theme:'system',profile:'standard',rate:83.0784,prompt:''};
 const settings={...DEFAULTS,...readSettings()};
 const state={records:[],view:'dashboard',recorder:null,recordingId:null,capture:null,health:null,
   editorId:null,editorPage:0,playerURL:null,pollBusy:false,recordBusy:false,pendingEdits:new Map(),failedEdits:new Map(),visibleSegments:new Map()};
 let credentialForm=null,pendingTranscriptionId=null;
 let nativeController=null,captureSources=null,nativeCompleted=null,nativeFrame=0,nativeInitializing=null,setupWindow=null,setupOpening=null;
-let mediaInterlock=null,audioReview=null;
+let mediaInterlock=null,audioReview=null,preflight=null;
 function pauseAudition(){audioReview?.player.pause();if(mediaInterlock)mediaInterlock.pauseAll();else document.querySelectorAll('audio,video').forEach(media=>media.pause())}
 function canAudition(){if(storageDetails().local&&(!nativeController?.snapshot.connected||captureActive(nativeController.snapshot))){notify('Завершите запись перед прослушиванием, чтобы звук плеера не попал в неё.','error');return false}return true}
 async function playAudition(media){if(!canAudition())return;try{if(storageDetails().local){if(!mediaInterlock)throw new Error('Дождитесь подключения модуля записи.');await mediaInterlock.play(media)}else await media.play()}catch(error){if(error.name!=='AbortError')notify(error.message||'Не удалось воспроизвести аудио.','error')}}
+/** Warn while recording, not after: a silent or clipping input is fixable only now. */
+const captureHealth={session:null,lastSound:0,clipUntil:0};
+function captureHealthHint(value){
+ const now=performance.now();
+ if(captureHealth.session!==value.sessionId){Object.assign(captureHealth,{session:value.sessionId,lastSound:now,clipUntil:0})}
+ if(value.state!=='recording'){captureHealth.lastSound=now;return ''}
+ const levels=Object.values(value.levels||{}).filter(level=>Number.isFinite(level?.rms)&&(level.ageMs??0)<3000);
+ // −50 dBFS RMS: below any normal speech, above typical digital silence.
+ if(!levels.length||levels.some(level=>level.rms>0.00316))captureHealth.lastSound=now;
+ if(levels.some(level=>level.clippedFrames>=3))captureHealth.clipUntil=now+4000;
+ if(now-captureHealth.lastSound>10000)return ' · ⚠ Микрофон молчит больше 10 с — проверьте выбранный вход и его громкость';
+ if(now<captureHealth.clipUntil)return ' · ⚠ Перегрузка входа — уменьшите усиление микрофона или отодвиньтесь';
+ return '';
+}
 function onNativeState(value){
  const wasActive=Boolean(state.capture?.native&&captureActive(state.capture.snapshot)&&state.capture.id===value.recordId);
  const active=captureActive(value);captureSources?.setBusy(active);
@@ -51,7 +66,7 @@ function onNativeState(value){
  $('#pause-record').hidden=!active;$('#stop-record').hidden=!active;
  $('#pause-record').disabled=!value.connected||Boolean(value.pendingAction)||!['recording','paused'].includes(value.state);
  $('#stop-record').disabled=value.state==='stopping';$('#pause-record').innerHTML=icon(value.state==='paused'?'play':'pause')+(value.state==='paused'?' Продолжить':' Пауза');
- setText('#record-saved',!value.connected?'Связь потеряна. Остановка и сохранение не подтверждены.':value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве: '+durationText(value.duration):value.errorCode?captureFailureMessage(value):'Аудио сохраняется в выбранной папке');
+ setText('#record-saved',!value.connected?'Связь потеряна. Остановка и сохранение не подтверждены.':value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве: '+durationText(value.duration)+captureHealthHint(value):value.errorCode?captureFailureMessage(value):'Аудио сохраняется в выбранной папке');
  updateRecordUI();
  if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void refresh().catch(e=>notify(e.message,'error'));if(wasActive)notify(value.state==='ready'?'Запись сохранена в библиотеке.':captureFailureMessage(value),value.state==='ready'?'info':'error')}
 }
@@ -63,9 +78,13 @@ async function initializeNative(local){
   mediaInterlock=new MediaInterlock({status:options=>client.status(options),channel:typeof BroadcastChannel==='function'?new BroadcastChannel('mono-media'):null});
   nativeController=new NativeCaptureController(client,{onState:onNativeState,onError:error=>notify(error.message,'error'),onIntent:options=>mediaInterlock.beforeCapture(options)});
   const studio=$('#audio-source').closest('.side-card');studio.replaceChildren();mountCaptureSources(studio,{model:captureSources,onError:error=>notify(error.message,'error')});
-  const card=document.createElement('article');card.className='glass settings-card';card.innerHTML='<h2>Источники записи</h2><div class="settings-capture-sources"></div><button type="button" class="btn btn-outline btn-small" id="check-native-sound">Проверить звук</button>';$('#view-settings .settings-grid').prepend(card);mountCaptureSources(card.querySelector('.settings-capture-sources'),{model:captureSources,onError:error=>notify(error.message,'error')});card.querySelector('button#check-native-sound').onclick=()=>void showSetup('sound').catch(error=>notify(error.message,'error'));
+  const card=document.createElement('article');card.className='glass settings-card';card.innerHTML='<div class="settings-card-icon"><svg><use href="#i-mic"/></svg></div><h2>Источники записи</h2><div class="settings-capture-sources"></div><button type="button" class="btn btn-outline btn-small" id="check-native-sound">Проверить звук</button>';$('#view-settings .settings-grid').prepend(card);mountCaptureSources(card.querySelector('.settings-capture-sources'),{model:captureSources,onError:error=>notify(error.message,'error')});card.querySelector('button#check-native-sound').onclick=()=>void showSetup('sound').catch(error=>notify(error.message,'error'));
   const guide=$('.studio-side>.side-card:not(.capture-sources)');guide.replaceChildren();mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
   const help=document.createElement('article');help.className='glass settings-card';mountHelp(help);$('#view-settings .settings-grid').append(help);
+  // Pre-flight check: compact (problems only) in the studio, full in settings.
+  preflight=new Preflight(local);
+  const studioCheck=document.createElement('div');studioCheck.className='glass side-card';$('.studio-side').prepend(studioCheck);mountPreflight(studioCheck,{model:preflight,compact:true,onError:()=>{}});
+  const settingsCheck=document.createElement('article');settingsCheck.className='glass settings-card';settingsCheck.innerHTML='<div class="settings-card-icon"><svg><use href="#i-check"/></svg></div><h2>Предполётная проверка</h2><div></div>';$('#view-settings .settings-grid').prepend(settingsCheck);mountPreflight(settingsCheck.lastElementChild,{model:preflight,onError:error=>notify(error.message,'error')});
  }
  await nativeController.connect();
  await captureSources.load();
@@ -76,6 +95,18 @@ async function showSetup(initialStep=null){
  if(setupWindow)return;if(setupOpening){await setupOpening;if(initialStep&&!setupWindow)return showSetup(initialStep);return}setupOpening=(async()=>{const local=await localLibraryClient();if(!local)return;
  const opened=await openOnboarding({library:local,storage:storageDetails,configure:configureLibrary,choose:chooseLibraryFolder,ensureNative:()=>initializeNative(local),onArchive:async()=>{updateStorageSettings();await refresh()},onComplete:()=>{setupWindow=null;void credentialForm?.refresh()},onError:error=>notify(error.message,'error'),helpTemplate:$('#groq-settings-card .setup-details'),initialStep,canPlay:canAudition,playAudio:audio=>mediaInterlock.play(audio)});setupWindow=opened&&!opened.closed?opened:null;
  })().finally(()=>{setupOpening=null});return setupOpening;
+}
+/** Transcriber controls: Ctrl+Space / F9 / Space play–pause (pausing steps back 2 s), Alt+←/→ seek ±5 s. */
+async function transcriptHotkey(action){
+ const review=audioReview?.player,element=$('#audio-element');
+ const playing=review?review.snapshot.playing:!element.paused,time=review?review.time:element.currentTime;
+ const seek=async seconds=>{seconds=Math.max(0,seconds);if(review)await review.seek(seconds);else element.currentTime=seconds};
+ if(action==='toggle'){
+  if(playing){if(review)review.pause();else element.pause();await seek(time-2);return}
+  if(review){if(canAudition())await review.play()}else{if(!element.src){notify('Аудиофайл недоступен','error');return}await playAudition(element)}
+  return;
+ }
+ await seek(time+action);
 }
 function readSettings(){try{return JSON.parse(localStorage.getItem('mono-settings')||'{}')}catch{return {}}}
 function saveSettings(){try{localStorage.setItem('mono-settings',JSON.stringify(settings))}catch{notify('Не удалось сохранить настройки','error')}}
@@ -117,7 +148,10 @@ function closeModal(){
 function statusLabel(r){
   if(r.status==='completed')return 'Готово';
   if(r.status==='processing'||r.status==='queued')return 'Обрабатывается';
-  if(r.status==='recording')return 'Идёт запись';
+  if(r.status==='recording'||r.status==='requesting')return 'Идёт запись';
+  if(r.status==='paused')return 'Запись на паузе';
+  if(r.status==='importing')return 'Импорт не завершён';
+  if(r.status==='damaged')return 'Аудио повреждено';
   if(r.status==='uploading')return 'Загрузка / восстановление';
   if(r.status==='failed')return 'Ошибка обработки';
   if(r.status==='cancelled')return 'Отменено';
@@ -160,13 +194,15 @@ async function refresh(){
 }
 function renderDashboard(){
   const list=state.records,totalSeconds=list.reduce((s,r)=>s+(r.duration||0),0);
-  const month=new Date().toISOString().slice(0,7);
-  const monthRecords=list.filter(r=>r.status==='completed'&&(r.completedAt||'').slice(0,7)===month);
+  // Calendar month in the person's time zone, not UTC.
+  const monthOf=value=>{const d=new Date(value);return Number.isNaN(d.getTime())?'':`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`};
+  const month=monthOf(Date.now());
+  const monthRecords=list.filter(r=>r.status==='completed'&&monthOf(r.completedAt)===month);
   const monthSeconds=monthRecords.reduce((s,r)=>s+(r.duration||0),0);
   const usd=list.filter(r=>r.estimatedUSD &&
-    (r.transcriptionStartedAt||r.completedAt||r.createdAt||'').slice(0,7)===month
+    monthOf(r.transcriptionStartedAt||r.completedAt||r.createdAt)===month
   ).reduce((s,r)=>s+r.estimatedUSD,0);
-  $('#metric-total').textContent=String(list.length).padStart(2,'0');
+  $('#metric-total').textContent=String(list.length);
   $('#metric-duration').innerHTML=`${Math.floor(totalSeconds/3600)}<small>ч</small> ${String(Math.floor(totalSeconds%3600/60)).padStart(2,'0')}<small>м</small>`;
   $('#metric-month').innerHTML=`${Math.round(monthSeconds/60)}<small>мин</small>`;
   $('#metric-cost').innerHTML=`${money(usd*settings.rate)} <small>₽</small>`;
@@ -185,13 +221,13 @@ async function renderLibrary(){
   if(generation!==libraryGeneration)return;
   let records=source.filter(r=>{
     if(filter==='completed'&&r.status!=='completed')return false;
-    if(filter==='saved'&&r.status==='completed')return false;
+    if(filter==='saved'&&['completed','recording','requesting','paused','damaged','importing','migrating'].includes(r.status))return false;
     const texts=(r.transcript?.segments||[]).map(s=>s.text).join(' ');
     return local||!q||`${r.title} ${texts}`.toLowerCase().includes(q);
   });
   if(sort==='oldest')records=records.sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
   if(sort==='name')records=records.sort((a,b)=>a.title.localeCompare(b.title,'ru'));
-  $('#library-count').textContent=`${records.length} ${records.length===1?'ЗАПИСЬ':'ЗАПИСЕЙ'}`;
+  $('#library-count').textContent=`${records.length} ${({one:'ЗАПИСЬ',few:'ЗАПИСИ'})[new Intl.PluralRules('ru-RU').select(records.length)]||'ЗАПИСЕЙ'}`;
   $('#library-list').innerHTML=records.length?records.map(r=>`
    <article class="record-card glass"><div class="record-card-head"><span class="item-icon">${icon('file')}</span><span class="record-status">${statusLabel(r)}</span></div>
    <h3 title="${h(r.title)}">${h(r.title)}</h3><p class="record-sub">${fmtDate(r.createdAt)} · ${h(r.source||'Импорт')}</p>
@@ -267,7 +303,7 @@ function chosenMime(){
 }
 async function beginRecord(){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
- if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');await nativeController.start(await captureSources.selection())}catch(error){notify(error.message,'error')}return}
+ if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}await nativeController.start(await captureSources.selection())}catch(error){if(error?.name!=='AbortError')notify(error.message||'Не удалось начать запись.','error')}return}
  if(state.recordBusy||state.capture)return;
  state.recordBusy=true;
  let capture=null;
@@ -800,6 +836,16 @@ function wire(){
   const ok=await navigator.storage.persist();$('#storage-persistence').textContent=ok?'Постоянное хранение предоставлено':'Браузер не предоставил постоянное хранение';notify(ok?'Хранение защищено от автоматического вытеснения.':'Постоянное хранение не предоставлено.')
  };
  $('#modal-close').onclick=closeModal;$('#modal').onclick=e=>{if(e.target===$('#modal'))closeModal()};
+ // Closing the window ends a browser-microphone recording; ask first.
+ addEventListener('beforeunload',e=>{if(captureActive(nativeController?.snapshot)||state.capture){e.preventDefault();e.returnValue=''}});
+ document.addEventListener('keydown',e=>{
+  if(!$('#modal').hidden||e.defaultPrevented||state.view!=='editor')return;
+  const ctrl=e.ctrlKey||e.metaKey,typing=e.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])');
+  const toggle=ctrl&&e.code==='Space'||e.key==='F9'||!typing&&!ctrl&&!e.altKey&&e.code==='Space';
+  const jump=e.altKey&&!ctrl&&(e.key==='ArrowLeft'?-5:e.key==='ArrowRight'?5:0);
+  if(!toggle&&!jump)return;
+  e.preventDefault();void transcriptHotkey(toggle?'toggle':jump).catch(error=>{if(error?.name!=='AbortError')notify(error.message||'Не удалось управлять воспроизведением.','error')});
+ });
  document.addEventListener('keydown',e=>{
   if($('#modal').hidden)return;
   if(e.key==='Escape'){closeModal();return}
@@ -840,7 +886,7 @@ async function init(){
   const text=document.createElement('span');text.textContent=storage.transferRecoveryError?'Не удалось прочитать журнал копирования. Исходный архив сохранён.':'Копирование не завершено. Его можно продолжить в настройках.';
   const button=document.createElement('button');button.className='btn btn-outline btn-small';button.textContent='Открыть настройки';button.onclick=()=>{go('settings');$('#transfer-recovery')?.scrollIntoView({block:'center'});notice.remove()};notice.append(text,button);$('#toast-area').append(notice);
  }
- void pollJobs();setInterval(()=>{void pollJobs()},3500);
+ void pollJobs();setInterval(()=>{if(!document.hidden)void pollJobs()},3500);document.addEventListener('visibilitychange',()=>{if(!document.hidden)void pollJobs()});
  if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{})}
 }
 function updateStorageSettings(){

@@ -29,6 +29,7 @@ def capsule(root):
     (root/'PROVENANCE.json').write_text(json.dumps(value),encoding='utf-8');return value
 
 class CompiledCorePackagingTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_explicit_compiled_input_stages_active_binary_and_omits_core_python_source(self):
         with tempfile.TemporaryDirectory() as folder:
             base=Path(folder);capsule(base/'input')
@@ -41,6 +42,7 @@ class CompiledCorePackagingTests(unittest.TestCase):
     def test_explicit_missing_compiled_input_cannot_fall_back_to_source(self):
         with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,{'MONO_BUILD_CORE_BUNDLE':str(Path(folder)/'missing')}):
             with self.assertRaisesRegex(RuntimeError,'core|Core|compiled'):builder.prepare(Path(folder)/'stage')
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_active_binary_checksum_and_cpu_are_verified(self):
         with tempfile.TemporaryDirectory() as folder:
             base=Path(folder);capsule(base/'input')
@@ -63,6 +65,7 @@ class CompiledCorePackagingTests(unittest.TestCase):
                 elif case=='null-root':value=None
                 file.write_text(json.dumps(value),encoding='utf-8')
                 with patch.dict(os.environ,{'MONO_BUILD_CORE_BUNDLE':str(base/'input')}),self.assertRaises(RuntimeError):builder.prepare(base/'stage')
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_compiled_build_selects_native_module_and_explicit_standard_library_imports(self):
         with tempfile.TemporaryDirectory() as folder:
             base=Path(folder);capsule(base/'input')
@@ -78,6 +81,7 @@ class CompiledCorePackagingTests(unittest.TestCase):
                 with patch.dict(sys.modules,{module:fake}),patch.object(mono,'bundled',return_value=True),patch.object(mono,'assets_root',return_value=ROOT),patch.object(mono,'verify_runtime_manifest',side_effect=mono.LaunchError('Compiled core damaged')) as verify,patch.object(mono.sys,'stderr',errors):
                     self.assertEqual(mono.main([option]),1)
                 verify.assert_called_once();fake.main.assert_not_called()
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_extra_python_package_cannot_shadow_the_native_import(self):
         with tempfile.TemporaryDirectory() as folder:
             base=Path(folder);capsule(base/'input')

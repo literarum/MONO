@@ -7,10 +7,11 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test",
-    "check": "node --check server.mjs && node --check public/app.js && node --check public/db.js && node --check public/backup-core.js && node --check public/sw.js && node --check healthcheck.mjs",
+    "check": "for f in server.mjs core.mjs healthcheck.mjs public/*.js public/ui/*.js backend/*/*.mjs; do node --check \"$f\" || exit 1; done",
     "smoke": "node --test tests/proxy.test.mjs",
     "launcher:smoke": "python3 launcher/mono_launcher.py --dev --smoke",
-    "launcher:test": "python3 -m unittest discover -s launcher/tests -v"
+    "launcher:test": "cd launcher && python3 -m unittest discover -s tests -v",
+    "test:e2e": "node --test tests/e2e/*.e2e.mjs"
   },
   "engines": {
     "node": ">=20"

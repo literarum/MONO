@@ -15,6 +15,7 @@ SOURCE=ROOT/'launcher/licenses/windows-python-dependencies'
 
 class DependencyNoticeTests(unittest.TestCase):
     def require_validator(self):self.assertIsNotNone(notices,'Shared dependency-notice validator is missing')
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_prepare_delivers_the_complete_reviewed_corpus(self):
         with tempfile.TemporaryDirectory() as folder:
             stage=builder.prepare(Path(folder)/'stage');manifest=json.loads((stage/'runtime/manifest.json').read_text())
@@ -53,6 +54,7 @@ class DependencyNoticeTests(unittest.TestCase):
             copied=Path(folder)/'input';shutil.copytree(SOURCE,copied);index=copied/'INDEX.json';value=json.loads(index.read_text());file=copied/value['files'][0]['path'];file.write_bytes(b'replacement')
             value['files'][0].update(size=file.stat().st_size,sha256=hashlib.sha256(file.read_bytes()).hexdigest());index.write_text(json.dumps(value))
             with self.assertRaisesRegex(RuntimeError,'index|Index'):notices.inspect_input(copied)
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_build_environment_rejects_stale_dependency_or_sdk_bytes(self):
         self.require_validator();value=notices.inspect_input(SOURCE);notices.verify_build_environment(value)
         original=metadata.version

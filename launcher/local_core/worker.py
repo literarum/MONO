@@ -1,5 +1,5 @@
 """Private stdin/stdout worker. Never expose this process as a network server."""
-import json, sys,threading,queue
+import json, sys,threading,queue,time
 from collections import OrderedDict
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
@@ -108,8 +108,13 @@ def main():
         except (OSError,UnicodeError):requests.put(CoreError('INVALID_JSON','Некорректное сообщение'))
         finally:eof.set();requests.put(None)
     threading.Thread(target=read_requests,name='mono-private-control',daemon=True).start()
+    from local_core.keep_awake import KeepAwake
+    awake=KeepAwake()
     while True:
-        if config is not None and config._capture is not None:config._capture.tick()
+        if config is not None and config._capture is not None:
+            config._capture.tick()
+            # Same thread every time: Windows execution-state assertions are per thread.
+            awake.set(config._capture.active)
         try:line=requests.get(timeout=.05)
         except queue.Empty:continue
         if line is None:break
@@ -121,11 +126,19 @@ def main():
             recent[request_id]=True
             if len(recent)>4096:recent.popitem(last=False)
             if eof.is_set() and request['method'] in ['capture.start','capture.test','capture.browser_start']:raise CoreError('CANCELLED','Приложение завершает работу')
-            reply={'v':1,'id':request_id,'result':dispatch(request['method'],request.get('params',{}))}
+            began=time.monotonic()
+            try:reply={'v':1,'id':request_id,'result':dispatch(request['method'],request.get('params',{}))}
+            finally:
+                # This loop is single-threaded: while one long request runs, capture
+                # heartbeats and segments wait in the queue. Never count that wait
+                # as a lost microphone/helper.
+                stalled=time.monotonic()-began
+                if stalled>1 and config is not None and config._capture is not None:config._capture.grace(stalled)
         except Exception as error:reply=error_reply(request_id,error)
         encoded=json.dumps(reply,ensure_ascii=False,separators=(',',':'))
         if len(encoded.encode('utf-8'))>MAX_LINE:encoded=json.dumps(error_reply(request_id,CoreError('TOO_LARGE','Результат слишком большой')))
         print(encoded,flush=True)
+    awake.set(False)
     if config:config.close()
     return 0
 

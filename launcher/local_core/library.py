@@ -92,7 +92,7 @@ class Library:
         validate_record(record)
         metadata={k:v for k,v in record.items() if not k.startswith('_') and k!='transcript'}
         if len(json.dumps(metadata,ensure_ascii=False,separators=(',',':')).encode('utf-8'))>48000:failure('INVALID_RECORD_SIZE')
-    def _commit(self,record):
+    def _commit(self,record,appended=None):
         self._settle_pending()
         self._validate_commit(record)
         if record['id'] in self._transcript_errors:
@@ -103,15 +103,18 @@ class Library:
         self._pending_commits.add(record['id'])
         atomic_json(self.manifest(record['id']),record)
         self._sync_transcript(record,source)
-        self._index_record(record)
+        self._index_record(record,appended)
         self._pending_commits.discard(record['id'])
         return self._public(record)
-    def _index_record(self,record):
+    def _index_record(self,record,appended=None):
         encoded=json.dumps(record,ensure_ascii=False,separators=(',',':'))
         with self.db:
             self.db.execute('INSERT INTO records(id,title,created_at,version,status,trashed,data) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,version=excluded.version,status=excluded.status,trashed=excluded.trashed,data=excluded.data',(record['id'],record['title'],record['createdAt'],record['version'],record['status'],int(record.get('_trashed',False)),encoded))
-            self.db.execute('DELETE FROM segments WHERE record_id=?',(record['id'],))
-            for part in record.get('_segments',[]):self.db.execute('INSERT INTO segments VALUES(?,?,?,?,?,?,?)',(record['id'],part['track'],part['index'],part['frames'],part['sha256'],part['path'],part['bytes']))
+            # Live capture appends one segment every ~2 s. Rewriting every row
+            # made each commit O(segments) and long recordings O(n^2).
+            parts=[appended] if appended is not None else record.get('_segments',[])
+            if appended is None:self.db.execute('DELETE FROM segments WHERE record_id=?',(record['id'],))
+            for part in parts:self.db.execute('INSERT OR REPLACE INTO segments VALUES(?,?,?,?,?,?,?)',(record['id'],part['track'],part['index'],part['frames'],part['sha256'],part['path'],part['bytes']))
     def _settle_pending(self):
         # An I/O failure may occur after durable publication but before its ACK.
         # Reconcile before serving stale versions or accepting another mutation.
@@ -262,7 +265,7 @@ class Library:
         if 'transcript' in patch:patch={**patch,'transcript':self._transcript(record,patch['transcript'])}
         record.update(copy.deepcopy(patch));record['version']+=1
         return self._commit(record)
-    def commit_segment(self,rid,track,index,staged_file,duration_frames,sha256,format_info=None):
+    def commit_segment(self,rid,track,index,staged_file,duration_frames,sha256,format_info=None,record_updates=None):
         record=self._raw(rid)
         if record.get('_trashed'):failure('TRASHED')
         if track not in ['mic','system','mix','original']:failure('INVALID_TRACK')
@@ -281,8 +284,12 @@ class Library:
         relative=Path('records')/rid/'original'/track/f'{index:06}.part';target=confined(self.root,*relative.parts)
         if target.exists() and digest(target)!=sha256:failure('SEGMENT_CONFLICT')
         size=source.stat().st_size
-        record['_segments'].append({'track':track,'index':index,'frames':duration_frames,'sha256':sha256,'path':relative.as_posix(),'bytes':size,**(format_info or {})})
+        segment={'track':track,'index':index,'frames':duration_frames,'sha256':sha256,'path':relative.as_posix(),'bytes':size,**(format_info or {})}
+        record['_segments'].append(segment)
         record['size']+=size;record['version']+=1
+        # Live capture metadata (duration) is committed atomically with the
+        # audio instead of a second full manifest rewrite per segment.
+        if record_updates:record.update(record_updates)
         record['tracks']=[{'id':name,'frames':sum(p['frames'] for p in record['_segments'] if p['track']==name),'segmentCount':sum(p['track']==name for p in record['_segments'])} for name in dict.fromkeys(p['track'] for p in record['_segments'])]
         for descriptor in record['tracks']:
             part_source=next(p for p in record['_segments'] if p['track']==descriptor['id'])
@@ -292,7 +299,7 @@ class Library:
         target.parent.mkdir(parents=True,exist_ok=True)
         with source.open('r+b') as stream:stream.flush();os.fsync(stream.fileno())
         publish(source,target)
-        self._commit(record)
+        self._commit(record,segment)
         return {'recordId':rid,'track':track,'index':index,'sha256':sha256,'committedFrames':sum(p['frames'] for p in record['_segments'] if p['track']==track),'version':record['version']}
     def trash(self,rid,expected_version):
         record=self._raw(rid)

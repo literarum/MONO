@@ -10,7 +10,7 @@ async function context(t){
  t.after(async()=>{await worker.close();await new Promise(r=>server.close(r));await rm(root,{recursive:true,force:true,maxRetries:10,retryDelay:50});for(const [k,v] of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v});
  return {root,requests,options,setStatus:value=>status=value,setErrorCode:value=>errorCode=value,setDelay:value=>delay=value,restart:async()=>{await worker.close();worker=new WorkerClient()}};
 }
-test('verified key reaches real user vault, survives worker restart and never enters public status or plaintext',async t=>{
+test('verified key reaches real user vault, survives worker restart and never enters public status or plaintext',{skip:!['win32','darwin'].includes(process.platform)&&'requires an OS credential vault (Windows DPAPI or macOS Keychain)'},async t=>{
  const c=await context(t);let manager=new KeyManager(c.options());assert.equal((await manager.status()).configured,false);
  const saved=await manager.configure(CANARY);assert.equal(saved.configured,true);assert.equal(saved.verified,true);assert.equal(saved.managed,false);assert.ok(!JSON.stringify(saved).includes(CANARY));assert.equal(await manager.getKey(),CANARY);assert.deepEqual(c.requests.map(r=>[r.method,r.url]),[['GET','/openai/v1/models']]);
  assert.equal(c.requests[0].authorization,'Bearer '+CANARY);if(process.platform==='win32')assert.ok(!(await readFile(path.join(c.root,'config/groq.dpapi'))).includes(Buffer.from(CANARY)));

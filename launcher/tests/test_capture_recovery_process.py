@@ -13,9 +13,9 @@ def crash_child(phase,root):
         if phase=='before-move':os._exit(73)
         original_publish(source,target)
         if phase=='after-move':os._exit(73)
-    def commit(self,record):
+    def commit(self,record,*args):
         if record.get('_segments') and phase=='before-manifest':os._exit(73)
-        result=original_commit(self,record)
+        result=original_commit(self,record,*args)
         if record.get('_segments') and phase=='after-manifest':os._exit(73)
         return result
     capture.publish=publish;Library._commit=commit

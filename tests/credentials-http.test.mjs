@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import http from 'node:http';import {once} from 'node:events';import {readFile,readdir} from 'node:fs/promises';import path from 'node:path';import {localServer,wavFixture} from './helpers/local-server.mjs';
 const CANARY='gsk_'+('HttpSecretCanary17'.repeat(4));
-test('actual HTTP setup validates models only, stores in OS vault, survives restart and denies any HTTP key read',async t=>{
+test('actual HTTP setup validates models only, stores in OS vault, survives restart and denies any HTTP key read',{skip:!['win32','darwin'].includes(process.platform)&&'requires an OS credential vault (Windows DPAPI or macOS Keychain)'},async t=>{
  const requests=[];let responseStatus=200;const provider=http.createServer((req,res)=>{requests.push({method:req.method,url:req.url,authorization:req.headers.authorization});res.writeHead(responseStatus,{'Content-Type':'application/json'});res.end(JSON.stringify(responseStatus===200?{data:[{id:'whisper-large-v3-turbo'}]}:{error:{message:CANARY}}))});provider.listen(0,'127.0.0.1');await once(provider,'listening');t.after(()=>new Promise(r=>provider.close(r)));
  const server=await localServer(t,{MONO_GROQ_ENDPOINT:`http://127.0.0.1:${provider.address().port}/openai/v1/audio/transcriptions`});let headers=await server.session();
  const call=async(operation,method='GET',body)=>{const r=await fetch(server.url+'/api/local/credentials/'+operation,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,data:await r.json()}};

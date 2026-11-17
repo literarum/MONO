@@ -1,9 +1,11 @@
+import sys
 import importlib.util,json,os,subprocess,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[2]
 class RuntimeLicenseTests(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get('MONO_BUILD_FFMPEG_BUNDLE'),'Requires MONO_BUILD_FFMPEG_BUNDLE (built Windows FFmpeg)')
     def test_shared_input_copies_every_required_library_and_license_and_rejects_missing_or_changed_dll(self):
         from ffmpeg_bundle import read_bundle,stage_support,verify_support
         directory=Path(os.environ['MONO_BUILD_FFMPEG_BUNDLE']);value=read_bundle(directory)
@@ -24,6 +26,7 @@ class RuntimeLicenseTests(unittest.TestCase):
             changed=copy.deepcopy(support);wrong=bytearray(original);offset=struct.unpack_from('<I',wrong,60)[0];wrong[offset+4:offset+6]=b'\x64\xaa';file.write_bytes(wrong)
             next(v for v in changed['files'] if v['path']==dlls[0]['path'])['sha256']=hashlib.sha256(wrong).hexdigest()
             with self.assertRaises(RuntimeError):verify_support(runtime,changed)
+    @unittest.skipUnless(os.environ.get('MONO_BUILD_FFMPEG_BUNDLE'),'Requires MONO_BUILD_FFMPEG_BUNDLE (built Windows FFmpeg)')
     def test_runtime_support_duplicate_and_path_traversal_cannot_replace_a_library(self):
         from ffmpeg_bundle import read_bundle,stage_support,verify_support
         import copy
@@ -49,6 +52,7 @@ class RuntimeLicenseTests(unittest.TestCase):
             with self.subTest(result=str(result)):
                 with patch('runtime_licenses.subprocess.run',side_effect=result if isinstance(result,Exception) else None,return_value=result):
                     with self.assertRaises(RuntimeError):inspect_license(Path('ffmpeg.exe'),'ffmpeg')
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_selected_runtime_is_inspected_before_copying_into_stage(self):
         spec=importlib.util.spec_from_file_location('license_stage_builder',ROOT/'launcher/build_portable.py');builder=importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
         with tempfile.TemporaryDirectory() as folder:

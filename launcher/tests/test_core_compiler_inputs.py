@@ -1,3 +1,4 @@
+import sys,os
 import hashlib,importlib.util,io,json,struct,tarfile,tempfile,unittest,zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -50,6 +51,7 @@ class CompilerInputTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):fetch.acquire(base/'output',archive=archive)
                     extract.assert_not_called()
                 self.assertFalse((base/'escape.exe').exists())
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_wrong_nuitka_hash_and_unreviewed_version_never_start_compiler(self):
         self.assertIsNotNone(builder,'Canonical native-core builder is missing')
         for version in ['4.3.1','999.0']:
@@ -78,6 +80,7 @@ class CompilerInputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);(root/'schema.sql').write_text('SELECT 1;');(root/'worker.py').write_text('import local_core_unreviewed_dependency\n')
             with self.assertRaisesRegex(ValueError,'dependency'):source_inventory(root)
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_source_set_or_snapshot_drift_cannot_emit_a_capsule(self):
         self.assertIsNotNone(builder,'Canonical native-core builder is missing')
         for change in ['added-source','changed-snapshot']:

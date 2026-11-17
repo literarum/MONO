@@ -10,6 +10,7 @@ from mono_launcher import verify_runtime_manifest,LaunchError
 NOTICE_SHA='935cf13e19f8c31b497d20b05d73623431a226b230c3599bc30fa3348979bc68'
 
 class PythonNoticeTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_prepare_inventories_the_exact_full_python_notice(self):
         with tempfile.TemporaryDirectory() as folder:
             stage=builder.prepare(Path(folder)/'stage');notice=stage/'PYTHON_LICENSE.txt'
@@ -31,6 +32,8 @@ class PythonNoticeTests(unittest.TestCase):
                         with self.assertRaisesRegex(RuntimeError,'Python.*license|Python.*notice'):
                             builder.prepare(base/('stage-'+case))
 
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
+
     def test_runtime_rejects_missing_changed_and_removed_inventory(self):
         with tempfile.TemporaryDirectory() as folder:
             stage=builder.prepare(Path(folder)/'stage');notice=stage/'PYTHON_LICENSE.txt'
@@ -44,6 +47,8 @@ class PythonNoticeTests(unittest.TestCase):
                     if case=='removed-inventory':
                         value=json.loads(manifest);value['resources']=[r for r in value['resources'] if r['path']!='PYTHON_LICENSE.txt'];file.write_text(json.dumps(value))
                     with self.assertRaises(LaunchError):verify_runtime_manifest(stage)
+
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
 
     def test_both_formats_include_the_inventoried_notice(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -1,3 +1,4 @@
+import sys,os
 import hashlib,importlib.util,io,json,tempfile,unittest,zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -19,6 +20,7 @@ def zipped(name):
     return raw
 
 class MsvcInputTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
     def test_environment_identifies_the_verified_toolset_and_only_private_paths(self):
         self.assertIsNotNone(fetch,'Canonical reviewed MSVC producer is missing')
         with tempfile.TemporaryDirectory() as folder:

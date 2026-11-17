@@ -154,6 +154,22 @@ async function encodeSegment(job,plan) {
   return output;
 }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+// A window whose loudest sample stays below this cannot contain usable speech.
+// Sending it costs the 10 s billing minimum and invites Whisper's silence
+// hallucinations, so it is transcribed locally as empty.
+const SILENCE_PEAK_DB=-60;
+async function peakDecibels(job,plan){
+  return await new Promise(resolve=>{
+    const child=spawn('ffmpeg',['-hide_banner','-nostats','-ss',String(plan.mediaStart),'-i',job.audioPath,'-t',String(plan.mediaEnd-plan.mediaStart),'-map','0:a:0','-af','volumedetect','-f','null','-'],{stdio:['ignore','ignore','pipe'],windowsHide:true});
+    if(job.id)activeChildren.set(job.id,child);
+    let err='';const timer=setTimeout(()=>child.kill('SIGKILL'),300000);
+    child.stderr.on('data',b=>{err=(err+b.toString()).slice(-8000)});
+    const done=value=>{clearTimeout(timer);if(activeChildren.get(job.id)===child)activeChildren.delete(job.id);resolve(value)};
+    // Any measurement failure means "not proven silent": the segment is sent.
+    child.on('error',()=>done(null));
+    child.on('close',code=>{const match=/max_volume:\s*(-?inf|-?[\d.]+)\s*dB/.exec(err);done(code===0&&match?(match[1].endsWith('inf')?-Infinity:Number(match[1])):null)});
+  });
+}
 function retryDelay(header,attempt){
   const num=Number(header);
   const fromHeader=Number.isFinite(num)&&num>=0?num*1000:
@@ -244,6 +260,12 @@ async function doWork(job){
         }catch{await unlink(cached).catch(()=>{})}
       }
       await update(job,{stage:`Подготовка сегмента ${plan.index+1}/${plans.length}`});
+      const peak=await peakDecibels(job,plan);
+      if(peak!==null&&peak<=SILENCE_PEAK_DB){
+        const silent={text:'',segments:[],skipped:'silence'};
+        await writeAtomic(cached,JSON.stringify(silent));done.push({plan,data:silent});
+        await update(job,{completed:done.length,skippedSilent:(job.skippedSilent||0)+1});continue;
+      }
       const audioFile=await encodeSegment(job,plan);
       let data;
       for(let attempt=0;attempt<4;attempt++){
@@ -324,7 +346,7 @@ async function upload(req,res,url){
   catch{fail(res,400,'Некорректная кодировка подсказки');return}
   if(prompt.length>350){fail(res,400,'Подсказка слишком длинная (не более 350 символов)');return}
   const type=String(req.headers['content-type']||'');
-  const ext=type.includes('ogg')?'ogg':type.includes('mp4')?'mp4':type.includes('mpeg')?'mp3':type.includes('wav')?'wav':type.includes('flac')?'flac':'webm';
+  const ext=type.includes('ogg')?'ogg':/mp4|m4a|aac/.test(type)?'m4a':type.includes('mpeg')?'mp3':type.includes('wav')?'wav':type.includes('flac')?'flac':'webm';
   const id=randomUUID(),filename=path.join(folders.audio,`${id}.${ext}`),tmp=filename+'.part';
   let received=0,saved=false;
   uploadingKeys.add(clientKey);uploadsInFlight++;
@@ -387,7 +409,7 @@ async function route(req,res){
   let url;
   try{url=new URL(req.url,'http://local.invalid')}catch{fail(res,400,'Неверный URL');return}
   if(!acceptableOrigin(req)){fail(res,403,'Запрос отклонён: неверный Origin/Host');return}
-  if(await localRoute(req,res,url,DEPLOY_MODE,{preparation,keyManager,resolveOriginal:(id,options)=>originalMedia.ensure(id,options),submitLibraryJob,isLibraryBusy:()=>uploadsInFlight>0||[...jobs.values()].some(job=>['queued','processing'].includes(job.status))}))return;
+  if(await localRoute(req,res,url,DEPLOY_MODE,{runtime:()=>({ffmpeg:config.ffmpeg,ffprobe:config.ffprobe}),preparation,keyManager,resolveOriginal:(id,options)=>originalMedia.ensure(id,options),submitLibraryJob,isLibraryBusy:()=>uploadsInFlight>0||[...jobs.values()].some(job=>['queued','processing'].includes(job.status))}))return;
   let pathname;
   try{pathname=decodeURIComponent(url.pathname)}catch{fail(res,400,'Некорректное кодирование URL');return}
   if(DEPLOY_MODE==='local'&&(/^\/api\/jobs(?:\/|$)/.test(pathname)||pathname==='/api/metrics')){
@@ -503,7 +525,8 @@ async function main(){
       if(!res.headersSent)fail(res,500,'Внутренняя ошибка сервера');else res.destroy();
     });
   });
-  server.requestTimeout=15*60*1000;
+  // Local imports may be tens of GiB on slow disks; remote uploads stay bounded.
+  server.requestTimeout=DEPLOY_MODE==='local'?6*3600*1000:15*60*1000;
   server.headersTimeout=20000;
   server.keepAliveTimeout=5000;
   server.maxConnections=64;

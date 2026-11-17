@@ -2,3 +2,9 @@
 launcher/build_ffmpeg_windows.py text eol=lf
 # Preserve upstream notice bytes, including their original mixed line endings.
 launcher/licenses/** -text
+
+# One-click installers: cmd/ps1 need CRLF for Windows; shell scripts need LF.
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.command text eol=lf
+*.sh text eol=lf

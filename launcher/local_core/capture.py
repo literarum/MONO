@@ -54,6 +54,12 @@ class CaptureService:
         self.browser=None;self.selected_engine='native';self.saved_bytes=0;self.failure_details=None
     @property
     def active(self):return self.state in ACTIVE or bool(self.browser and self.browser.active)
+    def grace(self,seconds):
+        """Extend liveness deadlines by time the worker spent unable to read capture traffic."""
+        if self.browser and self.browser.active:self.browser.grace(seconds)
+        if self.state in ACTIVE:
+            self.last_seen+=seconds
+            if hasattr(self,'deadline'):self.deadline+=seconds
     def browser_start(self,params):
         if self.active:fail('CAPTURE_BUSY')
         self.close()
@@ -66,11 +72,17 @@ class CaptureService:
     def _command(self):
         if self.command:return list(self.command)
         executable=os.environ.get('MONO_AUDIO_HELPER')
-        if not executable:
-            base=Path(__file__).resolve().parents[2]
-            executable=str(base/'.codex/build'/('windows/MonoAudio.exe' if os.name=='nt' else 'macos/MonoAudio'))
-        path=Path(executable);reject_links(path)
-        return [str(path)] if path.is_file() else None
+        if executable:candidates=[Path(executable)]
+        else:
+            # Development checkouts: the documented build output, then a local
+            # `dotnet build`. Packaged builds always pass MONO_AUDIO_HELPER.
+            base=Path(__file__).resolve().parents[2];name='MonoAudio.exe' if os.name=='nt' else 'MonoAudio'
+            candidates=[base/'.build/capture-windows/bundle'/name,base/'native/windows/bin/Release/net10.0-windows/win-x64'/name,base/'native/windows/bin/Release/net10.0-windows'/name] if os.name=='nt' else [base/'.build/capture-macos/bundle'/name]
+        for path in candidates:
+            try:reject_links(path)
+            except CoreError:continue
+            if path.is_file():return [str(path)]
+        return None
     def _launch(self):
         command=self._command()
         if not command:return False
@@ -129,7 +141,9 @@ class CaptureService:
     def start(self,params):
         if self.active:fail('CAPTURE_BUSY')
         self.selected_engine='native'
-        if self.config.transfers.active or self.config.pending_stages:fail('LIBRARY_BUSY')
+        # Staged uploads/renders use unique files and never conflict with a
+        # new capture; only an archive copy/move must block recording.
+        if self.config.transfers.active:fail('LIBRARY_BUSY')
         if not self._launch() or not self.ready:fail('CAPTURE_NOT_READY')
         mode=params.get('mode')
         if mode not in self.capability.get('modes',[]):fail('INVALID_CAPTURE_MODE')
@@ -298,9 +312,9 @@ class CaptureService:
         if previous and any(previous.get(key)!=metadata[key] for key in ['sampleRate','channels','bitsPerSample','formatTag']):fail('UNSUPPORTED_FORMAT')
         sid=str(uuid.uuid4());staged=confined(self.library.root,'.staging',sid+'.part');journal=confined(self.library.root,'journal',f'capture-{self.session_id}-{track}-{index}.json')
         atomic_json(journal,{'recordId':self.record_id,'sessionId':self.session_id,'track':track,'index':index,'stagingId':sid,'sha256':sha,'frames':frames,'metadata':metadata})
-        publish(file,staged);receipt=self.library.commit_segment(self.record_id,track,index,staged,frames,sha,format_info=metadata)
-        self.end_ns=max(self.end_ns or self.origin,end)
-        raw=self.library._raw(self.record_id);raw['duration']=(self.end_ns-self.origin)/1e9;raw['version']+=1;self.library._commit(raw);self.saved_bytes=raw['size']
+        end_ns=max(self.end_ns or self.origin,end)
+        publish(file,staged);receipt=self.library.commit_segment(self.record_id,track,index,staged,frames,sha,format_info=metadata,record_updates={'duration':(end_ns-self.origin)/1e9})
+        self.end_ns=end_ns;self.saved_bytes=self.library._raw(self.record_id)['size']
         self._send('commitAck',{'sessionId':self.session_id,'track':track,'index':index,'sha256':sha,'version':receipt['version']});journal.unlink()
     def close(self):
         if self.browser:self.browser.close()
