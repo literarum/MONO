@@ -14,6 +14,10 @@ jobs:
     timeout-minutes: 45
     env:
       MONO_VERSION: 0.4.0
+      # Authenticode (SmartScreen trust): add repository secrets WINDOWS_SIGNING_PFX
+      # (base64 of the .pfx) and WINDOWS_SIGNING_PASSWORD. Without them the build is unsigned.
+      SIGNING_PFX: ${{ secrets.WINDOWS_SIGNING_PFX }}
+      SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -36,6 +40,19 @@ jobs:
           dotnet publish native/windows/MonoAudio.csproj -c Release -r win-x64 --self-contained true `
             -p:PublishSingleFile=true -p:DebugType=None -o .build/helper --nologo
           if (!(Test-Path .build/helper/MonoAudio.exe)) { throw 'MonoAudio.exe was not produced' }
+
+      - name: Sign the capture module
+        if: env.SIGNING_PFX != ''
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNING_PFX))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Where-Object FullName -match 'x64' | Select-Object -Last 1
+          foreach ($file in @('.build/helper/MonoAudio.exe')) {
+            & $signtool.FullName sign /f $pfx /p $env:SIGNING_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 $file
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $file" }
+          }
+          Remove-Item $pfx -Force
 
       - name: FFmpeg (BtbN LGPL build, checksum verified)
         shell: pwsh
@@ -75,6 +92,19 @@ jobs:
           if (!(Test-Path $iscc)) { choco install innosetup --no-progress -y | Out-Null }
           & $iscc /Qp "/DAppVersion=$env:MONO_VERSION" installer/windows/MONO.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed: $LASTEXITCODE" }
+
+      - name: Sign MONO-Setup.exe
+        if: env.SIGNING_PFX != ''
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNING_PFX))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Where-Object FullName -match 'x64' | Select-Object -Last 1
+          foreach ($file in @((Get-ChildItem .build/installer -Filter 'MONO-Setup-*.exe').FullName)) {
+            & $signtool.FullName sign /f $pfx /p $env:SIGNING_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 $file
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $file" }
+          }
+          Remove-Item $pfx -Force
 
       - name: Silent install, start and verify the installed app
         shell: pwsh

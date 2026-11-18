@@ -1,0 +1,113 @@
+name: Windows real audio
+
+# Records through real Windows audio endpoints instead of fake devices:
+# VB-CABLE is installed as the runner's only sound card, a tone is looped to its
+# render side ("CABLE Input") and must come back through its capture side
+# ("CABLE Output") in every capture mode (native mic/system/both and browser).
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-audio:
+    name: Record a tone through VB-CABLE
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build MonoAudio.exe
+        shell: pwsh
+        run: |
+          dotnet publish native/windows/MonoAudio.csproj -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:DebugType=None -o .build/helper --nologo
+          "MONO_AUDIO_HELPER=$PWD\.build\helper\MonoAudio.exe" >> $env:GITHUB_ENV
+
+      - name: Windows Audio service
+        shell: pwsh
+        run: |
+          Set-Service Audiosrv -StartupType Automatic
+          Start-Service Audiosrv
+          Get-Service Audiosrv, AudioEndpointBuilder | Format-Table -AutoSize
+
+      - name: Install VB-CABLE (driver publisher pre-trusted, no dialog)
+        shell: pwsh
+        run: |
+          $dir = "$env:RUNNER_TEMP\vbcable"
+          Invoke-WebRequest https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip -OutFile "$dir.zip"
+          Expand-Archive "$dir.zip" $dir -Force
+          # The "Windows Security" driver prompt only appears for untrusted publishers.
+          Get-ChildItem $dir -Filter *.cat | ForEach-Object {
+            $cert = (Get-AuthenticodeSignature $_.FullName).SignerCertificate
+            if ($cert) {
+              $file = "$env:RUNNER_TEMP\$($_.BaseName).cer"
+              [IO.File]::WriteAllBytes($file, $cert.Export('Cert'))
+              Import-Certificate -FilePath $file -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+            }
+          }
+          $setup = Start-Process "$dir\VBCABLE_Setup_x64.exe" -ArgumentList '-i','-h' -PassThru
+          if (!$setup.WaitForExit(180000)) { $setup.Kill(); throw 'VB-CABLE setup did not finish' }
+          Start-Sleep -Seconds 10
+          Get-CimInstance Win32_SoundDevice | Format-Table Name, Status -AutoSize
+          Get-PnpDevice -Class AudioEndpoint -ErrorAction SilentlyContinue | Format-Table FriendlyName, Status -AutoSize
+
+      - name: Loop a 440 Hz tone to the default output
+        shell: pwsh
+        run: |
+          python -c "import math,struct,wave;w=wave.open(r'$env:RUNNER_TEMP\tone.wav','wb');w.setnchannels(2);w.setsampwidth(2);w.setframerate(48000);w.writeframes(b''.join(struct.pack('<hh',v,v) for v in (int(12000*math.sin(2*math.pi*440*i/48000)) for i in range(48000*5))));w.close()"
+          $script = "`$p = New-Object System.Media.SoundPlayer '$env:RUNNER_TEMP\tone.wav'; `$p.PlayLooping(); Start-Sleep -Seconds 1500"
+          Start-Process powershell -ArgumentList '-NoProfile','-Command',$script -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+
+      - name: Microphone blocked by Windows privacy → clear error, system audio still records
+        shell: pwsh
+        env:
+          MONO_EXPECT_MIC_DENIED: '1'
+        run: python scripts/ci/windows_audio_check.py
+
+      - name: Allow desktop apps to use the microphone (Windows privacy switch)
+        shell: pwsh
+        run: |
+          # Off on Windows Server images: capture then fails with E_ACCESSDENIED (0x80070005).
+          $key = 'Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone'
+          foreach ($path in "HKLM:\$key", "HKCU:\$key", "HKCU:\$key\NonPackaged") {
+            New-Item -Path $path -Force | Out-Null
+            Set-ItemProperty -Path $path -Name Value -Value Allow
+          }
+          if (Test-Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy') { Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy' }
+
+      - name: Native capture through CaptureService (every mode + restart)
+        shell: pwsh
+        run: python scripts/ci/windows_audio_check.py
+
+      - name: FFmpeg and Playwright
+        if: always()
+        shell: bash
+        run: choco install ffmpeg --no-progress -y && npm install --no-save playwright && npx playwright install chromium
+
+      - name: App E2E with real devices (default engine)
+        if: always()
+        shell: bash
+        env:
+          MONO_E2E_REAL_AUDIO: '1'
+        run: npm run test:e2e
+
+      - name: App E2E with real devices (browser engine)
+        if: always()
+        shell: bash
+        env:
+          MONO_E2E_REAL_AUDIO: '1'
+          MONO_E2E_MODE: browser
+        run: npm run test:e2e

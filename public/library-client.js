@@ -21,9 +21,9 @@ export class LibraryClient{
   const h=new Headers(headers);if(method!=='GET'&&method!=='HEAD')h.set('X-Mono-CSRF',this.csrf||'');
   if(body!==undefined&&!(body instanceof Blob)&&typeof body!=='string'&&!(body instanceof ReadableStream)){h.set('Content-Type','application/json');body=JSON.stringify(body)}
   let response=await this.fetch(route,{method,headers:h,body,signal,credentials:'same-origin',cache:'no-store'});
-  // A 401 is emitted before dispatch: retrying a replayable body cannot commit
+  // 401/403 are emitted before dispatch: retrying a replayable body cannot commit
   // the mutation twice. Network errors and uncertain outcomes are never retried.
-  if(response.status===401&&!(body instanceof ReadableStream)){
+  if((response.status===401||response.status===403&&method!=='GET'&&method!=='HEAD')&&!(body instanceof ReadableStream)){
    await response.body?.cancel();await this.renewSession();if(method!=='GET'&&method!=='HEAD')h.set('X-Mono-CSRF',this.csrf);
    response=await this.fetch(route,{method,headers:h,body,signal,credentials:'same-origin',cache:'no-store'});
   }

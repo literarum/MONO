@@ -32,8 +32,28 @@ export function listDevices(devices,kind,fallback){
 }
 /** "По умолчанию - Микрофон (Realtek)" → "Микрофон (Realtek)". */
 export function deviceName(device){return device?String(device.name).replace(/^(?:default|по умолчанию|standard|défaut)\s*[-–—:]\s*/i,''):''}
+/** Constraint ladder for getUserMedia (production WebRTC SDKs do the same): exact device with raw
+ * processing → system default with raw processing → plain audio:true. NotReadableError gets one
+ * short delayed retry (a device just released by another stream often reopens). A denial never
+ * climbs the ladder: it is the person's or Windows' decision, not a device fault. */
+export const CONSTRAINT_LADDER=inputId=>[
+ ...(inputId?[{channelCount:{ideal:1},echoCancellation:false,noiseSuppression:false,autoGainControl:false,deviceId:{exact:inputId}}]:[]),
+ {channelCount:{ideal:1},echoCancellation:false,noiseSuppression:false,autoGainControl:false},
+ true];
+const RETRYABLE=new Set(['NotReadableError','OverconstrainedError','NotFoundError','AbortError','TrackStartError']);
 /** Explicit browser mode, under the same durable server owner as native capture. */
 export class BrowserMicrophoneClient{
+ async acquire(inputId,intent,accessTimeout){
+  let last=null;
+  for(const audio of CONSTRAINT_LADDER(inputId)){
+   for(let attempt=0;attempt<2;attempt++){
+    intent?.throwIfAborted?.();
+    try{const stream=await waitFor(this.devices.getUserMedia({audio,video:false}),intent,late=>late.getTracks().forEach(track=>track.stop()),accessTimeout);if(last)this.recovered=last.name;return stream}
+    catch(error){last=error;if(!RETRYABLE.has(error?.name)||error?.name==='AbortError'&&intent?.aborted)throw error;if(error.name!=='NotReadableError'||attempt)break;await new Promise(resolve=>setTimeout(resolve,300))}
+   }
+  }
+  throw last;
+ }
  constructor(native,{devices=globalThis.navigator?.mediaDevices,contextFactory=null,nodeFactory=null,page=globalThis.window}={}){
   this.native=native;this.library=native.library;this.devices=devices;this.runtime=null;this.opening=null;this.serial=0;
   this.supported=Boolean(devices?.getUserMedia&&devices?.enumerateDevices&&(contextFactory||globalThis.AudioContext)&&(nodeFactory||globalThis.AudioWorkletNode));
@@ -86,7 +106,7 @@ export class BrowserMicrophoneClient{
   let stream,context,runtime,stage='status';
   try{
    if(active(await this.native.status()))throw new LibraryError('CAPTURE_BUSY','Сначала остановите текущую запись.');
-   stage='access';intent.throwIfAborted();const accessTimeout=await this.permissionTimeout();stream=await waitFor(this.devices.getUserMedia({audio:{channelCount:{ideal:1},echoCancellation:false,noiseSuppression:false,autoGainControl:false,...(options.inputId?{deviceId:{exact:options.inputId}}:{})},video:false}),intent,late=>late.getTracks().forEach(track=>track.stop()),accessTimeout);
+   stage='access';intent.throwIfAborted();const accessTimeout=await this.permissionTimeout();stream=await this.acquire(options.inputId,intent,accessTimeout);
    stage='context';intent.throwIfAborted();context=this.contextFactory();await waitFor(context.suspend(),intent);stage='worklet';await waitFor(context.audioWorklet.addModule('/microphone-worklet.js'),intent);intent.throwIfAborted();
    stage='graph';const node=this.nodeFactory(context),source=context.createMediaStreamSource(stream),gain=context.createGain();gain.gain.value=0;
    runtime={stream,context,node,source,gain,sessionId:null,heartbeatAt:performance.now(),pending:Promise.resolve(),queued:0,nextIndex:0,ackedFrames:0,requests:new Map(),failed:false,cleaned:false};
@@ -94,6 +114,9 @@ export class BrowserMicrophoneClient{
    stage='acquire';const value=await this.call('start',{sampleRate:context.sampleRate,inputId:options.inputId||null,test});runtime.sessionId=value.sessionId;this.runtime=runtime;
    for(const track of stream.getTracks())track.addEventListener('ended',()=>{if(!runtime.stopPromise&&!runtime.cleaned)void this.fail(runtime,new LibraryError('DEVICE_LOST','Микрофон отключён.'))},{once:true});
    stage='graph';source.connect(node);node.connect(gain);gain.connect(context.destination);stage='resume';await waitFor(context.resume(),intent);intent.throwIfAborted();
+   // Windows sleep/wake or an audio-device change can suspend or interrupt the context
+   // outside the page's control; while this take is running, bring it back immediately.
+   context.addEventListener?.('statechange',()=>{if(this.runtime===runtime&&!runtime.cleaned&&!runtime.paused&&['suspended','interrupted'].includes(context.state))void context.resume().catch(()=>{})});
    runtime.heartbeat=setInterval(()=>{
     if(runtime.pinging||runtime.cleaned)return;
     runtime.pinging=true;void this.call('heartbeat',{sessionId:runtime.sessionId}).then(state=>{runtime.heartbeatAt=performance.now();if(!active(state))return this.release(runtime);if(state.state==='stopping'&&!runtime.stopPromise)void this.stop().catch(()=>{})}).catch(error=>{

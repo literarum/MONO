@@ -10,3 +10,12 @@ async function request(path,{cachedStyle=false,networkHTML=false,navigate=false}
 for(const path of ['/styles.css','/browser-microphone.js'])test('offline uncached asset never receives HTML shell: '+path,async()=>{const r=await request(path);assert.equal(r.type,'error');assert.notEqual(r.headers.get('Content-Type'),'text/html')});
 test('offline cached stylesheet stays a stylesheet and navigation still restores shell',async()=>{const css=await request('/styles.css',{cachedStyle:true});assert.equal(css.headers.get('Content-Type'),'text/css');assert.match(await css.text(),/color:white/);const page=await request('/',{navigate:true});assert.equal(page.headers.get('Content-Type'),'text/html')});
 test('HTML response cannot poison stylesheet cache and valid cached CSS is used',async()=>{const r=await request('/styles.css',{cachedStyle:true,networkHTML:true});assert.equal(r.headers.get('Content-Type'),'text/css');assert.match(await r.text(),/color:white/)});
+test('every module the app imports (transitively) is in the offline shell',async()=>{
+ const {readFileSync,existsSync}=await import('node:fs');const path=await import('node:path');const {fileURLToPath}=await import('node:url');
+ const root=fileURLToPath(new URL('../public/',import.meta.url)),seen=new Set(),queue=['/app.js','/ui/index.js'];
+ while(queue.length){const file=queue.shift();if(seen.has(file))continue;seen.add(file);const text=readFileSync(path.join(root,file),'utf8');
+  for(const m of text.matchAll(/(?:import|export)\s[^'"]*?from\s*['"](\.[^'"]+)['"]|import\(\s*['"](\.[^'"]+)['"]\s*\)/g)){const rel=m[1]||m[2];const next=path.posix.normalize(path.posix.join(path.posix.dirname(file),rel));if(existsSync(path.join(root,next)))queue.push(next)}}
+ const context={self:{addEventListener(){}},caches:{},URL,Request,Response,console};vm.runInNewContext(source+';globalThis.__files=APP_FILES',context);
+ const missing=[...seen].filter(file=>!context.__files.includes(file));
+ assert.deepEqual(missing,[],'add these to APP_FILES in public/sw.js and bump CACHE');
+});

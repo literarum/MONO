@@ -61,6 +61,23 @@ internal enum DeviceRole {Console=0,Multimedia=1,Communications=2}
     [PreserveSig]int SetEventHandle(IntPtr handle);
     [PreserveSig]int GetService(ref Guid iid,[MarshalAs(UnmanagedType.IUnknown)]out object service);
 }
+// endpointvolume.h; method order verified against pycaw's comtypes declaration.
+[ComImport,Guid("5CDF2C82-841E-4546-9722-0CF74078229A"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] internal interface IAudioEndpointVolume
+{
+    [PreserveSig]int RegisterControlChangeNotify(IntPtr notify);
+    [PreserveSig]int UnregisterControlChangeNotify(IntPtr notify);
+    [PreserveSig]int GetChannelCount(out uint count);
+    [PreserveSig]int SetMasterVolumeLevel(float levelDb,IntPtr context);
+    [PreserveSig]int SetMasterVolumeLevelScalar(float level,IntPtr context);
+    [PreserveSig]int GetMasterVolumeLevel(out float levelDb);
+    [PreserveSig]int GetMasterVolumeLevelScalar(out float level);
+    [PreserveSig]int SetChannelVolumeLevel(uint channel,float levelDb,IntPtr context);
+    [PreserveSig]int SetChannelVolumeLevelScalar(uint channel,float level,IntPtr context);
+    [PreserveSig]int GetChannelVolumeLevel(uint channel,out float levelDb);
+    [PreserveSig]int GetChannelVolumeLevelScalar(uint channel,out float level);
+    [PreserveSig]int SetMute([MarshalAs(UnmanagedType.Bool)]bool mute,IntPtr context);
+    [PreserveSig]int GetMute([MarshalAs(UnmanagedType.Bool)]out bool mute);
+}
 [ComImport,Guid("C8ADBD64-E71E-48A0-A4DE-185C395CD317"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] internal interface IAudioCaptureClient
 {
     [PreserveSig]int GetBuffer(out IntPtr data,out uint frames,out uint flags,out ulong devicePosition,out ulong qpc100Ns);
@@ -78,8 +95,31 @@ internal static class ComAudio
     internal static void Release(object? value){if(value is not null&&Marshal.IsComObject(value))Marshal.ReleaseComObject(value);}
     [DllImport("ole32.dll")]internal static extern int PropVariantClear(ref PropVariant value);
 }
+/// Scheduling for glitch-free capture under load.
+/// MMCSS "Pro Audio" for capture threads (as GStreamer's WASAPI source does) and opting the
+/// process out of EcoQoS / Efficiency mode while recording. Constants verified against the
+/// windows-sys metadata: ProcessPowerThrottling=4, CURRENT_VERSION=1, EXECUTION_SPEED=1.
+internal static class Realtime
+{
+    [DllImport("avrt.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern IntPtr AvSetMmThreadCharacteristicsW(string task,ref uint index);
+    [DllImport("avrt.dll",SetLastError=true)][return:MarshalAs(UnmanagedType.Bool)]static extern bool AvRevertMmThreadCharacteristics(IntPtr handle);
+    [StructLayout(LayoutKind.Sequential)]struct PowerThrottlingState{public uint Version;public uint ControlMask;public uint StateMask;}
+    [DllImport("kernel32.dll",SetLastError=true)][return:MarshalAs(UnmanagedType.Bool)]static extern bool SetProcessInformation(IntPtr process,int informationClass,ref PowerThrottlingState information,uint size);
+    [DllImport("kernel32.dll")]static extern IntPtr GetCurrentProcess();
+    public static IntPtr EnterProAudio(){try{uint index=0;return AvSetMmThreadCharacteristicsW("Pro Audio",ref index);}catch(Exception error) when(error is DllNotFoundException or EntryPointNotFoundException){return IntPtr.Zero;}}
+    public static void Leave(IntPtr handle){if(handle==IntPtr.Zero)return;try{AvRevertMmThreadCharacteristics(handle);}catch(Exception error) when(error is DllNotFoundException or EntryPointNotFoundException){}}
+    /// ControlMask=EXECUTION_SPEED with StateMask=0: "never throttle execution speed" (high QoS).
+    public static bool KeepFullSpeed(bool recording)
+    {
+        try{var state=new PowerThrottlingState{Version=1,ControlMask=recording?1u:0u,StateMask=0};return SetProcessInformation(GetCurrentProcess(),4,ref state,(uint)Marshal.SizeOf<PowerThrottlingState>());}
+        catch(EntryPointNotFoundException){return false;}
+    }
+}
 public sealed record AudioDevice(string Id,string Name,bool Default);
 public sealed record DeviceInventory(IReadOnlyList<AudioDevice> Inputs,IReadOnlyList<AudioDevice> Outputs);
+/// Capture endpoint health as Windows reports it. State: 1 active, 2 disabled (Sound control panel),
+/// 4 not present (Device Manager), 8 unplugged. Mute/volume only exist for active endpoints.
+public sealed record InputHealth(string Id,string Name,bool Default,uint State,bool? Muted,float? Volume);
 public static class CoreAudio
 {
     public static object ProbeLoopbackInitialization()
@@ -126,9 +166,56 @@ public static class CoreAudio
         }finally{ComAudio.Release(collection);}
         return result;
     }
+    static string FriendlyName(IDevice device,DataFlow flow)
+    {
+        string? name=null;
+        if(device.OpenPropertyStore(0,out var properties)==0)try{
+            var key=new PropertyKey(new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"),14);
+            if(properties.GetValue(ref key,out var value)==0)try{if(value.Type==31)name=Marshal.PtrToStringUni(value.Pointer);}finally{ComAudio.PropVariantClear(ref value);}
+        }finally{ComAudio.Release(properties);}
+        return string.IsNullOrWhiteSpace(name)?(flow==DataFlow.Capture?"Устройство ввода":"Устройство вывода"):name;
+    }
+    static IAudioEndpointVolume? Volume(IDevice device)
+    {
+        var iid=typeof(IAudioEndpointVolume).GUID;
+        return device.Activate(ref iid,23,IntPtr.Zero,out var value)==0?(IAudioEndpointVolume)value:null;
+    }
+    /// Every capture endpoint in every state (DEVICE_STATEMASK_ALL), with mute and level for active ones.
+    public static IReadOnlyList<InputHealth> DiagnoseInputs()
+    {
+        var enumerator=(IDeviceEnumerator)new DeviceEnumeratorCom();
+        try{
+            string? defaultId=DefaultId(enumerator,DataFlow.Capture);ComAudio.Check(enumerator.EnumAudioEndpoints(DataFlow.Capture,0xF,out var collection));var result=new List<InputHealth>();
+            try{
+                ComAudio.Check(collection.GetCount(out var count));
+                for(uint i=0;i<count&&i<256;i++){
+                    if(collection.Item(i,out var device)!=0)continue;
+                    try{
+                        if(device.GetId(out var id)!=0||device.GetState(out var state)!=0)continue;
+                        bool? muted=null;float? volume=null;
+                        if(state==1){var control=Volume(device);if(control is not null)try{if(control.GetMute(out var m)==0)muted=m;if(control.GetMasterVolumeLevelScalar(out var v)==0)volume=v;}finally{ComAudio.Release(control);}}
+                        result.Add(new InputHealth(id,FriendlyName(device,DataFlow.Capture),id==defaultId,state,muted,volume));
+                    }finally{ComAudio.Release(device);}
+                }
+            }finally{ComAudio.Release(collection);}
+            return result;
+        }finally{ComAudio.Release(enumerator);}
+    }
+    /// Self-repair on explicit intent: unmute and/or raise a near-zero input level of one
+    /// endpoint (default capture when id is null). Never changes which device is default.
+    public static void RepairInput(string? id,bool? mute,float? minimumVolume)
+    {
+        var enumerator=(IDeviceEnumerator)new DeviceEnumeratorCom();IDevice? device=null;IAudioEndpointVolume? control=null;
+        try{
+            ComAudio.Check(id is null?enumerator.GetDefaultAudioEndpoint(DataFlow.Capture,DeviceRole.Console,out device):enumerator.GetDevice(id,out device));
+            control=Volume(device)??throw new AudioFailure("NOT_SUPPORTED");
+            if(mute is bool m)ComAudio.Check(control.SetMute(m,IntPtr.Zero));
+            if(minimumVolume is float target&&control.GetMasterVolumeLevelScalar(out var current)==0&&current<target)ComAudio.Check(control.SetMasterVolumeLevelScalar(Math.Clamp(target,0f,1f),IntPtr.Zero));
+        }finally{ComAudio.Release(control);ComAudio.Release(device);ComAudio.Release(enumerator);}
+    }
     public static DeviceInventory Enumerate()
     {
-        if(!OperatingSystem.IsWindowsVersionAtLeast(10,0,19045))throw new PlatformNotSupportedException("NOT_SUPPORTED");
+        if(!OperatingSystem.IsWindowsVersionAtLeast(10,0,17763))throw new PlatformNotSupportedException("NOT_SUPPORTED");
         var enumerator=(IDeviceEnumerator)new DeviceEnumeratorCom();
         try{return new DeviceInventory(List(enumerator,DataFlow.Capture),List(enumerator,DataFlow.Render));}finally{ComAudio.Release(enumerator);}
     }

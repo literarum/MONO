@@ -1,7 +1,8 @@
 """Synthetic protocol fixture. This never proves physical audio capture."""
 import argparse,hashlib,json,os,sys,wave,threading,struct,time
 from pathlib import Path
-parser=argparse.ArgumentParser();parser.add_argument('--protocol');parser.add_argument('--capture-root');parser.add_argument('--behavior',default='normal');args=parser.parse_args()
+fixture_muted=False
+parser=argparse.ArgumentParser();parser.add_argument('--protocol');parser.add_argument('--capture-root');parser.add_argument('--behavior',default='normal');args=parser.parse_args();fixture_muted=args.behavior=='muted'
 root=Path(args.capture_root);root.mkdir(parents=True,exist_ok=True);sequence=0;session=None;previous=None;mode='mic';origin=10_000_000_000;end=origin;output_lock=threading.Lock();closed=threading.Event()
 def emit(event,**fields):
     global sequence
@@ -36,6 +37,12 @@ for line in sys.stdin:
         if args.behavior=='unsafe':emit('segment',sessionId=session,track='mic',index=0,relativeFile='../escape.wav',format='pcm_s16le',sampleRate=16000,channels=1,startMonotonicNs=origin,frames=32000,sha256='0'*64);continue
         for track in ['system'] if args.behavior=='wrong-track' else ['mic','system'] if mode=='both' else [mode]:segment(track,0,origin)
         end=origin+2_000_000_000
+        if args.behavior=='device-lost-once':
+            # The first take loses its device after the first committed part; later takes are healthy.
+            marker=os.path.join(os.path.dirname(os.path.abspath(args.capture_root)),'.fixture-device-lost')
+            if not os.path.exists(marker):
+                open(marker,'w').close();lost=session
+                threading.Timer(1.5,lambda:emit('error',sessionId=lost,code='DEVICE_LOST',stage='capture-mic/read',nativeCode='88890004')).start()
     elif method=='pause':
         emit('state',sessionId=session,state='paused',monotonicNs=end)
         if args.behavior=='paused-data':segment('mic',1,origin+4_000_000_000)
@@ -45,6 +52,9 @@ for line in sys.stdin:
         end=origin+6_000_000_000
     elif method=='stop':
         if args.behavior!='ignore-stop':emit('state',sessionId=session,state='idle',monotonicNs=end)
+    elif method in ['diagnose','repair']:
+        if method=='repair' and 'mute' in params:fixture_muted=params['mute']
+        emit('diagnosis',inputs=[{'id':'mic-fixture','name':'Fixture microphone','default':True,'state':1,'muted':fixture_muted,'volume':.8},{'id':'mic-off','name':'Disabled microphone','default':False,'state':2,'muted':None,'volume':None}],repairError=None)
     elif method=='enumerate':emit('devices',inputDevices=[{'id':'mic-fixture','name':'Fixture microphone','default':True}],outputDevices=[{'id':'system-fixture','name':'Fixture output','default':True}])
 closed.set()
 if heart.is_alive():heart.join(timeout=1)

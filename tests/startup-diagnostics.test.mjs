@@ -10,6 +10,10 @@ function phases(logs){return logs.split('\n').filter(line=>line.startsWith('{"ev
 
 test('opt-in startup phases identify completed checks without environment or credential values',async t=>{
  const server=await localServer(t,{MONO_STARTUP_TRACE:'1',MONO_DIAGNOSTIC_CANARY:canary});
+ // FFmpeg detection is asynchronous by design (it never delays the first window): wait for it.
+ await (await fetch(server.url+'/api/health?wait=tools',{signal:AbortSignal.timeout(70000)})).json();
+ // stderr may trail the HTTP reply by a moment.
+ for(let i=0;i<50&&!phases(server.logs()).some(row=>row.phase==='runtime.ffprobe.end');i++)await new Promise(resolve=>setTimeout(resolve,100));
  const rows=phases(server.logs());
  assert.ok(rows.some(row=>row.phase==='runtime.ffmpeg.end'));
  assert.ok(rows.some(row=>row.phase==='runtime.ffprobe.end'));

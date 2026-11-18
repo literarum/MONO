@@ -17,6 +17,13 @@ export class LocalSessions{
  }
  authorize(req){const session=this.get(req);if(!session)return 401;
   if(['GET','HEAD'].includes(req.method))return 0;
-  if(!req.headers.origin||!equal(req.headers['x-mono-csrf'],session.csrf))return 403;return 0;
+  if(!req.headers.origin)return 403;
+  // Concurrent first requests (two tabs, or startup racing a reload) each bootstrap a
+  // session and the browser keeps only the last cookie, so a page can hold the token of
+  // a sibling session. Any live token still proves same-origin read access (cross-site
+  // pages cannot read /api/local/session), so accept it instead of failing with 403.
+  const token=req.headers['x-mono-csrf'];if(equal(token,session.csrf))return 0;
+  for(const s of this.sessions.values())if(Date.now()-s.created<86400000&&equal(token,s.csrf))return 0;
+  return 403;
  }
 }

@@ -1,6 +1,6 @@
 import {readFile,unlink} from 'node:fs/promises';import {createReadStream} from 'node:fs';import {createHash} from 'node:crypto';import path from 'node:path';
 import {renderNative,NATIVE_PIPELINE} from './native-render.mjs';import {runAudio,audioError} from './process.mjs';
-import {AudioWorkQueue} from './queue.mjs';
+import {AudioWorkQueue} from './queue.mjs';import {speakerProfile} from './speakers.mjs';import {tmpdir} from 'node:os';
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export class OriginalMedia{
  constructor(worker,{queue=new AudioWorkQueue()}={}){this.worker=worker;this.queue=queue;this.entries=new Map();this.tail=Promise.resolve();this.readers=0;this.closed=false;this.runtime=null;this.operations=new Set();this.controllers=new Set()}
@@ -8,6 +8,13 @@ export class OriginalMedia{
   if(this.closed)return Promise.reject(audioError('CANCELLED'));
   const controller=new AbortController();this.controllers.add(controller);const combined=signal?AbortSignal.any([signal,controller.signal]):controller.signal;
   const operation=this._ensure(id,{signal:combined,onProgress}).finally(()=>{this.controllers.delete(controller);this.operations.delete(operation)});this.operations.add(operation);return operation;
+ }
+ /** Loudness profile of a two-track take (cached per source); null for one track. */
+ async speakers(id,{ffmpeg='ffmpeg'}={}){
+  const source=await this.sources(id);if(source.kind!=='native')return null;this.speakerCache??=new Map();
+  const cached=this.speakerCache.get(id);if(cached?.hash===source.sourceHash)return cached.profile;
+  const profile=await this.queue.run(()=>speakerProfile(source,{ffmpeg,directory:tmpdir()}));
+  this.speakerCache.set(id,{hash:source.sourceHash,profile});if(this.speakerCache.size>32)this.speakerCache.delete(this.speakerCache.keys().next().value);return profile;
  }
  async sources(id){
   const stage=await this.worker.call('records.sources.file',{id},{timeoutMs:60000});

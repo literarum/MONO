@@ -16,9 +16,11 @@ from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
 import platform
+import re
 import secrets
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -504,6 +506,12 @@ def launch_chromium(chrome: str, folder: Path, url: str) -> subprocess.Popen:
     ensure_private_directory(profile)
     args = [chrome, f"--user-data-dir={profile}", f"--app={url}",
             "--no-first-run", "--no-default-browser-check", "--disable-background-mode",
+            # A recording window must stay fully alive when minimised or covered: Chromium
+            # otherwise throttles timers after ~10 s in the background, lowers the renderer's
+            # priority and treats an occluded window as hidden (heartbeats and the browser
+            # capture channel would stall). Same switches desktop apps such as Discord use.
+            "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+            "--disable-backgrounding-occluded-windows",
             "--window-size=1380,900"]
     with _external_browser_environment() as environment:
         extra = {"env": environment} if environment is not None else {}
@@ -603,6 +611,29 @@ def drain_lines(pipe, sink: list[str], ready: threading.Event, logger: logging.L
         logger.info("backend: %s", line[:400])
 
 
+def port_free(port: int) -> bool:
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind((HOST, port)); return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
+def choose_port(logger=None) -> None:
+    """4173 is preferred (window settings are origin-scoped). If another program holds it,
+    use the next free port instead of refusing to start."""
+    global PORT, URL
+    if port_free(PORT):
+        return
+    for candidate in range(PORT + 1, PORT + 11):
+        if port_free(candidate):
+            if logger: logger.warning("Port %s is taken by another program; using %s", PORT, candidate)
+            PORT = candidate; URL = f"http://{HOST}:{PORT}"; return
+    raise LaunchError("Порты 4173–4183 заняты другими программами. Закройте одну из них и запустите MONO снова.")
+
+
 def wait_ready(child: subprocess.Popen, event: threading.Event, instance_id: str,
                timeout: float = START_TIMEOUT) -> bool:
     deadline = time.monotonic() + timeout
@@ -635,10 +666,15 @@ def stop_backend(child: subprocess.Popen, logger: logging.Logger) -> None:
 
 
 def handle_second_instance(folder: Path, logger: logging.Logger) -> int:
+    global PORT, URL
     session_file=folder / "session.json"
     try:
         session=json.loads(session_file.read_text(encoding="utf-8"))
         instance_id=session["instanceId"]
+        url=session.get("url") or URL
+        match=re.fullmatch(rf"http://{re.escape(HOST)}:(\d+)",url)
+        if match:  # the running instance may be on an alternate port
+            PORT=int(match.group(1)); URL=url
     except (OSError, ValueError, KeyError):
         raise LaunchError("MONO уже запускается. Подождите несколько секунд и повторите.")
     if not healthy(instance_id=instance_id):
@@ -668,24 +704,61 @@ def _run_session(*, dev: bool, smoke: bool, preferred_ui: str, smoke_hold: float
         if not dev or bundled():
             verify_runtime_manifest(root)
         executables = select_runtimes(root=root, allow_system=(dev and not bundled()))
+        choose_port(logger)
         child_env = server_environment(roots={"data": folder}, executables=executables, developer=dev)
         instance_id = secrets.token_urlsafe(24)
         child_env["MONO_LAUNCHER_INSTANCE_ID"] = instance_id
+        hotkey_token = secrets.token_urlsafe(32)
+        child_env["MONO_LAUNCHER_TOKEN"] = hotkey_token
         session_file = folder / "session.json"
         args = [executables["node"], str(backend / "server.mjs")]
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         recent_lines: list[str] = []
-        ready = threading.Event()
+        holder = {"child": None}
+        stopping = threading.Event()
+
+        def spawn() -> subprocess.Popen:
+            ready = threading.Event()
+            process = subprocess.Popen(args, cwd=str(backend), env=child_env,
+                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                       text=True, bufsize=1, encoding="utf-8", errors="replace",
+                                       creationflags=flags)
+            holder["child"] = process
+            threading.Thread(target=drain_lines, args=(process.stdout, recent_lines, ready, logger),
+                             daemon=True, name="mono-backend-logs").start()
+            wait_ready(process, ready, instance_id)
+            return process
+
+        def supervise() -> None:
+            """Backend crashed while the window is open: restart it (1 s, 2 s, 4 s backoff,
+            at most 3 restarts per 10 minutes). The window reconnects by itself; recordings
+            already committed are on disk, the core recovers interrupted takes on start."""
+            restarts: list[float] = []
+            while not stopping.wait(1.0):
+                process = holder["child"]
+                if process is None or process.poll() is None:
+                    continue
+                now = time.monotonic()
+                restarts[:] = [t for t in restarts if now - t < 600]
+                if len(restarts) >= 3:
+                    logger.error("Backend keeps stopping (code %s); giving up after 3 restarts", process.returncode)
+                    return
+                delay = 2 ** len(restarts)
+                logger.warning("Backend stopped unexpectedly (code %s); restarting in %ss", process.returncode, delay)
+                if stopping.wait(delay):
+                    return
+                restarts.append(time.monotonic())
+                try:
+                    if process.stdout:
+                        process.stdout.close()
+                    spawn()
+                    logger.info("Backend restarted on %s", URL)
+                except (LaunchError, OSError) as error:
+                    logger.error("Backend restart failed: %s", error)
+
         child = None
         try:
-            child = subprocess.Popen(args, cwd=str(backend), env=child_env,
-                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     text=True, bufsize=1, encoding="utf-8", errors="replace",
-                                     creationflags=flags)
-            reader = threading.Thread(target=drain_lines, args=(child.stdout, recent_lines, ready, logger),
-                                      daemon=True, name="mono-backend-logs")
-            reader.start()
-            wait_ready(child, ready, instance_id)
+            child = spawn()
             session_file.write_text(json.dumps({"instanceId": instance_id, "url": URL}), encoding="utf-8")
             if os.name != "nt":
                 session_file.chmod(0o600)
@@ -697,12 +770,20 @@ def _run_session(*, dev: bool, smoke: bool, preferred_ui: str, smoke_hold: float
                 if smoke_hold > 0:
                     time.sleep(smoke_hold)
                 return 0
+            try:
+                from hotkey import start_global_hotkey
+                start_global_hotkey(URL, hotkey_token, logger)
+            except Exception as error:  # a hotkey is a convenience, never a launch blocker
+                logger.warning("Global hotkey unavailable: %s", error)
+            threading.Thread(target=supervise, daemon=True, name="mono-backend-supervisor").start()
             launch_window(folder, URL, logger, preferred=preferred_ui)
             return 0
         except LaunchError as exc:
             logger.error("Startup error: %s; backend_tail=%s", exc, recent_lines[-5:])
             raise
         finally:
+            stopping.set()
+            child = holder["child"] or child
             if child is not None:
                 stop_backend(child, logger)
                 if child.stdout:

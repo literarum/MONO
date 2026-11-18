@@ -3,7 +3,7 @@ import {libraryRoute,readJSON} from './library-routes.mjs';
 import {captureRoute} from './capture-routes.mjs';
 import {credentialsRoute} from './credentials-routes.mjs';
 import {audioRoute} from './audio-routes.mjs';
-import {preflight} from './preflight.mjs';
+import {preflight,BYTES_PER_HOUR} from './preflight.mjs';import {statfs} from 'node:fs/promises';
 const sessions=new LocalSessions();export const localWorker=new WorkerClient();
 export const authorizeLocalRequest=req=>sessions.authorize(req);
 const send=(res,status,body)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(body))};
@@ -24,6 +24,9 @@ export async function localRoute(req,res,url,mode,services={}){
   if(await libraryRoute(req,res,url,localWorker,services))return true;
   if(url.pathname==='/api/local/preflight'&&req.method==='GET'){send(res,200,await preflight({worker:localWorker,runtime:services.runtime||(()=>({})),keyManager:services.keyManager}));return true}
   if(url.pathname==='/api/local/status'&&req.method==='GET'){send(res,200,await localWorker.call('status'));return true}
+  if(url.pathname==='/api/local/storage'&&req.method==='GET'){
+   const status=await localWorker.call('status');if(!status.libraryAvailable){send(res,409,{error:'Папка архива недоступна',code:'LIBRARY_MISSING'});return true}
+   const space=await statfs(status.libraryPath);send(res,200,{freeBytes:Number(space.bavail)*Number(space.bsize),bytesPerMinute:BYTES_PER_HOUR/60});return true}
   if(url.pathname==='/api/local/ping'&&req.method==='POST'){req.resume();send(res,200,await localWorker.call('ping'));return true}
   send(res,404,{error:'Операция не найдена'});
  }catch(error){send(res,error.code==='UNKNOWN_METHOD'?400:503,{error:'Локальное ядро недоступно',code:error.code||'CORE_UNAVAILABLE'})}

@@ -9,6 +9,8 @@ import {fileURLToPath} from 'node:url';
 import {randomUUID, timingSafeEqual,createHash} from 'node:crypto';
 import {planSegments,normalizeSegments,estimateCostSeconds} from './core.mjs';
 import {localRoute,localWorker,authorizeLocalRequest} from './backend/local/routes.mjs';
+import {systemAccent} from './backend/local/appearance.mjs';
+import {checkUpdate} from './backend/local/updates.mjs';
 import {KeyManager} from './backend/groq/key-manager.mjs';
 import {OriginalMedia} from './backend/audio/original-media.mjs';
 import {AudioPreparation} from './backend/audio/preparation-service.mjs';
@@ -76,6 +78,10 @@ function detectTools({force=false}={}){
   return toolsChecking;
 }
 const toolsReady=detectTools();
+const eventClients=new Set();
+function broadcast(event,data){for(const client of eventClients)client.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)}
+let accent=null,availableUpdate=null;void systemAccent().then(value=>{accent=value});
+if(process.env.MONO_LAUNCHER==='1'&&!process.env.NODE_TEST_CONTEXT)setTimeout(()=>void checkUpdate({current:'0.4.0'}).then(value=>{availableUpdate=value}),20000).unref();
 const originalMedia=new OriginalMedia(localWorker);
 const preparation=new AudioPreparation(localWorker,originalMedia);
 const keyManager=new KeyManager({worker:localWorker,externalKey:GROQ_KEY,endpoint:new URL('/openai/v1/models',GROQ_ENDPOINT).href,onChange:status=>{
@@ -118,7 +124,7 @@ let stopping=false;
 const startedAt=Date.now();
 function publicHealth(){
   const pending=[...jobs.values()].filter(j=>j.status==='queued').length;
-  return {...config,toolsChecking:Boolean(toolsChecking),version:'0.4.0',mode:DEPLOY_MODE,maxUploadBytes:MAX_BYTES,
+  return {...config,accent,update:availableUpdate,toolsChecking:Boolean(toolsChecking),version:'0.4.0',mode:DEPLOY_MODE,maxUploadBytes:MAX_BYTES,
     retentionHours:JOB_TTL_HOURS,instanceId:process.env.MONO_LAUNCHER_INSTANCE_ID||null,queue:pending,processing:[...jobs.values()].filter(j=>j.status==='processing').length,
     uploadsInFlight,uptimeSeconds:Math.floor((Date.now()-startedAt)/1000),stopping};
 }
@@ -431,7 +437,19 @@ async function route(req,res){
   let url;
   try{url=new URL(req.url,'http://local.invalid')}catch{fail(res,400,'Неверный URL');return}
   if(!acceptableOrigin(req)){fail(res,403,'Запрос отклонён: неверный Origin/Host');return}
-  if(await localRoute(req,res,url,DEPLOY_MODE,{runtime:async()=>{await toolsReady;if(!config.ffmpeg||!config.ffprobe)await detectTools({force:true});return {ffmpeg:config.ffmpeg,ffprobe:config.ffprobe}},preparation,keyManager,resolveOriginal:(id,options)=>originalMedia.ensure(id,options),submitLibraryJob,isLibraryBusy:()=>uploadsInFlight>0||[...jobs.values()].some(job=>['queued','processing'].includes(job.status))}))return;
+  // Global recording hotkey (launcher → window). Token is per launch and never leaves the machine.
+  if(url.pathname==='/api/launcher/hotkey'&&req.method==='POST'){
+    const token=process.env.MONO_LAUNCHER_TOKEN||'',given=String(req.headers['x-mono-launcher-token']||'');req.resume();
+    if(!token||Buffer.byteLength(given)!==Buffer.byteLength(token)||!timingSafeEqual(Buffer.from(given),Buffer.from(token))){res.writeHead(403).end();return}
+    broadcast('hotkey',{action:'toggle-recording'});res.writeHead(204).end();return;
+  }
+  if(url.pathname==='/api/local/events'&&req.method==='GET'){
+    const denied=authorizeLocalRequest(req);if(denied){fail(res,denied,'Доступ отклонён');return}
+    if(eventClients.size>=16){fail(res,429,'Слишком много окон');return}
+    res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.write(': ok\n\n');
+    eventClients.add(res);const ping=setInterval(()=>res.write(': ping\n\n'),25000);req.on('close',()=>{clearInterval(ping);eventClients.delete(res)});return;
+  }
+  if(await localRoute(req,res,url,DEPLOY_MODE,{runtime:async()=>{await toolsReady;if(!config.ffmpeg||!config.ffprobe)await detectTools({force:true});return {ffmpeg:config.ffmpeg,ffprobe:config.ffprobe}},preparation,keyManager,resolveOriginal:(id,options)=>originalMedia.ensure(id,options),resolveSpeakers:async id=>{await toolsReady;return config.ffmpeg?originalMedia.speakers(id):null},submitLibraryJob,isLibraryBusy:()=>uploadsInFlight>0||[...jobs.values()].some(job=>['queued','processing'].includes(job.status))}))return;
   let pathname;
   try{pathname=decodeURIComponent(url.pathname)}catch{fail(res,400,'Некорректное кодирование URL');return}
   if(DEPLOY_MODE==='local'&&(/^\/api\/jobs(?:\/|$)/.test(pathname)||pathname==='/api/metrics')){
@@ -566,6 +584,7 @@ async function main(){
     clearInterval(reaper);
     const timeout=setTimeout(()=>{console.error('Завершение по тайм-ауту');process.exit(1)},20000);
     timeout.unref();
+    for(const client of eventClients)client.end();eventClients.clear();
     await new Promise(resolve=>server.close(resolve));
     await Promise.allSettled([...saving.values()]);
     const [coreResult]=await coreStopped;
