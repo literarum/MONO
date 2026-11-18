@@ -13,9 +13,12 @@ import {mountGuidance,mountHelp} from './help.js';
 import {MediaInterlock} from './media-interlock.js';
 import {AudioReview} from './audio-review.js';
 import {captureSelection,selectionKey} from './transcription-selection.js';
-import {Preflight,mountPreflight,remember} from './preflight.js';
-import {LevelPreview,addBookmark,SaveClock,BatteryWatch} from './studio-extras.js';
+import {Preflight,mountPreflight,remember,recentErrors} from './preflight.js';
+import {windowProbe,microphoneProbe,windowFindings,formatReport,consolidate} from './diagnostics.js';
+import {SafetyTrack} from './safety-track.js';
+import {LevelPreview,addBookmark,SaveClock,BatteryWatch,DEFAULT_TITLE,suggestTitle} from './studio-extras.js';
 import {speakerFor,SPEAKER_NAMES} from './speakers.js';
+import {paragraphs,isDoubtful,nextDoubtful,silenceSkips,skipTarget,savedSeconds,cleanText,transcriptStats,learnTerms,rememberTerms,promptWithTerms} from './intelligence.js';
 import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -56,7 +59,15 @@ async function saveMarks(id){
  }
 }
 /** Live level before recording: only in the studio, only when idle, only with permission already granted. */
+/** «Микрофон: USB Audio Device» under the timer — what will be recorded, without opening settings. */
+function showRecordSource(){
+ const el=document.getElementById('record-source');if(!el||!captureSources)return;
+ try{const {input,output}=captureSources.activeDevices?.()||{};const mode=captureSources.fallbackMode?.()||captureSources.value?.mode;
+  const parts=[];if(mode!=='system'&&input)parts.push('Микрофон: '+input);if(['system','both'].includes(mode)&&output)parts.push('Звук компьютера: '+output);
+  el.textContent=parts.join(' · ');}catch{el.textContent=''}
+}
 function syncLevelPreview(){
+ showRecordSource();
  const idle=state.view==='record'&&!state.capture&&!captureActive(nativeController?.snapshot)&&!document.hidden;
  if(!idle){if(levelPreview.wanted){levelPreview.stop();clearTimeout(state.previewTimer);if(!state.capture&&!captureActive(nativeController?.snapshot))setText('#record-caption','ГОТОВО К ЗАПИСИ')}return}
  const choice=captureSources?.value||{},mode=captureSources?.fallbackMode?.()||choice.mode||'mic';
@@ -73,13 +84,17 @@ async function playAudition(media){if(!canAudition())return;try{if(storageDetail
 const captureHealth={session:null,lastSound:0,clipUntil:0};
 function captureHealthHint(value){
  const now=performance.now();
- if(captureHealth.session!==value.sessionId){Object.assign(captureHealth,{session:value.sessionId,lastSound:now,clipUntil:0,repairTried:false})}
+ if(captureHealth.session!==value.sessionId){Object.assign(captureHealth,{session:value.sessionId,lastSound:now,clipUntil:0,repairTried:false,quietSince:0,levelTried:false})}
  if(value.state!=='recording'){captureHealth.lastSound=now;return ''}
  const levels=Object.values(value.levels||{}).filter(level=>Number.isFinite(level?.rms)&&(level.ageMs??0)<3000);
  // −50 dBFS RMS: below any normal speech, above typical digital silence.
  if(!levels.length||levels.some(level=>level.rms>0.00316))captureHealth.lastSound=now;
  if(levels.some(level=>level.clippedFrames>=3))captureHealth.clipUntil=now+4000;
- if(now-captureHealth.lastSound>10000){if(!captureHealth.repairTried){captureHealth.repairTried=true;void silenceRepair(value)}return ' · ⚠ Микрофон молчит больше 10 с — проверьте выбранный вход и его громкость'}
+ // Quiet but present (−60…−48 dBFS) for 20 s: the Windows input level is probably too low.
+ const quiet=levels.length&&levels.every(level=>level.rms>0.001&&level.rms<0.004);
+ if(!quiet)captureHealth.quietSince=0;else if(!captureHealth.quietSince)captureHealth.quietSince=now;
+ if(captureHealth.quietSince&&now-captureHealth.quietSince>20000&&!captureHealth.levelTried){captureHealth.levelTried=true;void raiseQuietInput()}
+ if(now-captureHealth.lastSound>10000){if(!captureHealth.repairTried){captureHealth.repairTried=true;healthEvent('SILENCE',inputName());void silenceRepair(value)}return ' · ⚠ Микрофон молчит больше 10 с — проверьте выбранный вход и его громкость'}
  if(now<captureHealth.clipUntil)return ' · ⚠ Перегрузка входа — уменьшите усиление микрофона или отодвиньтесь';
  return '';
 }
@@ -92,12 +107,31 @@ async function silenceRepair(value){
   if(needsRepair(target)){await local.json('/capture/repair',{method:'POST',body:REPAIR(target)});notify(`Микрофон «${target.name}» был выключен в Windows — включили, запись продолжается.`);captureHealth.lastSound=performance.now()}
  }catch{}
 }
+/** The taskbar shows the state too: «● 00:12 · Запись — MONO» and a red dot on the icon. */
+const baseTitle=document.title;let iconState='';
+function reflectRecordingInChrome(active,value){
+ const paused=value?.state==='paused';
+ document.title=active?`${paused?'❚❚':'●'} ${durationText(value?.duration||0)} · ${paused?'Пауза':'Запись'} — MONO`:baseTitle;
+ const want=active?(paused?'paused':'recording'):'';if(want===iconState)return;iconState=want;
+ const link=document.querySelector('link[rel=icon]');if(!link)return;
+ if(!want){link.href='/icon.svg';return}
+ const svg=`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='#111'/><g fill='#fff'><rect x='14' y='22' width='4' height='20' rx='2'/><rect x='22' y='16' width='4' height='32' rx='2'/><rect x='30' y='24' width='4' height='16' rx='2'/></g><circle cx='46' cy='18' r='12' fill='${want==='paused'?'#ff9f0a':'#ff453a'}'/></svg>`;
+ link.href='data:image/svg+xml,'+encodeURIComponent(svg);
+}
+async function raiseQuietInput(){
+ if(!['mic','both'].includes(autopilot.mode))return;
+ try{const local=await localLibraryClient();const report=await local.json('/capture/diagnose',{signal:AbortSignal.timeout(7000)});const {target}=pickInput(report,autopilot.inputId);
+  if(target&&typeof target.volume==='number'&&target.volume<.4){await local.json('/capture/repair',{method:'POST',body:{inputId:target.id,minimumVolume:.7}});notify(`Голос записывался очень тихо: MONO поднял уровень микрофона «${target.name}» до 70 %.`)}
+ }catch{}
+}
 function onNativeState(value){
  const wasActive=Boolean(state.capture?.native&&captureActive(state.capture.snapshot)&&state.capture.id===value.recordId);
- const active=captureActive(value);captureSources?.setBusy(active);
- if(value.state==='recording'&&value.connected)autopilot.selection=null; // started: nothing left to recover
+ const active=captureActive(value);captureSources?.setBusy(active);reflectRecordingInChrome(active,value);if(!active)showRecordSource();
+ if(value.state==='recording'&&value.connected){autopilot.selection=null; // started: nothing left to recover
+  document.querySelectorAll('.toast').forEach(t=>{if(/^Переподключаем звук/.test(t.textContent))t.remove()})}
  mediaInterlock?.observe(value);
  audioReview?.captureState(value);
+ void followSafety(value,wasActive);if(!active&&wasActive)releaseDeferred();
  if(active){
   if(!state.capture?.native)state.capture={native:true,peaks:[]};
   Object.assign(state.capture,{id:value.recordId,paused:value.state==='paused',stopping:value.state==='stopping',snapshot:value});state.recordingId=value.recordId;pauseAudition();
@@ -115,7 +149,7 @@ function onNativeState(value){
  if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId));syncLevelPreview();
   if(wasActive&&value.state==='interrupted')markRecoveredSeen(value.recordId);
   if(wasActive&&value.state==='interrupted'&&!(Number(value.savedBytes)>0)&&AUTOPILOT_RETRY.has(value.errorCode)&&autopilot.selection&&autopilot.steps.length){void autopilotRetry(value.errorCode).then(handled=>{if(!handled)void notifyCaptureError(captureFailureMessage(value),value.errorCode)});void refresh().catch(()=>{});return}
-  if(wasActive&&value.state==='interrupted'&&value.errorCode==='DEVICE_LOST'&&(Number(value.savedBytes)>0||Number(value.savedFrames)>0)){void continueAfterDeviceChange(value.recordId);return}void refresh().catch(e=>notify(e.message,'error'));if(wasActive)notify(value.state==='ready'?'Запись сохранена в библиотеке.':captureFailureMessage(value),value.state==='ready'?'info':'error',value.state==='ready'?{text:'Открыть',run:()=>go('editor',value.recordId)}:fixFor(value.errorCode))}
+  if(wasActive&&value.state==='interrupted'&&value.errorCode==='DEVICE_LOST'&&(Number(value.savedBytes)>0||Number(value.savedFrames)>0)){void continueAfterDeviceChange(value.recordId);return}void refresh().catch(e=>notify(e.message,'error'));if(wasActive)notify(value.state==='ready'?'Запись сохранена в библиотеке.':captureFailureMessage(value),value.state==='ready'?'info':'error',value.state==='ready'?{text:state.health?.groq?'Расшифровать':'Открыть',run:async()=>{go('editor',value.recordId);if(state.health?.groq){await refresh();const rec=state.records.find(r=>r.id===value.recordId);if(rec)void startTranscription(rec)}}}:fixFor(value.errorCode))}
 }
 /** Autopilot (Apple: recover quietly; ask only when nothing else can help).
  * Before a microphone take: Windows' own view of the microphone. A muted endpoint or a
@@ -139,17 +173,22 @@ async function autopilotBeforeStart(selection){
 const autopilot={selection:null,steps:[],mode:null};
 function arm(selection){autopilot.selection=selection;autopilot.mode=selection.mode;autopilot.inputId=selection.inputId;autopilot.steps=recoverySteps(selection,(captureSources?.capability?.modes||[]).includes('browser'))}
 function autopilotNext(){return autopilot.selection?autopilot.steps.shift()||null:null}
+let startInFlight=null;
 async function startWithAutopilot(selection){
+ if(startInFlight)return startInFlight; // a double click never opens two sessions
+ startInFlight=startWithAutopilotOnce(selection).finally(()=>{startInFlight=null});return startInFlight;
+}
+async function startWithAutopilotOnce(selection){
  arm(selection);
  for(;;){
-  try{return await nativeController.start(selection)}
+  try{captureMode=selection.mode;return await nativeController.start(selection)}
   catch(error){const next=AUTOPILOT_RETRY.has(error?.code)?autopilotNext():null;if(!next)throw error;notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));if(next.mode==='browser'&&selection.mode!=='browser')notify('Записываем через запасной канал — окно MONO.');selection=next}
  }
 }
 async function autopilotRetry(code){
  const next=autopilotNext();if(!next)return false;
  notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));
- try{if(next.mode==='browser'&&autopilot.mode!=='browser')notify('Записываем через запасной канал — окно MONO.');await nativeController.start(next);return true}
+ try{if(next.mode==='browser'&&autopilot.mode!=='browser'){notify('Записываем через запасной канал — окно MONO.');healthEvent('BROWSER_FALLBACK')}captureMode=next.mode;await nativeController.start(next);return true}
  catch(error){if(AUTOPILOT_RETRY.has(error?.code)&&await autopilotRetry(error.code))return true;void notifyCaptureError(captureErrors[error?.code]||error.message||'Не удалось начать запись.',error?.code||code);return true}
 }
 /** A headset unplugged mid-meeting: the confirmed part is kept and recording continues
@@ -166,7 +205,7 @@ async function continueAfterDeviceChange(previousId){
  try{
   await new Promise(resolve=>setTimeout(resolve,1200));await captureSources.load();
   const selection=await captureSources.selection();const previous=state.records.find(r=>r.id===previousId)||await getRecording(previousId).catch(()=>null);
-  const started=await nativeController.start({...selection,inputId:null,outputId:null});
+  healthEvent('DEVICE_LOST',inputName());captureMode=selection.mode;const started=await nativeController.start({...selection,inputId:null,outputId:null});
   // The archive updates a live record continuously; the linked title is applied when the take ends.
   if(started?.recordId&&previous?.title)continuationTitles.set(started.recordId,previous.title.replace(/ · продолжение$/,'')+' · продолжение');
   notify('Запись продолжается. Первая часть сохранена в библиотеке.','info',{text:'Открыть первую часть',run:()=>go('editor',previousId)});
@@ -183,11 +222,13 @@ async function initializeNative(local){
   const studio=$('#audio-source').closest('.side-card');studio.replaceChildren();mountCaptureSources(studio,{model:captureSources,onError:error=>notify(error.message,'error'),onNotice:message=>notify(message)});
   const card=document.createElement('article');card.className='glass settings-card';card.innerHTML='<div class="settings-card-icon"><svg><use href="#i-mic"/></svg></div><h2>Источники записи</h2><div class="settings-capture-sources"></div><button type="button" class="btn btn-outline btn-small" id="check-native-sound">Проверить звук</button>';$('#view-settings .settings-grid').prepend(card);mountCaptureSources(card.querySelector('.settings-capture-sources'),{model:captureSources,onError:error=>notify(error.message,'error')});card.querySelector('button#check-native-sound').onclick=()=>void showSetup('sound').catch(error=>notify(error.message,'error'));
   const guide=$('.studio-side>.side-card:not(.capture-sources)');guide.replaceChildren();mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
+  const safe=document.createElement('article');safe.className='glass settings-card';safe.innerHTML='<div class="settings-card-icon"><svg><use href="#i-shield"/></svg></div><h2>Страховочная дорожка</h2><p>Пока системный модуль пишет микрофон, окно MONO параллельно пишет его копию другим путём (свой кодек и своё хранилище). Если основная запись оборвётся, MONO предложит восстановить встречу из копии. Копия удаляется через сутки после удачной записи (через неделю — после сбоя). Около 14 МБ за час.</p><label class="check-row"><input type="checkbox" id="setting-safety"> Вести страховочную дорожку</label>';$('#view-settings .settings-grid').append(safe);
+  $('#setting-safety').checked=safetySettings;$('#setting-safety').onchange=e=>{safetySettings=e.target.checked;try{localStorage.setItem('mono-safety-track',safetySettings?'1':'0')}catch{}};
   const help=document.createElement('article');help.className='glass settings-card';mountHelp(help);$('#view-settings .settings-grid').append(help);
   // Pre-flight check: compact (problems only) in the studio, full in settings.
   preflight=new Preflight(local);
   const studioCheck=document.createElement('div');studioCheck.className='glass side-card';$('.studio-side').prepend(studioCheck);mountPreflight(studioCheck,{model:preflight,compact:true,onError:()=>{}});
-  const settingsCheck=document.createElement('article');settingsCheck.className='glass settings-card';settingsCheck.innerHTML='<div class="settings-card-icon"><svg><use href="#i-check"/></svg></div><h2>Предполётная проверка</h2><div></div>';$('#view-settings .settings-grid').prepend(settingsCheck);mountPreflight(settingsCheck.lastElementChild,{model:preflight,onError:error=>notify(error.message,'error')});
+  const settingsCheck=document.createElement('article');settingsCheck.className='glass settings-card';settingsCheck.innerHTML='<div class="settings-card-icon"><svg><use href="#i-check"/></svg></div><h2>Предполётная проверка</h2><div></div>';$('#view-settings .settings-grid').prepend(settingsCheck);mountPreflight(settingsCheck.lastElementChild,{model:preflight,onError:error=>notify(error.message,'error'),onDeep:()=>void runDeepDiagnostics()});
  }
  await nativeController.connect();
  await captureSources.load();
@@ -196,7 +237,7 @@ async function initializeNative(local){
 }
 async function showSetup(initialStep=null){
  if(setupWindow)return;if(setupOpening){await setupOpening;if(initialStep&&!setupWindow)return showSetup(initialStep);return}setupOpening=(async()=>{const local=await localLibraryClient();if(!local)return;
- const opened=await openOnboarding({library:local,storage:storageDetails,configure:configureLibrary,choose:chooseLibraryFolder,ensureNative:()=>initializeNative(local),onArchive:async()=>{updateStorageSettings();await refresh()},onComplete:()=>{setupWindow=null;void credentialForm?.refresh();void offerLegacyImport()},onError:error=>notify(error.message,'error'),helpTemplate:$('#groq-settings-card .setup-details'),initialStep,canPlay:canAudition,playAudio:audio=>mediaInterlock.play(audio)});setupWindow=opened&&!opened.closed?opened:null;
+ const opened=await openOnboarding({library:local,storage:storageDetails,configure:configureLibrary,choose:chooseLibraryFolder,ensureNative:()=>initializeNative(local),onArchive:async()=>{updateStorageSettings();await refresh()},onComplete:()=>{setupWindow=null;void credentialForm?.refresh();void ensureArchive('setup').then(()=>offerLegacyImport())},onError:error=>notify(error.message,'error'),helpTemplate:$('#groq-settings-card .setup-details'),initialStep,canPlay:canAudition,playAudio:audio=>mediaInterlock.play(audio)});setupWindow=opened&&!opened.closed?opened:null;
  })().finally(()=>{setupOpening=null});return setupOpening;
 }
 /** Transcriber controls: Ctrl+Space / F9 / Space play–pause (pausing steps back 2 s), Alt+←/→ seek ±5 s. */
@@ -245,6 +286,50 @@ function watchConnection(){
  };
  setInterval(tick,4000);
 }
+/** Background audio care: the microphone is kept ready before anyone presses Record.
+ * Runs at start, on device plug/unplug, when the window returns, and every 3 min while idle;
+ * never during a take, at most once per 20 s. Fixes what Windows silently changed (muted,
+ * level ~0), keeps the capture module connected (backoff), and says each finding once. */
+const audioCare={running:false,at:-Infinity,told:new Set(),reconnectDelay:2000};
+async function backgroundAudioCare(reason='timer'){
+ if(audioCare.running||!storageDetails().local||!storageDetails().libraryConfigured)return;
+ if(state.capture||captureActive(nativeController?.snapshot)||setupWindow)return;
+ if(reason!=='device'&&performance.now()-audioCare.at<20000)return;
+ audioCare.running=true;audioCare.at=performance.now();
+ try{
+  const local=await localLibraryClient();
+  // 1. Capture module alive? Reconnect quietly with backoff instead of waiting for a failure.
+  if(nativeController&&!nativeController.snapshot.connected){try{await nativeController.connect();audioCare.reconnectDelay=2000}catch{audioCare.reconnectDelay=Math.min(60000,audioCare.reconnectDelay*2);setTimeout(()=>void backgroundAudioCare('reconnect'),audioCare.reconnectDelay)}}
+  if(reason==='device')await captureSources?.load().catch(()=>{});
+  // 2. Windows' view of the microphone: unmute / restore a near-zero level.
+  const report=await local.json('/capture/diagnose',{signal:AbortSignal.timeout(7000)}).catch(()=>null);
+  if(report?.available){
+   const {target,disabledOnly}=pickInput(report,captureSources?.value?.inputId||null);
+   if(needsRepair(target)){const after=await local.json('/capture/repair',{method:'POST',body:REPAIR(target)}).catch(()=>null);if(after&&!after.repairError)notify(`Микрофон «${target.name}» был выключен в Windows — MONO включил его.`)}
+   if(disabledOnly&&!audioCare.told.has('disabled')){audioCare.told.add('disabled');notify('Микрофон отключён в Windows. Включите его: Параметры → Система → Звук → Все звуковые устройства.','error',/Windows/i.test(navigator.userAgent)?{text:'Открыть параметры звука',run:()=>{window.open('ms-settings:sound','_blank')}}:null)}
+  }
+  // 3. Privacy switch and the rest of the pre-flight, refreshed for the studio card.
+  const result=await preflight?.run({force:true}).catch(()=>null);
+  announceNewWarnings(result);
+  const privacy=result?.checks?.find(check=>check.id==='mic-privacy');
+  if(privacy&&!audioCare.told.has('privacy')){audioCare.told.add('privacy');notify(privacy.title+'. '+privacy.action,'error',fixFor('ACCESS_DENIED'))}
+ }finally{audioCare.running=false}
+ if(reason==='timer'&&performance.now()>10*60e3)void weeklyScrub().catch(()=>{}); // never competes with start-up
+}
+function startAudioCare(){
+ if(audioCare.started)return;audioCare.started=true;
+ void backgroundAudioCare('start');void reviewSafetyTracks();
+ navigator.mediaDevices?.addEventListener?.('devicechange',()=>setTimeout(()=>void backgroundAudioCare('device'),1500));
+ window.addEventListener('focus',()=>void backgroundAudioCare('focus'));
+ setInterval(()=>{if(!document.hidden)void backgroundAudioCare('timer')},180000);
+}
+/** A transcript finished while the window was in the background: the title says so until return. */
+function markDoneWhileAway(){if(!document.title.startsWith('✓')){const previous=document.title;document.title='✓ Расшифровка готова — MONO';document.addEventListener('visibilitychange',()=>{if(!document.hidden&&document.title.startsWith('✓'))document.title=previous},{once:true})}}
+/** «?» — every keyboard shortcut in one sheet. */
+function showShortcuts(){
+ const rows=[['Ctrl + Alt + R','Начать или остановить запись из любого окна Windows'],['B','Отметить важный момент во время записи'],['Пробел, F9 или Ctrl + Пробел','Воспроизведение и пауза в редакторе (пауза отступает на 2 с)'],['Alt + ← / →','Перемотка на 5 с в редакторе'],['Shift + «Копировать»','Скопировать текст с таймкодами'],['N','Следующее место, где модель не уверена (в редакторе)'],['Esc','Закрыть окно или список'],['?','Эта подсказка']];
+ modal('Сочетания клавиш','<dl class="shortcut-list">'+rows.map(([k,v])=>`<dt><kbd>${h(k)}</kbd></dt><dd>${h(v)}</dd>`).join('')+'</dl>');
+}
 /** Ctrl+Alt+R anywhere in Windows (registered by the launcher) starts or stops recording. */
 function listenForLauncherEvents(){
  if(!storageDetails().local||typeof EventSource!=='function')return;
@@ -259,7 +344,7 @@ function listenForLauncherEvents(){
 function offerUpdate(update){
  if(!update?.version||!/^https:\/\//.test(update.url||''))return;
  try{if(localStorage.getItem('mono-update-offered')===update.version)return;localStorage.setItem('mono-update-offered',update.version)}catch{}
- notify(`Доступна версия MONO ${update.version}. Установка поверх сохранит записи и настройки.`,'info',{text:'Скачать',run:()=>{window.open(update.url,'_blank','noopener')}});
+ notifyLater(`Доступна версия MONO ${update.version}. Установка поверх сохранит записи и настройки.`,'info',{text:'Скачать',run:()=>{window.open(update.url,'_blank','noopener')}});
 }
 /** Windows accent colour as the app tint, when it is readable on both themes (WCAG 3:1 for UI). */
 function applyAccent(accent){
@@ -279,14 +364,18 @@ function notify(message,type='info',action=null){
     el.setAttribute('role',type==='error'?'alert':'status');
     // Every error says what to do: one button that performs the fix.
     if(action){const fix=document.createElement('button');fix.type='button';fix.className='btn btn-outline btn-small toast-action';fix.textContent=action.text;fix.onclick=()=>{el.remove();active.delete(key);void Promise.resolve().then(action.run).catch(error=>notify(error.message,'error'))};el.append(' ',fix)}
-    $('#toast-area').append(el);
+    // A stack never grows past four: the oldest informational notice yields first.
+    const area=$('#toast-area');while(area.children.length>=4){const victim=[...area.children].find(t=>!t.classList.contains('error'))||area.firstElementChild;victim.remove()}
+    el.addEventListener('click',e=>{if(e.target.closest('button'))return;el.remove();active.delete(key)});el.title='Нажмите, чтобы скрыть';
+    area.append(el);
     entry={el,timer:null};active.set(key,entry);
   }
   clearTimeout(entry.timer);
-  entry.timer=setTimeout(()=>{entry.el.remove();if(active.get(key)===entry)active.delete(key)},action?12000:6500);
+  entry.timer=setTimeout(()=>{entry.el.remove();if(active.get(key)===entry)active.delete(key)},action?12000:type==='error'?9000:6500);
 }
 /** «Busy» microphone: name the app Windows says is using it, instead of a generic guess. */
 async function notifyCaptureError(message,code){
+ healthEvent(code==='DEVICE_LOST'?'DEVICE_LOST':['DEVICE_BUSY','START_TIMEOUT','ACCESS_DENIED','CAPTURE_NOT_READY','OPEN_FAILED','BROWSER_AUDIO_ERROR'].includes(code)?'START_FAILED':'CAPTURE_ERROR',inputName());
  let extra='';
  if(['DEVICE_BUSY','START_TIMEOUT','BROWSER_AUDIO_ERROR'].includes(code)&&storageDetails().local){
   try{const local=await localLibraryClient();const {apps}=await local.json('/microphone-users',{signal:AbortSignal.timeout(5000)});if(apps?.length)extra=` Сейчас микрофон, похоже, использует: ${apps.slice(0,3).join(', ')} — закройте его или выключите в нём микрофон.`}catch{}
@@ -301,6 +390,8 @@ function fixFor(code){
  if(['CAPTURE_HELPER_UNAVAILABLE','CAPTURE_HELPER_TIMEOUT','CAPTURE_CONNECTION_LOST','CAPTURE_NOT_READY','STOP_PENDING'].includes(code))return {text:'Переподключить',run:async()=>{await nativeController?.connect();await preflight?.run({force:true}).catch(()=>{});notify('Модуль записи подключён.')}};
  if(['SLEEP','DISCONTINUITY'].includes(code))return {text:'Продолжить запись',run:()=>{go('record');return beginRecord()}};
  if(code==='GROQ_NOT_CONFIGURED'||code==='INVALID_API_KEY')return {text:'Подключить Groq',run:()=>connectGroq(()=>{})};
+ // Nothing to fix automatically: one tap copies what support needs (no recordings, no keys).
+ if(code&&storageDetails().local)return {text:'Диагностика',run:()=>void runDeepDiagnostics()};
  return null;
 }
 let modalReturnFocus=null;
@@ -313,6 +404,113 @@ function modal(title,body,actions=[]){
     btn.textContent=action.text;btn.onclick=()=>{closeModal();void Promise.resolve().then(action.run).catch(e=>notify(e.message,'error'))};container.append(btn);
   }
   $('#modal').hidden=false;container.querySelector('button').focus();
+}
+// ---- Airliner-grade layer: dissimilar redundancy, trend monitoring, quiet cockpit ----
+/** Health events feed the core journal; «Глубокая диагностика» turns repeats into trends. */
+function healthEvent(code,device){void localLibraryClient().then(local=>local?.json('/diagnostics/event',{method:'POST',body:{code,...(device?{device:String(device).slice(0,120)}:{})}})).catch(()=>{})}
+const inputName=()=>{const id=captureSources?.value?.inputId;return (captureSources?.capability?.inputDevices||[]).find(d=>d.id===id)?.name||(captureSources?.capability?.inputDevices||[]).find(d=>d.default)?.name||null};
+
+/** Safety track: the window records the same microphone along an independent path. */
+const safety=new SafetyTrack({onIssue:code=>healthEvent('SAFETY_FAILED')});
+let captureMode=null,safetySettings=(()=>{try{return localStorage.getItem('mono-safety-track')!=='0'}catch{return true}})();
+async function browserDeviceFor(name){
+ if(!name)return null;try{const list=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='audioinput'&&d.deviceId&&d.deviceId!=='default'&&d.deviceId!=='communications');
+  return (list.find(d=>d.label===name)||list.find(d=>d.label&&(d.label.includes(name)||name.includes(d.label))))?.deviceId||null}catch{return null}
+}
+async function followSafety(value,wasActive){
+ const active=captureActive(value),micTake=value.engine!=='browser'&&(['mic','both'].includes(captureMode)||Boolean(value.levels?.mic));
+ if(active&&micTake&&safetySettings&&value.recordId&&safety.active?.recordId!==value.recordId&&value.state==='recording'){
+  const rec=state.records.find(r=>r.id===value.recordId);void safety.start(value.recordId,{deviceId:await browserDeviceFor(inputName()),title:rec?.title||''});return;
+ }
+ if(active&&safety.active){if(value.state==='paused')safety.pause();else if(value.state==='recording')safety.resume();return}
+ if(!active&&safety.active&&wasActive){
+  const failed=value.state==='interrupted'||Boolean(value.errorCode);const id=safety.active.recordId;const meta=await safety.stop({outcome:failed?'failed':'clean'});
+  if(failed&&meta?.chunks)offerSafety(id,meta);
+ }
+}
+function offerSafety(id,meta){
+ notify('Основная запись прервалась. Страховочная дорожка сохранила звук микрофона'+(meta.bytes?` (${Math.max(1,Math.round(meta.bytes/1024/1024))} МБ)`:'')+'.','error',{text:'Восстановить',run:()=>void restoreSafety(id,meta)});
+}
+async function restoreSafety(id,meta){
+ try{
+  const blob=await safety.blob(id);if(!blob.size)throw new Error('страховочная дорожка пуста');
+  const original=state.records.find(r=>r.id===id)||await getRecording(id,{transcript:false}).catch(()=>null);
+  const title=((original?.title||meta?.title||'Запись')+' · страховочная дорожка').slice(0,150);
+  const file=new File([blob],title+'.webm',{type:blob.type||'audio/webm'});const newId=crypto.randomUUID();
+  await saveImportedRecording({id:newId,title,createdAt:new Date(meta?.startedAt||Date.now()).toISOString(),duration:await fileDuration(file),mime:file.type,size:file.size,source:'Страховочная дорожка',chunkCount:0,status:'saved'},file);
+  await safety.stop().catch(()=>{});const used=await safety.list();const entry=used.find(m=>m.recordId===id);if(entry)await safety.discard(id);
+  healthEvent('SAFETY_USED');await refresh();notify('Страховочная дорожка сохранена в библиотеке.','info',{text:'Открыть',run:()=>go('editor',newId)});
+ }catch(error){notify('Не удалось восстановить страховочную дорожку: '+error.message,'error')}
+}
+/** At start: a window that crashed mid-take leaves a backup marked «recording»; offer it once. */
+async function reviewSafetyTracks(){
+ if(!safety.supported||!storageDetails().local)return;
+ try{
+  await safety.prune();
+  for(const meta of await safety.list()){
+   if(safety.active?.recordId===meta.recordId||!meta.chunks||!['failed','recording'].includes(meta.outcome))continue;
+   const rec=await getRecording(meta.recordId,{transcript:false}).catch(()=>null);
+   if(rec&&!['interrupted','damaged'].includes(rec.status)&&meta.outcome==='recording'&&rec.duration>=(meta.chunks*4-8))continue; // main take is complete
+   offerSafety(meta.recordId,meta);
+  }
+ }catch{}
+}
+
+/** Quiet cockpit: while recording, news that does not concern the take waits until it ends. */
+const deferred=[];
+function notifyLater(message,type='info',action=null){if(captureActive(nativeController?.snapshot)||state.capture){if(deferred.length<10)deferred.push([message,type,action]);return}notify(message,type,action)}
+function releaseDeferred(){if(captureActive(nativeController?.snapshot)||state.capture||!deferred.length)return;const list=deferred.splice(0);setTimeout(()=>{for(const [m,t,a] of list)notify(m,t,a)},1200)}
+
+/** Built-in test in the background: silent when healthy, one line for each new blocking problem. */
+const announced=new Set();
+function announceNewWarnings(result){
+ for(const item of result?.checks||[]){
+  if(item.level!=='warning'||announced.has(item.id)||item.id==='mic-privacy')continue;announced.add(item.id);
+  notify(item.title+(item.action?'. '+item.action:''),'error',{text:'Диагностика',run:()=>void runDeepDiagnostics()});
+ }
+ for(const id of announced)if(!result?.checks?.some(item=>item.id===id&&item.level==='warning'))announced.delete(id); // cleared → may warn again later
+}
+/** Weekly integrity scrub of the archive (re-hash every stored part) in short 5-second passes, never during start-up or a take. */
+async function weeklyScrub(){
+ let last=0;try{last=Number(localStorage.getItem('mono-last-scrub'))||0}catch{}
+ if(Date.now()-last<7*86400e3)return;
+ const local=await localLibraryClient();if(!local)return;let cursor=null,damaged=[];
+ for(let pass=0;pass<500;pass++){
+  if(captureActive(nativeController?.snapshot)||state.capture)return; // never during a take; resumes next time
+  const result=await local.json('/diagnostics/scrub',{method:'POST',body:{cursor},signal:AbortSignal.timeout(70000)}).catch(()=>null);if(!result)return;
+  damaged.push(...result.damaged);if(result.complete)break;cursor=result.cursor;await new Promise(r=>setTimeout(r,2000));
+ }
+ try{localStorage.setItem('mono-last-scrub',String(Date.now()))}catch{}
+ if(damaged.length){await refresh().catch(()=>{});notify(`Проверка целостности: повреждено записей — ${damaged.length}. Файлы изменились на диске после сохранения.`,'error',{text:'Диагностика',run:()=>void runDeepDiagnostics()})}
+}
+/** «Глубокая диагностика»: active tests of the core, archive, sound, Groq and this window,
+ * with conclusions in plain words and a report that never contains titles, text, keys or paths. */
+let deepRunning=false;
+async function runDeepDiagnostics(){
+ if(deepRunning)return;deepRunning=true;
+ const recording=captureActive(nativeController?.snapshot)||Boolean(state.capture);
+ modal('Глубокая диагностика','<p class="deep-progress" role="status">Проверяем ядро, архив, звук, Groq и окно — около 10 секунд.'+(recording?'':' Скажите что-нибудь в микрофон.')+'</p>');
+ try{
+  const local=await localLibraryClient();if(!recording)levelPreview.stop();
+  const [server,windowInfo,microphone]=await Promise.all([
+   local?local.json('/diagnostics',{signal:AbortSignal.timeout(45000)}).catch(error=>({error:error.code||error.message})):Promise.resolve(null),
+   windowProbe().catch(()=>null),
+   recording?Promise.resolve({skipped:'recording'}):microphoneProbe().catch(()=>null)]);
+  const findings=consolidate([...(server?.findings||[]),...(server?.error?[{level:'warning',title:'Ядро не ответило на диагностику',detail:String(server.error),action:'Перезапустите MONO.'}]:[]),...windowFindings(windowInfo,microphone)]);
+  const report={generatedAt:new Date().toISOString(),findings,server:server&&!server.error?{...server,findings:undefined}:server,window:windowInfo,microphone,recentWindowErrors:recentErrors()};
+  const text=formatReport(report);
+  if($('#modal').hidden){notify('Диагностика готова','info',{text:'Показать',run:()=>showDeepReport(findings,text)});return}
+  showDeepReport(findings,text);
+ }catch(error){notify('Диагностика не завершилась: '+error.message,'error')}
+ finally{deepRunning=false;syncLevelPreview()}
+}
+function showDeepReport(findings,text){
+ const mark={warning:'✖',caution:'▲',advisory:'●'};
+ const body=(findings.length?`<p>${findings.some(f=>f.level==='warning')?'Есть проблемы, которые мешают работе:':'Найдено:'}</p><ul class="deep-findings">${findings.map(f=>`<li data-level="${f.level}"><span class="deep-mark" aria-hidden="true">${mark[f.level]||'•'}</span><div><strong>${h(f.title)}</strong>${f.detail?`<span>${h(f.detail)}</span>`:''}${f.action?`<em>${h(f.action)}</em>`:''}</div></li>`).join('')}</ul>`:'<p><strong>Проблем не найдено.</strong> Ядро, архив, звук, Groq и окно в порядке.</p>')+
+  '<p class="field-hint">В отчёте нет названий записей, текста, ключей и путей к файлам. Названия звуковых устройств остаются — по ним видно, какой микрофон проверялся.</p><div class="inline-actions"><button type="button" class="btn btn-primary btn-small" id="deep-copy">Скопировать отчёт</button><button type="button" class="btn btn-outline btn-small" id="deep-save">Сохранить файл</button></div>';
+ modal('Глубокая диагностика',body);const close=$('#modal-actions .btn-outline');if(close)close.textContent='Закрыть';
+ $('#deep-copy').onclick=async()=>{try{await navigator.clipboard.writeText(text);$('#deep-copy').textContent='Скопировано'}catch(e){notify('Не удалось скопировать: '+e.message,'error')}};
+ $('#deep-save').onclick=()=>downloadBlob(new Blob([text],{type:'text/plain;charset=utf-8'}),`MONO-диагностика-${new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')}.txt`);
 }
 function closeModal(){
   if($('#modal').hidden)return;
@@ -349,7 +547,7 @@ function renderRoute({preserveDrawer=false}={}){
     else if(state.editorId!==id||state.view!=='editor'){state.editorId=id;state.editorPage=0;void renderEditor(id).catch(e=>notify(e.message,'error'))}
   }
  if(state.view==='editor'&&view!=='editor'){if(audioReview){audioReview.player.pause();void audioReview.cancel(true).catch(e=>notify(e.message,'error'))}else $('#audio-element').pause()}
-  state.view=view;
+  state.view=view;try{if(view!=='editor')localStorage.setItem('mono-last-view',view)}catch{}
   if(view==='settings')document.querySelectorAll('.archive-recovery-notice').forEach(notice=>notice.remove());
   $$('.view').forEach(el=>el.classList.toggle('active',el.id==='view-'+view));
   $$('.nav-link[data-view]').forEach(el=>(el.classList.toggle('selected',el.dataset.view===view),el.setAttribute('aria-current',el.dataset.view===view?'page':'false')));
@@ -362,8 +560,26 @@ function renderRoute({preserveDrawer=false}={}){
   syncLevelPreview();
   $('#main').scrollTo({top:0,behavior:'instant'});
 }
+const autoTitled=new Set();
+/** Finished transcripts name their own records (only automatic names, once per record). */
+async function nameFromTranscripts(){
+ let changed=0;
+ for(const rec of state.records.filter(r=>r.status==='completed'&&DEFAULT_TITLE.test(r.title||'')&&!autoTitled.has(r.id)).slice(0,5)){
+  autoTitled.add(rec.id);
+  try{const segments=storageDetails().local?(await transcriptPage(rec.id,{offset:0,limit:12})).segments:(await getRecording(rec.id))?.transcript?.segments;
+   const title=suggestTitle(segments);if(!title)continue;
+   await getRecording(rec.id);await patchRecording(rec.id,{title});rec.title=title;changed++;
+  }catch{}
+ }
+ return changed;
+}
+const lastStatus=new Map();
 async function refresh(){
   state.records=(await listRecordings()).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  // Local archive: a transcript finishing in the background is announced once.
+  if(storageDetails().local)for(const r of state.records){const before=lastStatus.get(r.id);lastStatus.set(r.id,r.status);
+   if(before&&['queued','processing','uploading'].includes(before)&&r.status==='completed'){notify(`Расшифровка «${r.title}» готова`,'info',{text:'Открыть',run:()=>go('editor',r.id)});if(document.hidden)markDoneWhileAway()}}
+  void nameFromTranscripts().then(changed=>{if(changed){renderDashboard();if(state.view==='library')renderLibrary()}}).catch(()=>{});
   $('#nav-count').textContent=state.records.length;
   renderDashboard();
   if(state.view==='library')renderLibrary();
@@ -404,7 +620,12 @@ async function renderLibrary(){
   });
   if(sort==='oldest')records=records.sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
   if(sort==='name')records=records.sort((a,b)=>a.title.localeCompare(b.title,'ru'));
-  $('#library-count').textContent=`${records.length} ${({one:'ЗАПИСЬ',few:'ЗАПИСИ'})[new Intl.PluralRules('ru-RU').select(records.length)]||'ЗАПИСЕЙ'}`;
+  if(sort==='longest')records=records.sort((a,b)=>(b.duration||0)-(a.duration||0));
+  const totalSeconds=records.reduce((sum,r)=>sum+(r.duration||0),0);
+  $('#library-count').textContent=`${records.length} ${({one:'ЗАПИСЬ',few:'ЗАПИСИ'})[new Intl.PluralRules('ru-RU').select(records.length)]||'ЗАПИСЕЙ'}`+(totalSeconds>0?` · ${durationText(totalSeconds)}`:'');
+  const signature=JSON.stringify([q,filter,sort,settings.rate,records.map(r=>[r.id,r.version,r.status,r.title,r.trashed])]);
+  if(signature===state.librarySignature&&$('#library-list').childElementCount)return; // identical list: no DOM rebuild
+  state.librarySignature=signature;
   $('#library-list').innerHTML=records.length?records.map(r=>`
    <article class="record-card glass"><div class="record-card-head"><span class="item-icon">${icon('file')}</span><span class="record-status">${statusLabel(r)}</span></div>
    <h3 title="${h(r.title)}">${h(r.title)}</h3><p class="record-sub">${fmtDate(r.createdAt)} · ${h(r.source||'Импорт')}</p>
@@ -413,6 +634,14 @@ async function renderLibrary(){
    <div class="card-icon-actions"><button class="icon-btn" data-rename="${h(r.id)}" title="Переименовать" aria-label="Переименовать запись">${icon('file')}</button><button class="icon-btn" data-delete="${h(r.id)}" title="Удалить запись" aria-label="Удалить запись">${icon('trash')}</button></div>`}</div></article>`).join(''):
    `<div class="glass" style="grid-column:1/-1;border-radius:18px"><div class="empty-state">${icon('library')}<strong>${filter==='trash'?'Корзина пуста':'Записей не найдено'}</strong><p>${filter==='trash'?'Здесь можно восстановить удалённые записи.':state.records.length?'Измените условия поиска.':'Создайте запись или импортируйте аудио.'}</p>${filter==='trash'?'':`<button class="btn btn-outline btn-small" data-go="record">Студия записи ${icon('arrow')}</button>`}</div></div>`;
 }
+/** «~3 мин» from the pace so far (segments done since this job started on this screen). */
+const jobPace=new Map();
+function jobEta(r){
+ const done=r.job?.completed||0,total=r.job?.total||0;if(!['processing','uploading'].includes(r.status)||!total||done>=total)return '';
+ const now=Date.now();let pace=jobPace.get(r.id);if(!pace||done<pace.done)jobPace.set(r.id,pace={at:now,done});
+ if(done<=pace.done||now-pace.at<5000)return '';const perSegment=(now-pace.at)/(done-pace.done),minutes=Math.max(1,Math.round(perSegment*(total-done)/60000));
+ return `Осталось ~${minutes} мин · `;
+}
 function renderJobs(){
  const items=state.records.filter(r=>r.jobId||r.status==='uploading').sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
  $('#jobs-list').innerHTML=items.length?items.map(r=>{
@@ -420,7 +649,7 @@ function renderJobs(){
   const failed=r.status==='failed',active=['queued','processing'].includes(r.status);
   return `<article class="job-card glass"><div class="job-top"><div><span class="small-label">ЗАДАНИЕ / ${h(r.jobId?.slice(0,8).toUpperCase()||'LOADING')}</span><h3>${h(r.title)}</h3><p>${h(r.job?.stage||statusLabel(r))}${r.job?.error?' · '+h(r.job.error):''}</p></div><span class="record-status">${statusLabel(r)}</span></div>
   <div class="job-progress-track" role="progressbar" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100"><div class="job-progress-fill" style="width:${progress}%"></div></div>
-  <div class="job-bottom"><span>${r.job?.total?`Обработано ${r.job.completed||0} из ${r.job.total} фрагментов`:'Ожидание информации от сервера'}</span>
+  <div class="job-bottom"><span>${jobEta(r)}${r.job?.total?`Обработано ${r.job.completed||0} из ${r.job.total} фрагментов`:'Ожидание информации от сервера'}</span>
   <div>${failed?`<button class="btn btn-outline btn-small" data-retry="${h(r.id)}">${icon('refresh')} Повторить</button>`:''}${active?`<button class="btn btn-outline btn-small" data-cancel="${h(r.id)}">Отменить</button>`:''}${r.status==='completed'?`<button class="btn btn-primary btn-small" data-open="${h(r.id)}">Открыть текст ${icon('arrow')}</button>`:''}</div></div></article>`;
  }).join(''):`<div class="glass" style="border-radius:18px"><div class="empty-state">${icon('activity')}<strong>Пока нет задач</strong><p>Загрузите аудио и запустите распознавание.</p><button class="btn btn-outline btn-small" data-go="library">Перейти в библиотеку ${icon('arrow')}</button></div></div>`;
 }
@@ -480,6 +709,7 @@ function chosenMime(){
 }
 async function beginRecord(){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
+ if(storageDetails().local&&!storageDetails().libraryConfigured&&!await ensureArchive('record'))return;
  if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');if(!nativeController.snapshot.connected){try{await nativeController.connect()}catch(error){notify(`Модуль записи не отвечает${error?.code?' ('+error.code+')':''}. Откройте «Настройки → Предполётная проверка».`,'error');void preflight?.run({force:true}).catch(()=>{});return}}const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}await startWithAutopilot(await autopilotBeforeStart(await captureSources.selection()))}catch(error){if(error?.name!=='AbortError')void notifyCaptureError(error.message||'Не удалось начать запись.',error.code)}return}
  if(state.recordBusy||state.capture)return;
  state.recordBusy=true;
@@ -582,6 +812,9 @@ async function finalizeRecord(r){
 /** Studio rendering budget (weak laptops): the wave is drawn at ≤30 fps and only when it
  * changes; the meter moves with transform (no layout); the dB figure updates ≤5×/s.
  * Before: ~20 layouts and ~180 ms of main thread per second at 4× CPU throttling. */
+/** On battery below 30 %, glass turns solid and the wave runs at 15 fps (restored on charge). */
+const batterySaver={on:false};
+void globalThis.navigator?.getBattery?.().then(b=>{const update=()=>{const on=!b.charging&&b.level<.3;if(on===batterySaver.on)return;batterySaver.on=on;document.documentElement.classList.toggle('lite-glass',on||localStorage.getItem('mono-lite-glass')==='1')};update();b.addEventListener('chargingchange',update);b.addEventListener('levelchange',update)}).catch(()=>{});
 const meter={scale:-1,text:'',at:0};let waveDrawnAt=0,waveSignature='';
 function setMeter(rms,now){
  const db=rms>0?20*Math.log10(rms):-90,scale=rms>0?Math.max(0,Math.min(1,(db+65)/65)):0;
@@ -591,7 +824,7 @@ function setMeter(rms,now){
 function drawWave(now=performance.now()){
  nativeFrame=0;
  const r=state.capture,keepGoing=Boolean(state.capture)||levelPreview.active&&state.view==='record';
- if(now-waveDrawnAt<32){if(keepGoing)nativeFrame=requestAnimationFrame(drawWave);return}
+ if(now-waveDrawnAt<(batterySaver.on?66:32)){if(keepGoing)nativeFrame=requestAnimationFrame(drawWave);return}
  const step=Math.min(4,Math.max(1,Math.round((now-waveDrawnAt)/33)));waveDrawnAt=now;
  const canvas=$('#record-wave'),c=canvas.getContext('2d');
  const values=[];
@@ -632,7 +865,7 @@ async function startTranscription(rec){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
  if(!rec||rec.status==='recording'||!rec.size){notify('Нет доступного аудиофайла.','error');return}
  if(['queued','processing','uploading'].includes(rec.status)){go('jobs');return}
- const selection=captureSelection(rec.id,audioReview?.selected,settings);
+ const selection=captureSelection(rec.id,audioReview?.selected,{...settings,prompt:promptWithTerms(settings.prompt,learnedTerms())});
  if(rec.status==='completed'){
   modal('Повторная транскрибация',`Вариант: ${selection.title}.\n\nЭто создаст новый платный запрос и заменит текущую расшифровку. Исходный звук останется на устройстве. Продолжить?`,
    [{text:'Повторить',primary:true,run:()=>uploadTranscription(rec,true,selection)}]);return;
@@ -714,7 +947,7 @@ async function pollJobs(){
      if(!result.ok)throw new Error('Результат ещё не получен');
      const data=await result.json();
      const segments=(data.segments?.length?data.segments:[{start:0,end:data.duration||r.duration||0,text:data.text||''}]).map((s,i)=>({
-       start:s.start,end:s.end,text:s.text,original:s.text,id:i
+       start:s.start,end:s.end,text:s.text,original:s.text,id:i,...(Number.isFinite(s.confidence)?{confidence:s.confidence}:{})
      }));
      await patchRecording(r.id,{status:'completed',duration:data.duration||r.duration,
        completedAt:new Date().toISOString(),estimatedUSD:job.estimatedUSD||0,
@@ -722,7 +955,7 @@ async function pollJobs(){
      // Client has durably persisted transcript, so delete the server copy.
      const ack=await jobFetch(`/api/jobs/${r.jobId}/ack`,{method:'POST'}).catch(()=>null);
      if(ack?.ok||ack?.status===404)await patchRecording(r.id,{serverAcked:true});
-     notify(`Расшифровка «${r.title}» готова`);changed=true;
+     notifyLater(`Расшифровка «${r.title}» готова`);changed=true;if(document.hidden)markDoneWhileAway();
     }else{
      const nextStatus=job.status;
      if(JSON.stringify(r.job)!==JSON.stringify({stage:job.stage,completed:job.completed,total:job.total,error:job.error})||
@@ -765,6 +998,9 @@ function downloadBlob(blob,name){const url=URL.createObjectURL(blob),a=document.
 function renameRecord(rec){
  modal('Название записи',`<label class="field-label" for="rename-input">Новое название</label><input id="rename-input" class="select" maxlength="130" value="${h(rec.title)}">`,
  [{text:'Сохранить',primary:true,run:async()=>{const name=$('#rename-input').value.trim();if(!name){notify('Название не может быть пустым','error');return}await patchRecording(rec.id,{title:name});await refresh()}}]);
+ // Enter saves (the primary action); the old title is pre-selected for typing over it.
+ const input=$('#rename-input');input.focus();input.select();
+ input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();$('#modal-actions .btn-primary')?.click()}});
 }
 function deleteRecord(rec){
  if(storageDetails().local){
@@ -799,12 +1035,12 @@ async function renderEditor(id){
  $('#editor-heading').textContent=rec.title;
  $('#editor-helper').textContent=hasTranscript?'Исправления сохраняются автоматически на этом устройстве.':'Прослушайте запись перед расшифровкой. Аудио остаётся на компьютере до подтверждения отправки.';
  $('#copy-transcript').hidden=!hasTranscript;$('#export-transcript').hidden=!hasTranscript;$('#editor-transcribe').textContent=hasTranscript?'Расшифровать заново':'Расшифровать';$('#editor-transcribe').disabled=['recording','requesting','processing','queued','uploading'].includes(rec.status)||!rec.size;$('#editor-download').disabled=!rec.size;
- void renderEditorSegments(rec);
+ renderSummary(rec);void renderEditorSegments(rec);
  if(state.playerURL)URL.revokeObjectURL(state.playerURL);
  state.playerURL=null;
  const audio=$('#audio-element');audio.pause();audio.removeAttribute('src');
  if(storageDetails().local){
-  if(!audioReview){const host=document.createElement('section');host.setAttribute('aria-label','Подготовка и сравнение аудио');$('.editor-document-header').after(host);audioReview=new AudioReview({library:await localLibraryClient(),host,original:audio,play:media=>{if(!canAudition()||!mediaInterlock)return Promise.reject(new Error('Завершите запись перед прослушиванием.'));return mediaInterlock.play(media)},onError:error=>notify(error.message,'error'),onPlayer:value=>{setText('#player-now',shortTime(value.time));setText('#player-total',shortTime(value.duration));$('#player-seek').value=String(value.duration?Math.floor(1000*value.time/value.duration):0);const button=$('#player-toggle'),playing=String(value.playing);if(button.dataset.playing!==playing){button.dataset.playing=playing;button.innerHTML=icon(value.playing?'pause':'play');button.setAttribute('aria-label',value.playing?'Приостановить воспроизведение':'Воспроизвести запись')}}})}
+  if(!audioReview){const host=document.createElement('section');host.setAttribute('aria-label','Подготовка и сравнение аудио');$('.editor-document-header').after(host);audioReview=new AudioReview({library:await localLibraryClient(),host,original:audio,play:media=>{if(!canAudition()||!mediaInterlock)return Promise.reject(new Error('Завершите запись перед прослушиванием.'));return mediaInterlock.play(media)},onError:error=>notify(error.message,'error'),onPlayer:value=>{followPlayback(value.time);setText('#player-now',shortTime(value.time));setText('#player-total',shortTime(value.duration));$('#player-seek').value=String(value.duration?Math.floor(1000*value.time/value.duration):0);const button=$('#player-toggle'),playing=String(value.playing);if(button.dataset.playing!==playing){button.dataset.playing=playing;button.innerHTML=icon(value.playing?'pause':'play');button.setAttribute('aria-label',value.playing?'Приостановить воспроизведение':'Воспроизвести запись')}}})}
   audioReview.captureState(nativeController?.snapshot||{connected:false});audioReview.open(rec,audioURL(rec));return;
  }
  try{const url=audioURL(rec);if(url){audio.src=url}else{const blob=await getBlob(rec);if(state.editorId!==id)return;state.playerURL=URL.createObjectURL(blob);audio.src=state.playerURL}audio.load();
@@ -812,6 +1048,147 @@ async function renderEditor(id){
  $('#player-total').textContent=shortTime(rec.duration);
  $('#player-now').textContent='00:00';$('#player-seek').value='0';$('#player-toggle').innerHTML=icon('play');
 }
+// ---- Transcript intelligence: on-device analysis + the meeting summary (on request) ----
+const TERMS_KEY='mono-learned-terms',SMART_KEY='mono-smart-speed';
+function learnedTerms(){try{const v=JSON.parse(localStorage.getItem(TERMS_KEY)||'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:{}}catch{return {}}}
+function saveTerms(book){try{localStorage.setItem(TERMS_KEY,JSON.stringify(book))}catch{}renderLearnedTerms()}
+function renderLearnedTerms(){
+ const host=$('#learned-terms');if(!host)return;const terms=Object.keys(learnedTerms());host.hidden=!terms.length;
+ host.innerHTML=terms.length?`<div class="field-label">Выучено из ваших исправлений</div><p class="field-hint">MONO добавляет эти слова к подсказке при следующих расшифровках, пока хватает места. Нажмите на слово, чтобы забыть его.</p><div class="term-list">${terms.map(t=>`<button type="button" class="term-chip" data-forget="${h(t)}" aria-label="Забыть «${h(t)}»">${h(t)}<span aria-hidden="true"> ×</span></button>`).join('')}</div>`:'';
+}
+/** Called when the person leaves an edited fragment: names and terms they typed are learned. */
+function learnFromEdit(el){
+ const s=state.visibleSegments.get(Number(el.dataset.segment));if(!s||typeof s.original!=='string'||s.original===el.value)return;
+ const terms=learnTerms(s.original,el.value);if(!terms.length)return;
+ const book=learnedTerms(),fresh=terms.filter(t=>!book[t]);saveTerms(rememberTerms(book,terms));
+ if(fresh.length)notifyLater(`MONO запомнил: ${fresh.slice(0,3).join(', ')}${fresh.length>3?'…':''}. Учтём при следующей расшифровке.`);
+}
+
+let insight=null,insightPending=null;
+let smartSpeed=(()=>{try{return localStorage.getItem(SMART_KEY)==='1'}catch{return false}})(),skipping=0;
+/** Paragraph starts, doubtful places, pauses to skip and statistics for the open record. */
+async function insightFor(rec,profile){
+ const count=rec.transcriptSummary?.segmentCount??rec.transcript?.segments?.length??0;
+ if(!count){insight=null;renderInsight(rec);return null}
+ const key=`${rec.id}:${count}:${profile?1:0}`;if(insight?.key===key)return insight;
+ if(insightPending?.key!==key)insightPending={key,promise:(async()=>{
+  const full=rec.transcript?.segments?.length===count?rec:await getRecording(rec.id);const segments=full?.transcript?.segments||[];
+  const speakerOf=s=>speakerFor(s,profile);const groups=paragraphs(segments,{speakerOf});
+  return {key,id:rec.id,segments,starts:new Set(groups.map(g=>g.indices[0])),doubts:segments.reduce((n,s)=>n+(isDoubtful(s)?1:0),0),skips:silenceSkips(segments,{duration:Number(rec.duration)||Infinity}),stats:transcriptStats(segments,{speakerOf,duration:Number(rec.duration)||0}),last:-1};
+ })().catch(()=>null)};
+ const pending=insightPending,value=await pending.promise;if(insightPending===pending)insightPending=null;
+ if(value&&state.editorId===rec.id){insight=value;renderInsight(rec)}
+ return value;
+}
+function renderInsight(rec){
+ const view=insight?.id===rec?.id?insight:null,stats=view?.stats;
+ $('#editor-pace-row').hidden=!stats?.wordsPerMinute;if(stats?.wordsPerMinute)setText('#editor-pace',`${stats.wordsPerMinute} слов/мин`);
+ const people=Object.entries(stats?.speakers||{}).filter(([,p])=>p.seconds>0);
+ $('#editor-share-row').hidden=people.length<2;if(people.length>=2)setText('#editor-share',people.map(([who,p])=>`${SPEAKER_NAMES[who]} ${Math.round(p.share*100)} %`).join(' · '));
+ const chip=$('#next-doubt');chip.hidden=!view?.doubts;if(view?.doubts)chip.textContent=`Проверить на слух: ${view.doubts} ${plural(view.doubts,'место','места','мест')} →`;
+ const smart=$('#smart-speed'),saved=savedSeconds(view?.skips);smart.hidden=saved<5;
+ smart.setAttribute('aria-pressed',String(smartSpeed));smart.textContent=smartSpeed?`Без пауз · −${shortTime(saved)}`:'Без пауз';
+}
+function plural(n,one,few,many){const a=n%10,b=n%100;return a===1&&b!==11?one:a>=2&&a<=4&&(b<12||b>14)?few:many}
+/** Smart Speed: while playing, a long pause between phrases is jumped over (keeps 0.45 s of air). */
+function smartSkip(time){
+ if(!smartSpeed||!insight?.skips?.length||insight.id!==state.editorId)return;
+ const playing=audioReview?audioReview.player.snapshot.playing:!$('#audio-element').paused;if(!playing||performance.now()<skipping)return;
+ const to=skipTarget(insight.skips,time);if(to===null)return;skipping=performance.now()+600;
+ if(audioReview)void audioReview.player.seek(to).catch(()=>{});else $('#audio-element').currentTime=to;
+}
+async function gotoDoubt(){
+ if(!insight?.doubts)return;const index=nextDoubtful(insight.segments,insight.last);if(index<0)return;insight.last=index;
+ if($('#editor-search').value){$('#editor-search').value=''}
+ const page=Math.floor(index/65),rec=state.records.find(r=>r.id===state.editorId);
+ if(page!==state.editorPage&&rec){state.editorPage=page;await renderEditorSegments(rec)}
+ const el=$(`#editor-content [data-segment="${index}"]`);if(!el)return;
+ el.closest('.transcript-paragraph')?.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});el.focus({preventScroll:true});
+ const start=Number(insight.segments[index]?.start);if(Number.isFinite(start)&&canAudition()){if(audioReview)void audioReview.player.seek(start).catch(()=>{});else $('#audio-element').currentTime=start}
+}
+
+const SUMMARY_SECTIONS=[['decisions','Решения'],['actions','Задачи'],['questions','Открытые вопросы']];
+const actionText=a=>`${a.text}${a.owner?` — ${a.owner}`:''}${a.due?` (срок: ${a.due})`:''}`;
+function summaryLines(s){
+ const lines=['Конспект'];if(s.overview)lines.push(s.overview);
+ for(const [key,title] of SUMMARY_SECTIONS)if(s[key]?.length){lines.push(title);for(const row of s[key])lines.push('• '+(key==='actions'?actionText(row):row.text))}
+ if(s.topics?.length){lines.push('Темы');for(const t of s.topics)lines.push('• '+t.title+(t.points?.length?': '+t.points.join('; '):''))}
+ return lines;
+}
+function summaryMarkdown(s){
+ const out=['## Конспект'];if(s.overview)out.push('',s.overview);
+ for(const [key,title] of SUMMARY_SECTIONS)if(s[key]?.length)out.push('',`### ${title}`,...s[key].map(row=>(key==='actions'?'- [ ] ':'- ')+(key==='actions'?actionText(row):row.text)+(Number.isFinite(row.at)?` _(${shortTime(row.at)})_`:'')));
+ if(s.topics?.length)out.push('','### Темы',...s.topics.map(t=>`- **${t.title}**${t.points?.length?': '+t.points.join('; '):''}`));
+ return out.join('\n');
+}
+const summaryTasks=new Map();
+function renderSummary(rec){
+ const panel=$('#summary-panel'),button=$('#summary-open'),s=rec.summary,has=Boolean(rec.transcript||rec.transcriptSummary),task=summaryTasks.get(rec.id);
+ button.hidden=!has||!storageDetails().local;button.disabled=Boolean(task);
+ button.innerHTML=icon('sparkle')+' '+(task?`Конспект · ${task.done||0}/${task.total||1}`:s?'Конспект':'Составить конспект');
+ if(!s||!has){panel.hidden=true;panel.replaceChildren();return}
+ const header=$('.editor-document-header');if(header.nextElementSibling!==panel)header.after(panel); // the summary reads first, above audio tools
+ const at=t=>Number.isFinite(t)?` <button type="button" class="summary-at" data-seek="${t}" title="Прослушать это место">${shortTime(t)}</button>`:'';
+ const list=(title,rows,fmt)=>rows?.length?`<h3>${title}</h3><ul>${rows.map(r=>`<li>${fmt(r)}${at(r.at)}</li>`).join('')}</ul>`:'';
+ const count=rec.transcriptSummary?.segmentCount??rec.transcript?.segments?.length;const stale=s.sourceSegments&&count&&count!==s.sourceSegments;
+ const empty=!s.overview&&!s.decisions?.length&&!s.actions?.length&&!s.questions?.length&&!s.topics?.length;
+ panel.innerHTML=`<header class="summary-head"><div class="small-label">КОНСПЕКТ ВСТРЕЧИ</div><div class="summary-tools"><button class="btn btn-subtle btn-small" type="button" data-summary="copy">Копировать</button><button class="btn btn-subtle btn-small" type="button" data-summary="redo">Обновить</button><button class="btn btn-subtle btn-small" type="button" data-summary="hide" aria-expanded="true">Свернуть</button></div></header>`+
+  (empty?'<p class="summary-overview">В расшифровке не нашлось решений, задач или тем.</p>':'')+
+  (s.overview?`<p class="summary-overview">${h(s.overview)}</p>`:'')+
+  list('Решения',s.decisions,r=>h(r.text))+
+  list('Задачи',s.actions,r=>`${h(r.text)}${r.owner?` <span class="summary-tag">${h(r.owner)}</span>`:''}${r.due?` <span class="summary-tag summary-due">${h(r.due)}</span>`:''}`)+
+  list('Открытые вопросы',s.questions,r=>h(r.text))+
+  list('Темы',s.topics,r=>`<strong>${h(r.title)}</strong>${r.points?.length?`<span class="summary-points">${r.points.map(h).join(' · ')}</span>`:''}`)+
+  `<p class="field-hint">${stale?'<strong>Расшифровка изменилась после конспекта — нажмите «Обновить».</strong> ':''}Составлено языковой моделью${s.model?' '+h(s.model):''} по тексту расшифровки. Проверяйте важное по ссылкам на время.</p>`;
+ panel.hidden=state.summaryHidden===rec.id;
+}
+function requestSummary(rec){
+ if(!state.health?.groq){connectGroq(()=>requestSummary(rec));return}
+ modal('Составить конспект встречи?','В Groq будет отправлен <strong>только текст расшифровки</strong> — аудио остаётся на компьютере. Модель выделит решения, задачи с ответственными, открытые вопросы и темы со ссылками на время.\n\nСтоимость — по тарифу Groq за токены; на бесплатном тарифе действуют дневные лимиты. Подтвердите, если участники встречи согласны на обработку текста.',
+  [{text:'Составить конспект',primary:true,run:()=>runSummary(rec.id)}]);
+}
+async function runSummary(id){
+ const local=await localLibraryClient();if(!local)return;state.summaryHidden=null;
+ summaryTasks.set(id,{done:0,total:1});const refreshButton=()=>{const rec=state.records.find(r=>r.id===id);if(rec&&state.editorId===id)renderSummary(rec)};refreshButton();
+ try{
+  let task=await local.json(`/records/${id}/summary`,{method:'POST',body:{consent:true}});
+  // A short network hiccup or a core restart must not leave the window waiting silently.
+  for(let misses=0;task.status==='running';){summaryTasks.set(id,task);refreshButton();await new Promise(r=>setTimeout(r,1500));
+   try{task=await local.json(`/records/${id}/summary`);misses=0}catch(error){if(++misses>=20)throw error}}
+  if(task.status==='idle'){const rec=await getRecording(id,{transcript:false}).catch(()=>null);if(rec?.summary&&rec.summary.createdAt!==state.records.find(r=>r.id===id)?.summary?.createdAt){state.records=state.records.map(r=>r.id===id?{...r,...rec}:r);notify('Конспект готов');return}
+   throw new Error('составление прервалось — MONO перезапускался. Нажмите «Составить конспект» ещё раз.')}
+  if(task.status==='failed')throw new Error(task.error||'Не удалось составить конспект');
+  if(task.status==='done'){const rec=await getRecording(id,{transcript:false});state.records=state.records.map(r=>r.id===id?{...r,...rec}:r);notifyLater('Конспект готов');}
+ }catch(error){notify('Конспект: '+(error.message||'не удалось составить'),'error')}
+ finally{summaryTasks.delete(id);refreshButton()}
+}
+async function copySummary(){
+ const rec=state.records.find(r=>r.id===state.editorId);if(!rec?.summary)return;
+ try{await navigator.clipboard.writeText(summaryMarkdown(rec.summary).replace(/^#+ /gm,''));notify('Конспект скопирован')}catch(e){notify('Не удалось скопировать: '+e.message,'error')}
+}
+function mountIntelligence(){
+ renderLearnedTerms();
+ $('#learned-terms').addEventListener('click',e=>{const chip=e.target.closest('[data-forget]');if(!chip)return;const book=learnedTerms();delete book[chip.dataset.forget];saveTerms(book)});
+ $('#editor-content').addEventListener('focusout',e=>{if(e.target.matches?.('.segment-edit'))learnFromEdit(e.target)});
+ $('#next-doubt').onclick=()=>void gotoDoubt();
+ $('#smart-speed').onclick=()=>{smartSpeed=!smartSpeed;try{localStorage.setItem(SMART_KEY,smartSpeed?'1':'0')}catch{}renderInsight(state.records.find(r=>r.id===state.editorId));notify(smartSpeed?'Паузы между фразами будут пропускаться':'Паузы снова слышны')};
+ $('#summary-open').onclick=()=>{const rec=state.records.find(r=>r.id===state.editorId);if(!rec)return;if(rec.summary&&state.summaryHidden===rec.id){state.summaryHidden=null;renderSummary(rec);$('#summary-panel').scrollIntoView({block:'nearest'});return}if(rec.summary){$('#summary-panel').scrollIntoView({block:'nearest',behavior:'smooth'});return}requestSummary(rec)};
+ $('#summary-panel').addEventListener('click',e=>{const action=e.target.closest('[data-summary]')?.dataset.summary;const rec=state.records.find(r=>r.id===state.editorId);if(!action||!rec)return;
+  if(action==='copy')void copySummary();else if(action==='redo')requestSummary(rec);else if(action==='hide'){state.summaryHidden=rec.id;renderSummary(rec)}});
+ document.addEventListener('keydown',e=>{if(state.view!=='editor'||e.code!=='KeyN'||e.ctrlKey||e.metaKey||e.altKey||e.repeat||!$('#modal').hidden||e.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;e.preventDefault();void gotoDoubt()});
+}
+/** While audio plays, the spoken paragraph is highlighted and kept in view (never while the
+ * person is typing in the transcript, and never fighting a manual scroll for 4 s). */
+let followed=null,manualScrollAt=0;
+function followPlayback(time){
+ if(state.view!=='editor'||!Number.isFinite(time))return;
+ smartSkip(time);
+ const rows=[...document.querySelectorAll('#editor-content .transcript-paragraph')];let current=null;
+ for(const row of rows){const start=Number(row.querySelector('.segment-time')?.dataset.seek);if(Number.isFinite(start)&&start<=time+.05)current=row;else if(Number.isFinite(start))break}
+ if(current===followed)return;followed?.classList.remove('is-playing');followed=current;current?.classList.add('is-playing');
+ if(current&&!document.activeElement?.closest?.('#editor-content')&&performance.now()-manualScrollAt>4000)current.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+}
+document.addEventListener('wheel',()=>{if(state.view==='editor')manualScrollAt=performance.now()},{passive:true});
 let pageGeneration=0;
 /** Meeting takes (microphone + computer): loudness profile for «Я / Собеседники» labels. */
 const speakerProfiles=new Map();
@@ -833,13 +1210,13 @@ async function renderEditorSegments(rec){
    visible=page.segments.map(({index,...s})=>({s,i:index}));
   }catch(e){if(generation===pageGeneration)notify(e.message,'error');return}
  }
- const profile=await speakerProfile(rec);if(generation!==pageGeneration||state.editorId!==rec.id)return;
+ const profile=await speakerProfile(rec);const view=await insightFor(rec,profile);if(generation!==pageGeneration||state.editorId!==rec.id)return;
  const pageCount=Math.max(1,Math.ceil(total/pageSize));
  state.editorPage=Math.min(state.editorPage,pageCount-1);
  visible??=filtered.slice(state.editorPage*pageSize,(state.editorPage+1)*pageSize);
  state.visibleSegments=new Map(visible.map(({s,i})=>[i,s]));
  $('#editor-content').innerHTML=visible.length?visible.map(({s,i})=>
- `<div class="transcript-paragraph"><button class="segment-time" data-seek="${Number(s.start)||0}" title="Прослушать с этого места">${shortTime(s.start)}</button>${speakerBadge(s,profile)}<textarea class="segment-edit ${search?'match':''}" rows="${Math.min(5,Math.max(2,Math.ceil(s.text.length/85)))}" data-segment="${i}" aria-label="Фрагмент текста ${i+1}">${h(s.text)}</textarea></div>`).join(''):`<div class="empty-state"><strong>${!rec.transcript&&!rec.transcriptSummary?'Запись готова к прослушиванию':'Нет совпадений'}</strong><p>${!rec.transcript&&!rec.transcriptSummary?'Запустите плеер, затем при необходимости создайте расшифровку.':'Попробуйте другой поисковый запрос.'}</p></div>`;
+ `<div class="transcript-paragraph${view?.starts.has(i)&&i>0?' paragraph-start':''}"><button class="segment-time" data-seek="${Number(s.start)||0}" title="Прослушать с этого места">${shortTime(s.start)}</button>${speakerBadge(s,profile)}<textarea class="segment-edit ${search?'match':''}${isDoubtful(view?.segments[i]??s)?' is-doubtful':''}"${isDoubtful(view?.segments[i]??s)?' title="Модель не уверена в этом месте — проверьте на слух"':''} rows="${Math.min(5,Math.max(2,Math.ceil(s.text.length/85)))}" data-segment="${i}" aria-label="Фрагмент текста ${i+1}">${h(s.text)}</textarea></div>`).join(''):`<div class="empty-state"><strong>${!rec.transcript&&!rec.transcriptSummary?'Запись готова к прослушиванию':'Нет совпадений'}</strong><p>${!rec.transcript&&!rec.transcriptSummary?'Запустите плеер, затем при необходимости создайте расшифровку.':'Попробуйте другой поисковый запрос.'}</p></div>`;
  $('#editor-pagination').innerHTML=pageCount>1?`<button data-page="-1" ${state.editorPage===0?'disabled':''}>← Назад</button><span>${state.editorPage+1} / ${pageCount}</span><button data-page="1" ${state.editorPage>=pageCount-1?'disabled':''}>Далее →</button>`:'';
 }
 function storeEdit(id,index,text){
@@ -859,8 +1236,8 @@ function editSegment(el){
  const item={id,index,text,timer:setTimeout(()=>{state.pendingEdits.delete(key);void storeEdit(id,index,text)},300)};
  state.pendingEdits.set(key,item);$('#editor-status').textContent='Сохраняем…';
 }
-async function copyText(){
- try{await flushEdits();const r=await getRecording(state.editorId);if(!r?.transcript)return;await navigator.clipboard.writeText(r.transcript.segments.map(s=>s.text).join('\n\n'));notify('Текст скопирован')}
+async function copyText(event){
+ try{await flushEdits();const r=await getRecording(state.editorId);if(!r?.transcript)return;const stamps=event?.shiftKey||event?.altKey;const profile=await speakerProfile(r);await navigator.clipboard.writeText(paragraphs(r.transcript.segments,{speakerOf:s=>speakerFor(s,profile)}).map(p=>`${stamps?`[${shortTime(p.start)}] `:''}${p.speaker?SPEAKER_NAMES[p.speaker]+': ':''}${p.text}`).join('\n\n'));notify('Текст скопирован')}
  catch(e){notify('Не удалось скопировать текст: '+e.message,'error')}
 }
 function srtTime(t,sep=','){
@@ -897,10 +1274,10 @@ function docxBlob(paragraphs){
 }
 function exportRecord(){
  const rec=state.records.find(r=>r.id===state.editorId);if(!rec||!(rec.transcript||rec.transcriptSummary))return;
- modal('Экспорт расшифровки',`<label class="field-label" for="export-format">Формат файла</label><select class="select" id="export-format"><option value="txt">TXT — обычный текст</option><option value="md">Markdown</option><option value="docx">DOCX — документ Word</option><option value="json">JSON — данные и метки</option><option value="srt">SRT — субтитры</option><option value="vtt">VTT — субтитры</option><option value="pdf">PDF — через печать браузера</option></select><label class="field-label" for="export-version" style="margin-top:18px">Версия текста</label><select class="select" id="export-version"><option value="edited">Отредактированный</option><option value="original">Исходный результат модели</option></select>`,
- [{text:'Экспортировать',primary:true,run:async()=>{const format=$('#export-format').value,version=$('#export-version').value;await doExport(rec,format,version)}}]);
+ modal('Экспорт расшифровки',`<label class="field-label" for="export-format">Формат файла</label><select class="select" id="export-format"><option value="txt">TXT — обычный текст</option><option value="md">Markdown</option><option value="docx">DOCX — документ Word</option><option value="json">JSON — данные и метки</option><option value="srt">SRT — субтитры</option><option value="vtt">VTT — субтитры</option><option value="pdf">PDF — через печать браузера</option></select><label class="field-label" for="export-version" style="margin-top:18px">Версия текста</label><select class="select" id="export-version"><option value="edited">Отредактированный</option><option value="clean">Чистый — без «э-э», «м-м» и запинок</option><option value="original">Исходный результат модели</option></select><label class="field-label" for="export-layout" style="margin-top:18px">Разбивка текста</label><select class="select" id="export-layout"><option value="paragraphs">Абзацы — по паузам и говорящим</option><option value="segments">Фрагменты, как у модели</option></select>${rec.summary?'<label class="check-row" style="margin-top:18px"><input type="checkbox" id="export-summary" checked> Добавить конспект в начало</label>':''}`,
+ [{text:'Экспортировать',primary:true,run:async()=>{const format=$('#export-format').value,version=$('#export-version').value,layout=$('#export-layout').value,withSummary=Boolean($('#export-summary')?.checked);await doExport(rec,format,version,{layout,withSummary})}}]);
 }
-async function doExport(rec,format,version){
+async function doExport(rec,format,version,{layout='segments',withSummary=false}={}){
  // Open the print window synchronously in the originating click gesture.
  const printWindow=format==='pdf'?window.open('','_blank'):null;
  if(format==='pdf'&&!printWindow){notify('Разрешите всплывающие окна для печати PDF.','error');return}
@@ -908,19 +1285,24 @@ async function doExport(rec,format,version){
  const latest=await getRecording(rec.id);
  if(!latest?.transcript){printWindow?.close();notify('Транскрипт недоступен','error');return}
  const profile=await speakerProfile(latest);
- const segments=latest.transcript.segments.map(s=>{const who=speakerFor(s,profile),text=version==='original'?s.original??s.text:s.text;return {...s,text:who?`${SPEAKER_NAMES[who]}: ${text}`:text,...(who?{speaker:who}:{})}});
- const text=segments.map(s=>s.text).join('\n\n');
+ const base=latest.transcript.segments.map(s=>{const who=speakerFor(s,profile),raw=version==='original'?s.original??s.text:s.text;return {...s,text:version==='clean'?cleanText(raw):raw,...(who?{speaker:who}:{})}}).filter(s=>s.text);
+ const label=s=>s.speaker?`${SPEAKER_NAMES[s.speaker]}: ${s.text}`:s.text;
+ const segments=base.map(s=>({...s,text:label(s)}));
+ // Reading formats get paragraphs; subtitle and data formats keep the model's timing.
+ const blocks=layout==='paragraphs'?paragraphs(base,{speakerOf:s=>s.speaker||null}).map(p=>label(p)):segments.map(s=>s.text);
+ const summary=withSummary&&latest.summary?summaryLines(latest.summary):[];
+ const text=[...(summary.length?[...summary,'']:[]),...blocks].join('\n\n');
  let blob;
  if(format==='txt')blob=new Blob([text],{type:'text/plain;charset=utf-8'});
- else if(format==='md')blob=new Blob([`# ${rec.title}\n\n${text}\n`],{type:'text/markdown;charset=utf-8'});
- else if(format==='json')blob=new Blob([JSON.stringify({title:rec.title,model:latest.transcript.model,duration:rec.duration,segments},null,2)],{type:'application/json;charset=utf-8'});
+ else if(format==='md')blob=new Blob([`# ${rec.title}\n\n${summary.length?summaryMarkdown(latest.summary)+'\n\n## Расшифровка\n\n'+blocks.join('\n\n'):text}\n`],{type:'text/markdown;charset=utf-8'});
+ else if(format==='json')blob=new Blob([JSON.stringify({title:rec.title,model:latest.transcript.model,duration:rec.duration,...(latest.summary?{summary:latest.summary}:{}),segments},null,2)],{type:'application/json;charset=utf-8'});
  else if(format==='srt'||format==='vtt'){
   const rows=segments.map((s,i)=>`${format==='srt'?i+1+'\n':''}${srtTime(s.start,format==='vtt'?'.':',')} --> ${srtTime(Math.max(s.end,s.start+.1),format==='vtt'?'.':',')}\n${s.text}\n`).join('\n');
   blob=new Blob([format==='vtt'?'WEBVTT\n\n'+rows:rows],{type:'text/plain;charset=utf-8'});
- }else if(format==='docx')blob=docxBlob([rec.title,...segments.map(s=>s.text)]);
+ }else if(format==='docx')blob=docxBlob([rec.title,...summary,...blocks]);
  else if(format==='pdf'){
   const win=printWindow;
-  win.document.write(`<html lang="ru"><head><meta charset="utf-8"><title>${h(rec.title)}</title><style>body{max-width:800px;margin:60px auto;padding:0 24px;font:16px/1.8 Arial;color:#111}h1{font-size:30px}p{margin:0 0 18px}@media print{body{margin:0}}</style></head><body><h1>${h(rec.title)}</h1>${segments.map(s=>`<p>${h(s.text)}</p>`).join('')}</body></html>`);
+  win.document.write(`<html lang="ru"><head><meta charset="utf-8"><title>${h(rec.title)}</title><style>body{max-width:800px;margin:60px auto;padding:0 24px;font:16px/1.8 Arial;color:#111}h1{font-size:30px}p{margin:0 0 18px}@media print{body{margin:0}}</style></head><body><h1>${h(rec.title)}</h1>${summary.map(line=>`<p>${h(line)}</p>`).join('')}${blocks.map(line=>`<p>${h(line)}</p>`).join('')}</body></html>`);
   win.document.close();win.focus();setTimeout(()=>win.print(),350);return;
  }
  if(blob){downloadBlob(blob,rec.title.replace(/[\\/:*?"<>|]/g,'_').slice(0,80)+'.'+format);notify('Файл подготовлен к скачиванию')}
@@ -1019,18 +1401,21 @@ function wire(){
  for(const id of ['hero-import','record-import','library-import'])$('#'+id).onclick=()=>withInput(importFile);
  $('#start-record').onclick=()=>{levelPreview.stop();return beginRecord()};$('#mark-record').onclick=markMoment;
  document.addEventListener('visibilitychange',syncLevelPreview);
+ document.addEventListener('keydown',e=>{if(e.key!=='?'||e.ctrlKey||e.metaKey||!$('#modal').hidden||e.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;e.preventDefault();showShortcuts()});
  document.addEventListener('keydown',e=>{if(e.defaultPrevented||e.ctrlKey||e.metaKey||e.altKey||e.repeat||e.code!=='KeyB'||!state.capture)return;if(e.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;e.preventDefault();markMoment()});$('#pause-record').onclick=pauseRecord;$('#stop-record').onclick=endRecord;
- for(const id of ['library-search','library-filter','library-sort'])$('#'+id).addEventListener(id==='library-search'?'input':'change',renderLibrary);
+ let searchTimer=0;$('#library-search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(renderLibrary,220)}); // one query per pause in typing
+ for(const id of ['library-filter','library-sort'])$('#'+id).addEventListener('change',renderLibrary);
  $('#editor-search').addEventListener('input',()=>{state.editorPage=0;const rec=state.records.find(r=>r.id===state.editorId);if(rec)renderEditorSegments(rec)});
  $('#editor-content').addEventListener('input',e=>{if(e.target.matches('.segment-edit'))editSegment(e.target)});
  $('#copy-transcript').onclick=copyText;$('#export-transcript').onclick=exportRecord;
+ mountIntelligence();
  $('#editor-transcribe').onclick=()=>{const rec=state.records.find(r=>r.id===state.editorId);if(rec)void startTranscription(rec)};
  $('#editor-download').onclick=()=>{const rec=state.records.find(r=>r.id===state.editorId);if(rec)void downloadAudio(rec)};
  $('#player-toggle').onclick=async()=>{if(audioReview){if(audioReview.player.snapshot.playing)audioReview.player.pause();else if(canAudition())await audioReview.player.play().catch(error=>{if(error.name!=='AbortError')notify(error.message,'error')});return}const a=$('#audio-element');if(!a.src)return notify('Аудиофайл недоступен','error');if(a.paused)await playAudition(a);else a.pause()};
  const a=$('#audio-element');
  a.addEventListener('play',()=>{if(audioReview)return;if(!canAudition()){a.pause();return}$('#player-toggle').innerHTML=icon('pause');$('#player-toggle').setAttribute('aria-label','Приостановить воспроизведение')});
  a.addEventListener('pause',()=>{if(audioReview)return;$('#player-toggle').innerHTML=icon('play');$('#player-toggle').setAttribute('aria-label','Воспроизвести запись')});
- a.addEventListener('timeupdate',()=>{if(audioReview)return;$('#player-now').textContent=shortTime(a.currentTime);$('#player-seek').value=String(a.duration&&Number.isFinite(a.duration)?Math.floor(1000*a.currentTime/a.duration):0)});
+ a.addEventListener('timeupdate',()=>{followPlayback(a.currentTime);if(audioReview)return;$('#player-now').textContent=shortTime(a.currentTime);$('#player-seek').value=String(a.duration&&Number.isFinite(a.duration)?Math.floor(1000*a.currentTime/a.duration):0)});
  a.addEventListener('loadedmetadata',()=>{if(!audioReview)$('#player-total').textContent=shortTime(a.duration)});
  $('#player-seek').oninput=e=>{if(audioReview){void audioReview.player.seek(audioReview.player.snapshot.duration*Number(e.target.value)/1000).catch(error=>{if(error.name!=='AbortError')notify(error.message,'error')})}else if(Number.isFinite(a.duration))a.currentTime=a.duration*Number(e.target.value)/1000};
  $('#player-speed').onchange=e=>{if(audioReview)audioReview.player.setRate(Number(e.target.value));else a.playbackRate=Number(e.target.value)};
@@ -1069,10 +1454,19 @@ function wire(){
    else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}
   }
  });
+ document.addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.code==='KeyS'){e.preventDefault();if(state.view==='editor')void flushEdits().then(()=>notify('Исправления сохранены.')).catch(error=>notify(error.message,'error'));return}
+  if(e.key==='Escape'&&$('#modal').hidden&&!document.querySelector('.select-popup,.setup-backdrop')&&!e.target?.matches?.('input,textarea')){document.querySelectorAll('#toast-area .toast').forEach(t=>t.remove())}
+  if((e.ctrlKey||e.metaKey)&&e.code==='KeyF'&&['editor','library'].includes(state.view)&&$('#modal').hidden){e.preventDefault();const field=$(state.view==='editor'?'#editor-search':'#library-search');field.focus();field.select()}
+  if(e.key==='Escape'&&e.target?.matches?.('#library-search,#editor-search')&&e.target.value){e.preventDefault();e.target.value='';e.target.dispatchEvent(new Event('input',{bubbles:true}))}
+ });
+ let hiddenAt=0;document.addEventListener('visibilitychange',()=>{if(document.hidden){hiddenAt=Date.now();return}if(hiddenAt&&Date.now()-hiddenAt>60000)void refresh().catch(()=>{})});
  window.addEventListener('hashchange',renderRoute);
- window.addEventListener('beforeunload',e=>{if(state.capture||state.pendingEdits.size||state.failedEdits.size){e.preventDefault();e.returnValue=''}});
- window.addEventListener('online',()=>{void checkHealth();void pollJobs()});
- window.addEventListener('offline',checkHealth);
+ window.addEventListener('beforeunload',e=>{if(state.capture||state.pendingEdits.size||state.failedEdits.size||state.records.some(r=>r.status==='uploading')){e.preventDefault();e.returnValue=''}});
+ window.addEventListener('online',()=>{void checkHealth();void pollJobs();
+  // Transcriptions that failed because the network dropped resume by themselves.
+  for(const rec of state.records.filter(r=>r.status==='failed'&&/сет|network|fetch|timeout|тайм-аут|503|502|504|429/i.test(r.job?.error||'')).slice(0,3))void retryJob(rec)});
+ window.addEventListener('offline',()=>{void checkHealth();notify('Нет интернета. Запись работает как обычно; расшифровка продолжится сама, когда сеть вернётся.')});
  let dragDepth=0;
  document.addEventListener('dragenter',e=>{if(e.dataTransfer?.types.includes('Files')){dragDepth++;document.body.classList.add('drag-over')}});
  document.addEventListener('dragleave',()=>{dragDepth=Math.max(0,dragDepth-1);if(!dragDepth)document.body.classList.remove('drag-over')});
@@ -1089,9 +1483,13 @@ async function init(){
  for(const r of orphaned.filter(r=>!storage.local&&r.status==='recording')){
   await patchRecording(r.id,{status:'interrupted',duration:r.duration||Math.max(0,((r.lastChunkAt||Date.parse(r.createdAt))-Date.parse(r.createdAt))/1000)});
  }
- if(available)await refresh();renderRoute({preserveDrawer:true});await checkHealth();
+ if(available)await refresh();
+ // Reopen where the person left off (a fresh launch has no hash).
+ try{const last=localStorage.getItem('mono-last-view');if(!location.hash&&last&&['dashboard','record','library','jobs','settings'].includes(last))history.replaceState(null,'','#'+last)}catch{}
+ renderRoute({preserveDrawer:true});await checkHealth();
  updateStorageSettings();
  if(local&&available)await initializeNative(local).catch(error=>notify(error.message,'error'));
+ if(local)startAudioCare();
  if(local)await showSetup();
  if(local&&!setupWindow&&storageDetails().libraryAvailable)void offerLegacyImport();
  announceRecovered();
@@ -1102,7 +1500,9 @@ async function init(){
   const button=document.createElement('button');button.className='btn btn-outline btn-small';button.textContent='Открыть настройки';button.onclick=()=>{go('settings');$('#transfer-recovery')?.scrollIntoView({block:'center'});notice.remove()};notice.append(text,button);$('#toast-area').append(notice);
  }
  listenForLauncherEvents();watchConnection();
- void pollJobs();setInterval(()=>{if(!document.hidden)void pollJobs()},3500);document.addEventListener('visibilitychange',()=>{if(!document.hidden)void pollJobs()});
+ try{const version=state.health?.version,seen=localStorage.getItem('mono-version');if(version&&seen&&seen!==version)notify(`MONO обновлён до версии ${version}. Записи и настройки на месте.`);if(version)localStorage.setItem('mono-version',version)}catch{}
+ // Poll fast only while something is being transcribed or the queue is on screen.
+ void pollJobs();let lastPoll=0;setInterval(()=>{if(document.hidden)return;const busy=state.view==='jobs'||state.records.some(r=>['uploading','queued','processing'].includes(r.status));if(busy||performance.now()-lastPoll>15000){lastPoll=performance.now();void pollJobs()}},3500);document.addEventListener('visibilitychange',()=>{if(!document.hidden)void pollJobs()});
  if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{})}
 }
 function markRecoveredSeen(id){try{const seen=JSON.parse(localStorage.getItem('mono-recovered-seen')||'[]');if(!seen.includes(id)){seen.push(id);localStorage.setItem('mono-recovered-seen',JSON.stringify(seen.slice(-200)))}}catch{}}
@@ -1115,6 +1515,19 @@ function announceRecovered(){
  for(const r of recovered)seen.add(r.id);try{localStorage.setItem('mono-recovered-seen',JSON.stringify([...seen].slice(-200)))}catch{}
  const first=recovered[0];
  notify(recovered.length===1?`Запись восстановлена: «${first.title}», сохранено ${durationText(first.duration)}.`:`Восстановлено записей после сбоя: ${recovered.length}.`,'info',{text:recovered.length===1?'Открыть':'В библиотеку',run:()=>recovered.length===1?go('editor',first.id):go('library')});
+}
+/** The archive must always exist. First run asks (Documents is the proposed default); if the
+ * person closes the assistant or presses Record without choosing, MONO uses Documents itself
+ * and says where — never a dead end. An archive that exists but is unreachable is not
+ * replaced silently: that could split someone's recordings across two folders. */
+async function ensureArchive(reason){
+ const storage=storageDetails();if(!storage.local||storage.libraryConfigured)return true;
+ try{await configureLibrary({useDefault:true});updateStorageSettings();await refresh();
+  const where=storageDetails().libraryPath||'«Документы»';
+  notify(`Записи сохраняются в ${where}.`+(reason==='setup'?' Папку можно изменить в настройках.':''),'info',{text:'Изменить',run:()=>{go('settings');showLibrarySetup()}});
+  await initializeNative(await localLibraryClient()).catch(()=>{});void backgroundAudioCare('device');
+  return true}
+ catch(error){notify('Не удалось создать папку для записей в «Документах»: '+error.message,'error',fixFor('LIBRARY_NOT_CONFIGURED'));return false}
 }
 /** One-button import of the pre-desktop browser library, offered once after setup. */
 async function offerLegacyImport(){

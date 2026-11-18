@@ -3,14 +3,22 @@ import {mountScrollArea} from './scroll-area.js';
 import {mountDrawer} from './drawer.js';
 const controls=new Map(),scrolls=new Map();let drawer;
 export function syncControls(){for(const c of controls.values())c.sync()}
-/** Measure the first ~2 s of frames once per launch; if this machine renders slowly
- * (>20 % of frames over 24 ms), switch glass to solid materials and remember it. */
-export function qualityGovernor({frames=120,raf=globalThis.requestAnimationFrame,root=document.documentElement,store=globalThis.localStorage}={}){
- try{if(store?.getItem('mono-lite-glass')==='1'){root.classList.add('lite-glass');return}}catch{}
- if(typeof raf!=='function')return;let last=0,slow=0,count=0;
- const tick=t=>{if(last){count++;if(t-last>24)slow++}last=t;if(count<frames){raf(tick);return}
-  if(slow/count>.2){root.classList.add('lite-glass');try{store?.setItem('mono-lite-glass','1')}catch{}}};
- raf(tick);
+/** Quality governor. Frames are measured only while the person interacts (scroll, pointer,
+ * keys) — idle frames say nothing about scrolling cost. After 180 interactive frames: if more
+ * than 20 % took over 24 ms, glass becomes solid materials on this machine (remembered).
+ * The rAF loop runs only during interaction and stops for good once a verdict exists. */
+export function qualityGovernor({frames=180,raf=globalThis.requestAnimationFrame,root=document.documentElement,store=globalThis.localStorage,target=globalThis}={}){
+ try{if(store?.getItem('mono-lite-glass')==='1'){root.classList.add('lite-glass');return}if(store?.getItem('mono-lite-glass')==='0')return}catch{}
+ if(typeof raf!=='function'||!target?.addEventListener)return;
+ let until=0,last=0,looping=false,count=0,slow=0,done=false;
+ const stop=()=>{done=true;for(const type of ['wheel','pointermove','keydown','scroll'])target.removeEventListener(type,poke,{capture:true})};
+ const tick=t=>{if(done){looping=false;return}
+  if(t>until){looping=false;last=0;return}
+  if(last){const gap=t-last;if(gap<250){count++;if(gap>24)slow++}}last=t;
+  if(count>=frames){const lite=slow/count>.2;if(lite)root.classList.add('lite-glass');try{store?.setItem('mono-lite-glass',lite?'1':'0')}catch{}stop();return}
+  raf(tick)};
+ const poke=()=>{until=performance.now()+600;if(!looping&&!done){looping=true;raf(tick)}};
+ for(const type of ['wheel','pointermove','keydown','scroll'])target.addEventListener(type,poke,{passive:true,capture:true});
 }
 export function enhanceUI(){
  qualityGovernor();

@@ -202,7 +202,10 @@ class Library:
             else:original_text=item.get('original',item['text'])
             if not isinstance(original_text,str) or len(original_text)>20000:failure('INVALID_TRANSCRIPT')
             segment_id=original['segments'][index].get('id',index) if original else item.get('id',index)
-            normalized.append({'id':segment_id,'start':start,'end':end,'text':item['text'],'original':original_text})
+            row={'id':segment_id,'start':start,'end':end,'text':item['text'],'original':original_text}
+            confidence=(original['segments'][index] if original else item).get('confidence')
+            if isinstance(confidence,(int,float)) and not isinstance(confidence,bool) and math.isfinite(confidence) and 0<=confidence<=1:row['confidence']=confidence
+            normalized.append(row)
         result={**value,'segments':normalized}
         return result
     def commit_transcript(self,rid,expected_version,staged_file):
@@ -327,6 +330,38 @@ class Library:
             if not file.is_file() or file.stat().st_size!=part['bytes']:failure('AUDIO_DAMAGED')
             files.append({'path':str(file),'size':part['bytes'],'sha256':part['sha256']})
         return {'id':rid,'mime':record['mime'],'size':sum(p['bytes'] for p in parts),'files':files}
+    def scrub(self,cursor=None,budget_seconds=20.0):
+        """Background integrity check (like a filesystem scrub): re-hashes stored audio parts.
+        Resumable by cursor and bounded in time. A missing part or a checksum mismatch marks the
+        record damaged; a file that cannot be read right now (antivirus, lock) is only reported."""
+        import time
+        self._settle_pending()
+        if not isinstance(budget_seconds,(int,float)) or not 0<budget_seconds<=600:failure('INVALID_SCRUB')
+        if cursor is not None and not isinstance(cursor,str):failure('INVALID_SCRUB')
+        started=time.monotonic();report={'checked':0,'parts':0,'bytes':0,'damaged':[],'unreadable':[],'cursor':None,'complete':True}
+        rows=self.db.execute('SELECT id,data FROM records WHERE id>? ORDER BY id',(cursor or '',)).fetchall()
+        for rid,data in rows:
+            if report.get('last') is not None and time.monotonic()-started>budget_seconds:report['cursor']=report['last'];report['complete']=False;break # at least one record per pass
+            record=json.loads(data)
+            if record.get('_trashed') or record.get('_damaged') or record.get('status') in ['recording','paused','importing','migrating']:report['last']=rid;continue
+            verdict='ok'
+            for part in record.get('_segments',[]):
+                try:
+                    audio=confined(self.root,*Path(part['path']).parts)
+                    if not audio.is_file():verdict='damaged';break
+                    if digest(audio)!=part['sha256']:verdict='damaged';break
+                    report['parts']+=1;report['bytes']+=part['bytes']
+                except OSError:verdict='unreadable';break
+            if verdict=='damaged':
+                report['damaged'].append(rid)
+                try:
+                    damaged=self._raw(rid);damaged['_damaged']=True;damaged['status']='damaged'
+                    with self.db:self.db.execute('UPDATE records SET status=?,data=? WHERE id=?',('damaged',json.dumps(damaged,ensure_ascii=False),rid))
+                except CoreError:pass
+            elif verdict=='unreadable':report['unreadable'].append(rid)
+            report['checked']+=1;report['last']=rid
+        report.pop('last',None);report['seconds']=round(time.monotonic()-started,2)
+        return report
     def recover(self):
         self._settle_pending()
         report={'recovered':[],'interrupted':[],'corrupt':[],'orphans':0,'transcriptRecoveryErrors':[],'transcriptRecoveryWarnings':[]}

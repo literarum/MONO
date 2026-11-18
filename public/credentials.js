@@ -14,7 +14,8 @@ export function mountCredentials(host,{client,onChange=()=>{}}){
  const refresh=async()=>{try{const value=await client.status();if(!destroyed){render(value);onChange(value)}}catch(error){if(!destroyed){status.textContent='Не удалось проверить подключение.';message.textContent=error.message}}};
  form.addEventListener('submit',async event=>{
   event.preventDefault();if(controller)return;
-  let key=input.value;input.value='';message.textContent='Проверяем ключ. Аудио не отправляется.';controller=new AbortController();busy(true);
+  // A pasted key often carries spaces, a line break or quotes from a chat or a note.
+  let key=input.value.trim().replace(/^["'«“]+|["'»”]+$/g,'').replace(/\s+/g,'');input.value='';message.textContent='Проверяем ключ. Аудио не отправляется.';controller=new AbortController();busy(true);
   try{const value=await client.configure(key,{signal:controller.signal});if(!destroyed){render(value);message.textContent='Ключ проверен и сохранён в системном хранилище.';onChange(value)}}
   catch(error){if(!destroyed){message.textContent=error.name==='AbortError'?'Проверка отменена.':error.message;await refresh()}}
   finally{key=null;input.value='';controller=null;if(!destroyed)busy(false)}

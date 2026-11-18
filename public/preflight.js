@@ -50,12 +50,13 @@ export class Preflight{
 /** Black box: the last client-side errors, for «Скопировать диагностику». Messages only:
  * never record titles, transcripts, file paths or keys. */
 const blackBox=[];
+export const recentErrors=()=>blackBox.slice(-20);
 export function remember(kind,message){blackBox.push({at:new Date().toISOString(),kind,message:String(message||'').replace(/[A-Za-z]:\\[^\s]+|\/(?:home|Users)\/[^\s]+/g,'(путь)').slice(0,240)});if(blackBox.length>30)blackBox.shift()}
 if(typeof addEventListener==='function'){addEventListener('error',event=>remember('error',event.message));addEventListener('unhandledrejection',event=>remember('rejection',event.reason?.code||event.reason?.message||event.reason))}
 const SUMMARY={ok:'Все системы в норме',advisory:'Готово к записи · есть сведения',caution:'Запись возможна · есть ограничения',warning:'Запись недоступна · нужно действие'};
-export function mountPreflight(host,{model,onError=()=>{},compact=false}){
+export function mountPreflight(host,{model,onError=()=>{},compact=false,onDeep=null}){
  host.classList.add('preflight');
- host.innerHTML=`<div class="preflight-head"><span class="preflight-light" aria-hidden="true"></span><strong class="preflight-summary" role="status" aria-live="polite">Проверяем системы…</strong></div><ul class="preflight-list"></ul><div class="inline-actions"><button type="button" class="btn btn-outline btn-small preflight-run">Проверить снова</button>${compact?'':'<button type="button" class="btn btn-outline btn-small preflight-copy">Скопировать диагностику</button>'}</div>`;
+ host.innerHTML=`<div class="preflight-head"><span class="preflight-light" aria-hidden="true"></span><strong class="preflight-summary" role="status" aria-live="polite">Проверяем системы…</strong></div><ul class="preflight-list"></ul><div class="inline-actions"><button type="button" class="btn btn-outline btn-small preflight-run">Проверить снова</button>${compact?'':'<button type="button" class="btn btn-outline btn-small preflight-copy">Скопировать диагностику</button>'}${!compact&&onDeep?'<button type="button" class="btn btn-primary btn-small preflight-deep">Глубокая диагностика</button>':''}</div>`;
  const list=host.querySelector('.preflight-list'),summary=host.querySelector('.preflight-summary'),button=host.querySelector('.preflight-run');
  const render=result=>{
   host.dataset.level=result.level;summary.textContent=SUMMARY[result.level];
@@ -69,7 +70,8 @@ export function mountPreflight(host,{model,onError=()=>{},compact=false}){
  button.onclick=async()=>{button.disabled=true;try{await model.run({force:true})}catch(error){onError(error)}finally{button.disabled=false}};
  // Shareable state of every system — never recordings, transcripts or keys.
  const copy=host.querySelector('.preflight-copy');
- if(copy)copy.onclick=async()=>{try{const result=await model.run({force:true});const report={app:'MONO Transcribe',checkedAt:result.checkedAt,level:result.level,checks:result.checks.map(({id,level,title,detail})=>({id,level,title,detail:id==='library'?'(путь скрыт)':detail})),recentErrors:blackBox.slice(-20),userAgent:navigator.userAgent,platform:navigator.userAgentData?.platform||navigator.platform};await navigator.clipboard.writeText(JSON.stringify(report,null,2));copy.textContent='Скопировано';setTimeout(()=>{copy.textContent='Скопировать диагностику'},2500)}catch(error){onError(error)}};
+ if(copy)copy.onclick=async()=>{try{const result=await model.run({force:true});const report={app:'MONO Transcribe',checkedAt:result.checkedAt,level:result.level,checks:result.checks.map(({id,level,title,detail})=>({id,level,title,detail:id==='library'?'(путь скрыт)':detail})),recentErrors:blackBox.slice(-20),capture:await model.library?.json?.('/capture/capabilities').then(c=>({ready:c.ready,supported:c.supported,modes:c.modes,state:c.state,reason:c.reason,inputs:(c.inputDevices||[]).length,outputs:(c.outputDevices||[]).length})).catch(()=>null)??null,userAgent:navigator.userAgent,platform:navigator.userAgentData?.platform||navigator.platform};await navigator.clipboard.writeText(JSON.stringify(report,null,2));copy.textContent='Скопировано';setTimeout(()=>{copy.textContent='Скопировать диагностику'},2500)}catch(error){onError(error)}};
+ const deep=host.querySelector('.preflight-deep');if(deep)deep.onclick=onDeep;
  void model.run().catch(onError);
  return {destroy(){unsubscribe();host.replaceChildren()}};
 }

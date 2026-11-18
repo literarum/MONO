@@ -4,9 +4,9 @@ async function fixture(){
  const source=await readFile(new URL('../public/app.js',import.meta.url),'utf8');
  const start=source.indexOf('function notify('),end=source.indexOf('\nlet modalReturnFocus',start);
  assert.ok(start>=0&&end>start);let id=0;const timers=new Map(),children=[];
- const area={children,append(el){children.push(el);el.isConnected=true}};
- const document={createElement(){return {dataset:{},attributes:{},isConnected:false,setAttribute(k,v){this.attributes[k]=v},remove(){const i=children.indexOf(this);if(i>=0)children.splice(i,1);this.isConnected=false}}}};
- const context=vm.createContext({document,$:selector=>{assert.equal(selector,'#toast-area');return area},setTimeout(fn,ms){assert.equal(ms,6500);timers.set(++id,fn);return id},clearTimeout(key){timers.delete(key)}});
+ const area={children,get firstElementChild(){return children[0]},append(el){children.push(el);el.isConnected=true}};
+ const document={createElement(){return {dataset:{},attributes:{},isConnected:false,classList:{contains:()=>false},addEventListener(){},setAttribute(k,v){this.attributes[k]=v},remove(){const i=children.indexOf(this);if(i>=0)children.splice(i,1);this.isConnected=false}}}};
+ const context=vm.createContext({document,$:selector=>{assert.equal(selector,'#toast-area');return area},setTimeout(fn,ms){assert.ok([6500,9000].includes(ms),'notice 6.5 s, error 9 s');timers.set(++id,fn);return id},clearTimeout(key){timers.delete(key)}});
  vm.runInContext(source.slice(start,end)+';globalThis.send=notify;',context);
  return {send:context.send,children,timers,expire(){const pending=[...timers];timers.clear();for(const [,fn] of pending)fn()}};
 }

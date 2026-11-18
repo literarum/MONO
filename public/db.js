@@ -22,7 +22,7 @@ export async function chooseLibraryFolder(purpose='create',{signal}={}){
   await new Promise(resolve=>setTimeout(resolve,300));choice=await client.json('/library/choice',{method:'POST',body:{id:choice.id}});
  }return signal?.aborted?{cancelled:true}:choice;
 }
-const fields=['title','duration','mime','source','status','transcript','jobId','job','clientKey','serverAcked','completedAt','estimatedUSD','transcriptionStartedAt','importKey','gapMarkers','chunkCount','lastChunkAt','peaks','bookmarks'];
+const fields=['summary','title','duration','mime','source','status','transcript','jobId','job','clientKey','serverAcked','completedAt','estimatedUSD','transcriptionStartedAt','importKey','gapMarkers','chunkCount','lastChunkAt','peaks','bookmarks'];
 const patchOf=value=>Object.fromEntries(fields.filter(k=>k in value).map(k=>[k,value[k]]));
 export async function listRecordings(query='',{trash=false}={}){
  await openDB();if(!client)return legacy.listRecordings();if(!client.status.libraryConfigured)return [];

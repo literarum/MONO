@@ -614,6 +614,11 @@ def drain_lines(pipe, sink: list[str], ready: threading.Event, logger: logging.L
 def port_free(port: int) -> bool:
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
+        # Same rule as Node's listen(): on POSIX a recently closed connection (TIME_WAIT)
+        # must not make the port look taken, or a quick restart would hop to another port
+        # and lose the window's origin-scoped settings. Windows does not block on TIME_WAIT.
+        if os.name != "nt":
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind((HOST, port)); return True
     except OSError:
         return False

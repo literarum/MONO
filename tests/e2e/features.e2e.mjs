@@ -3,7 +3,7 @@
 // global hotkey, bookmarks, two-track meeting profile, undo of trash, recovery card,
 // and recording that continues after the audio device disappears.
 import test from 'node:test';import assert from 'node:assert/strict';
-import {localServer} from '../helpers/local-server.mjs';import {createRequire} from 'node:module';
+import {localServer} from '../helpers/local-server.mjs';import {until} from '../helpers/until.mjs';import {createRequire} from 'node:module';
 import {writeFileSync,chmodSync,mkdtempSync} from 'node:fs';import {tmpdir} from 'node:os';import path from 'node:path';import {fileURLToPath} from 'node:url';
 let playwright=null;
 try{playwright=await import('playwright')}catch{try{playwright=createRequire(import.meta.url)('playwright')}catch{}}
@@ -35,14 +35,14 @@ test('hotkey, bookmark, meeting profile, undo of trash and recovery card',{skip}
  await page.waitForFunction(()=>/Подтверждено/.test(document.querySelector('#record-saved').textContent),null,{timeout:15000});
  await page.keyboard.press('b');await page.waitForSelector('.toast:has-text("Отмечено")');
  await press();await page.waitForFunction(()=>!document.querySelector('#start-record').hidden,null,{timeout:15000});
- await page.waitForFunction(async()=>{const {items}=await (await fetch('/api/local/records?limit=1&q=&trash=false')).json();return items[0]?.status==='saved'&&items[0]?.bookmarks?.length===1},null,{timeout:15000,polling:300});
+ await until(page,async()=>{const {items}=await (await fetch('/api/local/records?limit=1&q=&trash=false')).json();return items[0]?.status==='saved'&&items[0]?.bookmarks?.length===1},null,{timeout:15000,polling:300});
  const [take]=await records(page);assert.deepEqual(take.tracks.map(track=>track.id).sort(),['mic','system']);
  const {profile}=await page.evaluate(async id=>(await fetch('/api/local/records/'+id+'/speakers')).json(),take.id);
  assert.ok(profile.tracks.mic.length>0&&profile.tracks.system.length>0,'two-track loudness profile');
  // Trash without a dialog, then «Вернуть».
  await page.evaluate(()=>{location.hash='#library';document.querySelectorAll('.toast').forEach(toast=>toast.remove())});
  await page.click(`[data-delete="${take.id}"]`);await page.click('.toast:has-text("в корзине") .toast-action');
- await page.waitForFunction(async()=>(await (await fetch('/api/local/records?limit=5&q=&trash=false')).json()).items.length===1,null,{timeout:10000,polling:300});
+ await until(page,async()=>(await (await fetch('/api/local/records?limit=5&q=&trash=false')).json()).items.length===1,null,{timeout:10000,polling:300});
  assert.deepEqual(page.errors,[]);
 });
 
@@ -53,19 +53,17 @@ test('recording continues as a linked take when the audio device disappears',{sk
  await page.waitForSelector('.toast:has-text("Запись продолжается")',{timeout:20000});
  assert.equal(await page.isHidden('#stop-record'),false,'still recording on the new take');
  await page.click('#stop-record');
- await page.waitForFunction(async()=>{const {items}=await (await fetch('/api/local/records?limit=5&q=&trash=false')).json();return items.some(r=>/продолжение$/.test(r.title)&&r.status==='saved')},null,{timeout:15000,polling:300});
+ await until(page,async()=>{const {items}=await (await fetch('/api/local/records?limit=5&q=&trash=false')).json();return items.some(r=>/продолжение$/.test(r.title)&&r.status==='saved')},null,{timeout:15000,polling:300});
  const items=await records(page);assert.equal(items.length,2);assert.ok(items.some(r=>r.status==='interrupted'&&r.duration>0),'first part kept');
  assert.deepEqual(page.errors,[]);
 });
 
-test('autopilot: a microphone muted in Windows is detected, shown in pre-flight and fixed on Record',{skip},async t=>{
+test('background care: a microphone muted in Windows is switched back on without anyone pressing anything',{skip},async t=>{
  const server=await localServer(t,{MONO_AUDIO_HELPER:helper('muted')});const page=await open(t,server);
- await page.click('.nav-link[data-view=record]');
- await page.waitForSelector('.preflight-item[data-level=caution]:has-text("Микрофон выключен в Windows")',{timeout:20000});
- await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);await page.click('#start-record');
- await page.waitForSelector('.toast:has-text("MONO включил его")',{timeout:20000});
+ await page.waitForSelector('.toast:has-text("MONO включил его")',{timeout:30000});
  const diagnosis=await page.evaluate(async()=>(await fetch('/api/local/capture/diagnose')).json());
  assert.equal(diagnosis.inputs[0].muted,false);
+ await page.click('.nav-link[data-view=record]');await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);await page.click('#start-record');
  await page.waitForFunction(()=>!document.querySelector('#stop-record').hidden,null,{timeout:15000});await page.click('#stop-record');
  assert.deepEqual(page.errors,[]);
 });
@@ -77,7 +75,7 @@ test('autopilot: when the system module cannot open the microphone, the take con
  await page.waitForSelector('.toast:has-text("запасной канал")',{timeout:20000});
  await page.waitForFunction(()=>/Подтверждено в архиве/.test(document.querySelector('#record-saved').textContent),null,{timeout:20000});
  await page.waitForTimeout(1500);await page.click('#stop-record');
- await page.waitForFunction(async()=>{const {items}=await (await fetch('/api/local/records?limit=5&q=&trash=false')).json();return items.some(r=>r.status==='saved'&&r.duration>0)},null,{timeout:20000,polling:300});
+ await until(page,async()=>{const {items}=await (await fetch('/api/local/records?limit=5&q=&trash=false')).json();return items.some(r=>r.status==='saved'&&r.duration>0)},null,{timeout:20000,polling:300});
  assert.deepEqual(page.errors,[]);
 });
 
@@ -89,4 +87,31 @@ test('the window survives a core restart: banner, then automatic reconnect with 
  await page.waitForFunction(()=>document.readyState==='complete'&&document.querySelector('#nav-count'));
  const status=await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();return (await fetch('/api/local/ping',{method:'POST',headers:{'Content-Type':'application/json','X-Mono-CSRF':csrf},body:'{}'})).status});
  assert.equal(status,200);assert.deepEqual(page.errors,[]);
+});
+
+test('safety track: when the system module fails mid-take, the window’s independent copy restores the meeting',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('fail-mid-take')});const page=await open(t,server,'mic');
+ await page.click('.nav-link[data-view=record]');await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);
+ await page.click('#start-record');
+ await page.waitForSelector('.toast:has-text("Страховочная дорожка сохранила")',{timeout:30000});
+ await page.click('.toast:has-text("Страховочная дорожка сохранила") .toast-action');
+ await until(page,async()=>{const {items}=await (await fetch('/api/local/records?limit=5&q=&trash=false')).json();return items.some(r=>/страховочная дорожка$/.test(r.title)&&r.size>0)},null,{timeout:20000,polling:300});
+ const items=await records(page);const copy=items.find(r=>/страховочная дорожка$/.test(r.title));
+ assert.equal(copy.source,'Страховочная дорожка');assert.ok(copy.size>2000,'several seconds of Opus audio');
+ const left=await page.evaluate(async()=>{const root=await (await navigator.storage.getDirectory()).getDirectoryHandle('mono-safety',{create:true});let n=0;for await(const _ of root.keys())n++;return n});
+ assert.equal(left,0,'a restored backup is removed from the window storage');
+ const report=await page.evaluate(async()=>(await fetch('/api/local/diagnostics')).json());
+ assert.ok(report.trends.counts.SAFETY_USED>=1,'the rescue is recorded for trend analysis');
+ assert.deepEqual(page.errors,[]);
+});
+
+test('safety track: a clean take keeps its backup marked clean (removed after a day)',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});const page=await open(t,server,'mic');
+ await page.click('.nav-link[data-view=record]');await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);
+ await page.click('#start-record');await page.waitForFunction(()=>/Подтверждено/.test(document.querySelector('#record-saved').textContent),null,{timeout:15000});
+ await page.waitForTimeout(5000);await page.click('#stop-record');
+ const meta=await until(page,async()=>{try{const root=await (await navigator.storage.getDirectory()).getDirectoryHandle('mono-safety');for await(const dir of root.values()){const m=JSON.parse(await (await (await dir.getFileHandle('meta.json')).getFile()).text());if(m.outcome==='clean')return m}}catch{}return null},null,{timeout:15000,polling:300});
+ assert.ok(meta.chunks>=1);assert.match(meta.mime,/audio\/(webm|ogg)/);
+ assert.equal(await page.locator('.toast:has-text("Страховочная")').count(),0,'no rescue offer after a clean take');
+ assert.deepEqual(page.errors,[]);
 });

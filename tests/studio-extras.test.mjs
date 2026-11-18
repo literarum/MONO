@@ -33,3 +33,11 @@ test('meeting labels: the louder track by 6 dB names the speaker, otherwise no l
 test('speaker profile bins RMS per window in dBFS',()=>{
  const state={sum:0,count:0,out:[]};binsFromSamples(new Float32Array(8).fill(.1),state,4);assert.deepEqual(state.out,[-20,-20]);
 });
+import {suggestTitle,DEFAULT_TITLE} from '../public/studio-extras.js';
+test('smart titles: fillers dropped, sentence or word boundary, nothing from a bare «Ага»',()=>{
+ assert.equal(suggestTitle([{text:'Ну, значит, так. Обсуждаем бюджет на первый квартал и план найма.'}]),'Обсуждаем бюджет на первый квартал и план найма');
+ const long=suggestTitle([{text:'добрый день, коллеги, сегодня у нас созвон по запуску нового продукта и согласованию сроков релиза для команды'}]);
+ assert.ok(long.length<=61&&long.endsWith('…')&&long.startsWith('Добрый'));
+ assert.equal(suggestTitle([{text:'Ага.'}]),null);assert.equal(suggestTitle([]),null);
+ assert.equal(DEFAULT_TITLE.test('Запись 18.11.2026 14:05'),true);assert.equal(DEFAULT_TITLE.test('Запись 18.11.2026 14:05 · продолжение'),true);assert.equal(DEFAULT_TITLE.test('Планёрка'),false);
+});
