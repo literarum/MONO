@@ -58,14 +58,12 @@ test('recording continues as a linked take when the audio device disappears',{sk
  assert.deepEqual(page.errors,[]);
 });
 
-test('autopilot: a microphone muted in Windows is detected, shown in pre-flight and fixed on Record',{skip},async t=>{
+test('background care: a microphone muted in Windows is switched back on without anyone pressing anything',{skip},async t=>{
  const server=await localServer(t,{MONO_AUDIO_HELPER:helper('muted')});const page=await open(t,server);
- await page.click('.nav-link[data-view=record]');
- await page.waitForSelector('.preflight-item[data-level=caution]:has-text("Микрофон выключен в Windows")',{timeout:20000});
- await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);await page.click('#start-record');
- await page.waitForSelector('.toast:has-text("MONO включил его")',{timeout:20000});
+ await page.waitForSelector('.toast:has-text("MONO включил его")',{timeout:30000});
  const diagnosis=await page.evaluate(async()=>(await fetch('/api/local/capture/diagnose')).json());
  assert.equal(diagnosis.inputs[0].muted,false);
+ await page.click('.nav-link[data-view=record]');await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);await page.click('#start-record');
  await page.waitForFunction(()=>!document.querySelector('#stop-record').hidden,null,{timeout:15000});await page.click('#stop-record');
  assert.deepEqual(page.errors,[]);
 });

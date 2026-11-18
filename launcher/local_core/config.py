@@ -6,6 +6,17 @@ from local_core.protocol import CoreError
 from local_core.folders import choose_folder,documents_folder,local_folder
 from local_core.transfer import TransferManager,ensure_idle
 
+SYSTEM_FILES={'desktop.ini','thumbs.db','.ds_store','icon\r','.localized'}
+def meaningful_entries(root):
+    """Entries a person put there (Explorer/Finder bookkeeping files do not count)."""
+    try:return [entry for entry in Path(root).iterdir() if entry.name.lower() not in SYSTEM_FILES]
+    except OSError:return []
+def archive_root_for(chosen):
+    chosen=Path(chosen)
+    if (chosen/'library.json').is_file() or not chosen.exists() or not meaningful_entries(chosen):return chosen
+    if Library._empty_initialization(chosen):return chosen  # an interrupted MONO initialisation: resume it
+    return chosen/'MONO Library'
+
 class LocalConfig:
     def __init__(self):
         self.directory=Path(os.environ.get('MONO_CONFIG_DIR') or Path(os.environ.get('MONO_DATA_DIR','local-data'))/'config').absolute()
@@ -64,12 +75,14 @@ class LocalConfig:
             root=Path(os.environ['MONO_DEFAULT_LIBRARY_ROOT']) if os.environ.get('MONO_DEFAULT_LIBRARY_ROOT') else documents_folder()/'MONO Library'
         else:
             choice=self.consume_choice(params.get('choiceId'),['create','open'])
-            root=choice['path']
-            if choice['purpose']=='open' and not (root/'library.json').is_file():raise CoreError('NOT_LIBRARY','В этой папке нет архива MONO')
+            # One gesture, never a refusal: the archive in the folder opens; an empty folder
+            # (Windows may already have put desktop.ini into it) becomes a new archive; a folder
+            # with someone else's files keeps them untouched and gets a "MONO Library" inside.
+            root=archive_root_for(choice['path'])
         root=local_folder(root)
         reject_links(root)
         if self.library and root.resolve()==self.library.root:return self.status()
-        if root.exists() and any(root.iterdir()) and not (root/'library.json').is_file():
+        if root.exists() and meaningful_entries(root) and not (root/'library.json').is_file():
             candidate=Library.open_empty_initialization(root)
         else:candidate=Library.open(root)
         try:

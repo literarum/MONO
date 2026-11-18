@@ -196,7 +196,7 @@ async function initializeNative(local){
 }
 async function showSetup(initialStep=null){
  if(setupWindow)return;if(setupOpening){await setupOpening;if(initialStep&&!setupWindow)return showSetup(initialStep);return}setupOpening=(async()=>{const local=await localLibraryClient();if(!local)return;
- const opened=await openOnboarding({library:local,storage:storageDetails,configure:configureLibrary,choose:chooseLibraryFolder,ensureNative:()=>initializeNative(local),onArchive:async()=>{updateStorageSettings();await refresh()},onComplete:()=>{setupWindow=null;void credentialForm?.refresh();void offerLegacyImport()},onError:error=>notify(error.message,'error'),helpTemplate:$('#groq-settings-card .setup-details'),initialStep,canPlay:canAudition,playAudio:audio=>mediaInterlock.play(audio)});setupWindow=opened&&!opened.closed?opened:null;
+ const opened=await openOnboarding({library:local,storage:storageDetails,configure:configureLibrary,choose:chooseLibraryFolder,ensureNative:()=>initializeNative(local),onArchive:async()=>{updateStorageSettings();await refresh()},onComplete:()=>{setupWindow=null;void credentialForm?.refresh();void ensureArchive('setup').then(()=>offerLegacyImport())},onError:error=>notify(error.message,'error'),helpTemplate:$('#groq-settings-card .setup-details'),initialStep,canPlay:canAudition,playAudio:audio=>mediaInterlock.play(audio)});setupWindow=opened&&!opened.closed?opened:null;
  })().finally(()=>{setupOpening=null});return setupOpening;
 }
 /** Transcriber controls: Ctrl+Space / F9 / Space play–pause (pausing steps back 2 s), Alt+←/→ seek ±5 s. */
@@ -244,6 +244,41 @@ function watchConnection(){
   failures=0;
  };
  setInterval(tick,4000);
+}
+/** Background audio care: the microphone is kept ready before anyone presses Record.
+ * Runs at start, on device plug/unplug, when the window returns, and every 3 min while idle;
+ * never during a take, at most once per 20 s. Fixes what Windows silently changed (muted,
+ * level ~0), keeps the capture module connected (backoff), and says each finding once. */
+const audioCare={running:false,at:-Infinity,told:new Set(),reconnectDelay:2000};
+async function backgroundAudioCare(reason='timer'){
+ if(audioCare.running||!storageDetails().local||!storageDetails().libraryConfigured)return;
+ if(state.capture||captureActive(nativeController?.snapshot)||setupWindow)return;
+ if(reason!=='device'&&performance.now()-audioCare.at<20000)return;
+ audioCare.running=true;audioCare.at=performance.now();
+ try{
+  const local=await localLibraryClient();
+  // 1. Capture module alive? Reconnect quietly with backoff instead of waiting for a failure.
+  if(nativeController&&!nativeController.snapshot.connected){try{await nativeController.connect();audioCare.reconnectDelay=2000}catch{audioCare.reconnectDelay=Math.min(60000,audioCare.reconnectDelay*2);setTimeout(()=>void backgroundAudioCare('reconnect'),audioCare.reconnectDelay)}}
+  if(reason==='device')await captureSources?.load().catch(()=>{});
+  // 2. Windows' view of the microphone: unmute / restore a near-zero level.
+  const report=await local.json('/capture/diagnose',{signal:AbortSignal.timeout(7000)}).catch(()=>null);
+  if(report?.available){
+   const {target,disabledOnly}=pickInput(report,captureSources?.value?.inputId||null);
+   if(needsRepair(target)){const after=await local.json('/capture/repair',{method:'POST',body:REPAIR(target)}).catch(()=>null);if(after&&!after.repairError)notify(`Микрофон «${target.name}» был выключен в Windows — MONO включил его.`)}
+   if(disabledOnly&&!audioCare.told.has('disabled')){audioCare.told.add('disabled');notify('Микрофон отключён в Windows. Включите его: Параметры → Система → Звук → Все звуковые устройства.','error',/Windows/i.test(navigator.userAgent)?{text:'Открыть параметры звука',run:()=>{window.open('ms-settings:sound','_blank')}}:null)}
+  }
+  // 3. Privacy switch and the rest of the pre-flight, refreshed for the studio card.
+  const result=await preflight?.run({force:true}).catch(()=>null);
+  const privacy=result?.checks?.find(check=>check.id==='mic-privacy');
+  if(privacy&&!audioCare.told.has('privacy')){audioCare.told.add('privacy');notify(privacy.title+'. '+privacy.action,'error',fixFor('ACCESS_DENIED'))}
+ }finally{audioCare.running=false}
+}
+function startAudioCare(){
+ if(audioCare.started)return;audioCare.started=true;
+ void backgroundAudioCare('start');
+ navigator.mediaDevices?.addEventListener?.('devicechange',()=>setTimeout(()=>void backgroundAudioCare('device'),1500));
+ window.addEventListener('focus',()=>void backgroundAudioCare('focus'));
+ setInterval(()=>{if(!document.hidden)void backgroundAudioCare('timer')},180000);
 }
 /** Ctrl+Alt+R anywhere in Windows (registered by the launcher) starts or stops recording. */
 function listenForLauncherEvents(){
@@ -480,6 +515,7 @@ function chosenMime(){
 }
 async function beginRecord(){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
+ if(storageDetails().local&&!storageDetails().libraryConfigured&&!await ensureArchive('record'))return;
  if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');if(!nativeController.snapshot.connected){try{await nativeController.connect()}catch(error){notify(`Модуль записи не отвечает${error?.code?' ('+error.code+')':''}. Откройте «Настройки → Предполётная проверка».`,'error');void preflight?.run({force:true}).catch(()=>{});return}}const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}await startWithAutopilot(await autopilotBeforeStart(await captureSources.selection()))}catch(error){if(error?.name!=='AbortError')void notifyCaptureError(error.message||'Не удалось начать запись.',error.code)}return}
  if(state.recordBusy||state.capture)return;
  state.recordBusy=true;
@@ -1092,6 +1128,7 @@ async function init(){
  if(available)await refresh();renderRoute({preserveDrawer:true});await checkHealth();
  updateStorageSettings();
  if(local&&available)await initializeNative(local).catch(error=>notify(error.message,'error'));
+ if(local)startAudioCare();
  if(local)await showSetup();
  if(local&&!setupWindow&&storageDetails().libraryAvailable)void offerLegacyImport();
  announceRecovered();
@@ -1115,6 +1152,19 @@ function announceRecovered(){
  for(const r of recovered)seen.add(r.id);try{localStorage.setItem('mono-recovered-seen',JSON.stringify([...seen].slice(-200)))}catch{}
  const first=recovered[0];
  notify(recovered.length===1?`Запись восстановлена: «${first.title}», сохранено ${durationText(first.duration)}.`:`Восстановлено записей после сбоя: ${recovered.length}.`,'info',{text:recovered.length===1?'Открыть':'В библиотеку',run:()=>recovered.length===1?go('editor',first.id):go('library')});
+}
+/** The archive must always exist. First run asks (Documents is the proposed default); if the
+ * person closes the assistant or presses Record without choosing, MONO uses Documents itself
+ * and says where — never a dead end. An archive that exists but is unreachable is not
+ * replaced silently: that could split someone's recordings across two folders. */
+async function ensureArchive(reason){
+ const storage=storageDetails();if(!storage.local||storage.libraryConfigured)return true;
+ try{await configureLibrary({useDefault:true});updateStorageSettings();await refresh();
+  const where=storageDetails().libraryPath||'«Документы»';
+  notify(`Записи сохраняются в ${where}.`+(reason==='setup'?' Папку можно изменить в настройках.':''),'info',{text:'Изменить',run:()=>{go('settings');showLibrarySetup()}});
+  await initializeNative(await localLibraryClient()).catch(()=>{});void backgroundAudioCare('device');
+  return true}
+ catch(error){notify('Не удалось создать папку для записей в «Документах»: '+error.message,'error',fixFor('LIBRARY_NOT_CONFIGURED'));return false}
 }
 /** One-button import of the pre-desktop browser library, offered once after setup. */
 async function offerLegacyImport(){

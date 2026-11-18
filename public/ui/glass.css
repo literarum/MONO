@@ -62,7 +62,12 @@ h1,h2,.studio-timer{font-family:var(--font-display)}
 .metric-card:hover{transform:none!important}
 
 /* The floating layer — the only Liquid Glass: sidebar, toolbar, tab bar, sheets. */
-.sidebar,.topbar{-webkit-backdrop-filter:var(--glass-blur)!important;backdrop-filter:var(--glass-blur)!important}
+/* Only the sidebar samples its backdrop (the ambient light behind it never moves, so the blur is
+   effectively static). The toolbar floats over scrolling content: a backdrop blur there is
+   recomputed every scroll frame — the costliest effect on integrated GPUs — so it uses a dense
+   material instead. */
+.sidebar{-webkit-backdrop-filter:blur(20px) saturate(160%)!important;backdrop-filter:blur(20px) saturate(160%)!important}
+.topbar{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
 .sidebar,.topbar{background:var(--glass-fill)!important;border:1px solid var(--glass-rim-soft)!important;box-shadow:var(--glass-shadow),inset 0 1px 0 var(--glass-shine)!important}
 :focus-visible{outline:3px solid color-mix(in srgb,var(--tint) 70%,transparent)!important;outline-offset:2px}
 
@@ -215,3 +220,25 @@ textarea{border-radius:14px!important;padding:12px 14px!important;line-height:1.
 .metric-card strong{font-family:var(--font-display)!important;font-variant-numeric:tabular-nums;letter-spacing:-.02em!important;font-weight:600!important}
 .metric-card strong small{font-size:.55em;font-weight:500;margin:0 .15em;color:var(--dim)}
 .hero-period,.heading-period{margin-left:0!important;padding-left:0!important}
+
+/* No side stripes. Toasts are clean glass cards (iOS banners); errors carry a small red
+   glyph, not a bar. Pre-flight rows mark their level with a dot before the title. */
+.toast{border-left:1px solid var(--glass-rim-soft)!important;border:1px solid var(--glass-rim-soft)!important;border-radius:16px!important;background:var(--glass-fill-strong)!important;box-shadow:0 10px 30px rgba(0,0,0,.28)!important;font-size:13px!important;padding:14px 16px!important;display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
+body:not([data-theme=light]) .toast{background:rgba(32,34,42,.97)!important}
+body[data-theme=light] .toast{background:rgba(255,255,255,.98)!important}
+.toast.error::before{content:"";flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--record);box-shadow:0 0 0 3px color-mix(in srgb,var(--record) 22%,transparent)}
+.toast .toast-action{margin-left:auto!important}
+.preflight-item{border-left:0!important;padding-left:0!important;position:relative}
+.preflight-item>strong{display:flex;align-items:center;gap:8px}
+.preflight-item>strong::before{content:"";flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--pf-ok)}
+.preflight-item[data-level=advisory]>strong::before{background:var(--pf-advisory)}
+.preflight-item[data-level=caution]>strong::before{background:var(--pf-caution)}
+.preflight-item[data-level=warning]>strong::before{background:var(--pf-warning)}
+.preflight-item>span{padding-left:16px}
+.preflight-item>.preflight-fix{margin-left:16px;justify-self:start}
+
+.topbar{background:rgba(24,26,33,.94)!important}
+body[data-theme=light] .topbar{background:rgba(250,250,252,.95)!important}
+.toast{display:block!important}
+.toast.error::before{display:inline-block;vertical-align:.08em;margin-right:9px}
+.toast .toast-action{display:flex!important;margin:10px 0 0 auto!important}

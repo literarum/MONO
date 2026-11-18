@@ -49,12 +49,11 @@ class EmptyArchiveInitialization(unittest.TestCase):
         external=self.base/'external.lock';external.write_bytes(b'\0')
         (self.root/'.mono-library.lock').unlink();os.link(external,self.root/'.mono-library.lock')
         self.reject_unchanged();self.assertEqual(external.read_bytes(),b'\0')
-    def test_open_existing_mode_never_initializes_a_manifestless_folder(self):
-        before=files(self.root)
+    def test_open_mode_resumes_an_interrupted_initialization(self):
+        # Any folder gesture now works: MONO's own interrupted bootstrap layout is resumed.
         self.config.choices['one-time']={'path':self.root,'purpose':'open','expires':float('inf')}
-        with self.assertRaises(CoreError) as caught:self.config.configure({'choiceId':'one-time'})
-        self.assertEqual(caught.exception.code,'NOT_LIBRARY');self.assertEqual(files(self.root),before)
-        self.assertNotIn('one-time',self.config.choices)
+        self.assertTrue(self.config.configure({'choiceId':'one-time'})['libraryConfigured'])
+        self.assertTrue((self.root/'library.json').is_file());self.assertNotIn('one-time',self.config.choices)
     def test_existing_writer_retains_ownership(self):
         before=files(self.root)
         lock=LibraryLock(self.root/'.mono-library.lock')
