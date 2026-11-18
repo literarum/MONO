@@ -202,7 +202,10 @@ class Library:
             else:original_text=item.get('original',item['text'])
             if not isinstance(original_text,str) or len(original_text)>20000:failure('INVALID_TRANSCRIPT')
             segment_id=original['segments'][index].get('id',index) if original else item.get('id',index)
-            normalized.append({'id':segment_id,'start':start,'end':end,'text':item['text'],'original':original_text})
+            row={'id':segment_id,'start':start,'end':end,'text':item['text'],'original':original_text}
+            confidence=(original['segments'][index] if original else item).get('confidence')
+            if isinstance(confidence,(int,float)) and not isinstance(confidence,bool) and math.isfinite(confidence) and 0<=confidence<=1:row['confidence']=confidence
+            normalized.append(row)
         result={**value,'segments':normalized}
         return result
     def commit_transcript(self,rid,expected_version,staged_file):

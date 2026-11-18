@@ -256,3 +256,28 @@ kbd{font:600 12px/1 var(--font);padding:5px 8px;border-radius:7px;border:1px sol
 @media (prefers-reduced-motion:reduce){.view{animation:none!important}html{scroll-behavior:auto!important}*{transition-duration:.01ms!important}}
 .toast{cursor:default}
 .record-source{min-height:1.3em;margin-top:6px;font-size:13px;color:var(--muted,inherit);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---- Transcript intelligence ---- */
+.transcript-paragraph.paragraph-start{margin-top:14px}
+.segment-edit.is-doubtful{text-decoration:underline dotted color-mix(in srgb,var(--tint) 70%,transparent);text-decoration-thickness:1.5px;text-underline-offset:5px}
+.doubt-chip{display:block;width:100%;margin:6px 0 2px;text-align:left;border:1px solid var(--glass-rim-soft);background:var(--glass-fill-control);color:var(--text);border-radius:12px;padding:9px 12px;font-size:11px;line-height:1.4}
+.doubt-chip:hover{background:color-mix(in srgb,var(--tint) 14%,transparent)}
+.smart-speed{border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--muted);font-size:11px;padding:6px 11px;white-space:nowrap;transition:background .15s,color .15s}
+.smart-speed[aria-pressed=true]{background:var(--text);color:var(--inverse);border-color:var(--text)}
+.summary-panel{border:1px solid var(--glass-rim-soft);border-radius:16px;padding:18px 20px 14px;margin:0 0 22px;background:var(--glass-fill-control);content-visibility:auto;contain-intrinsic-size:auto 320px}
+.summary-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.summary-tools{display:flex;gap:6px}
+.summary-panel h3{font-size:12px;font-weight:700;letter-spacing:.02em;margin:16px 0 6px}
+.summary-panel ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px}
+.summary-panel li{font-size:13px;line-height:1.6}
+.summary-overview{font-size:14px;line-height:1.7;margin:4px 0 0}
+.summary-points{display:block;color:var(--muted);font-size:12px}
+.summary-tag{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:0 8px;font-size:11px;color:var(--muted);margin-left:4px}
+.summary-due{border-style:dashed}
+.summary-at{border:0;background:none;color:var(--dim);font-family:var(--mono);font-size:11px;padding:0 2px;cursor:pointer}
+.summary-at:hover{color:var(--text);text-decoration:underline}
+.learned-terms{margin-top:16px}
+.term-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.term-chip{border:1px solid var(--glass-rim-soft);background:var(--glass-fill-control);color:var(--text);border-radius:999px;padding:4px 10px;font-size:12px}
+.term-chip:hover{background:color-mix(in srgb,var(--tint) 16%,transparent)}
+@media print{.summary-tools,.summary-at{display:none!important}.summary-panel{border:0!important;background:none!important;padding:0!important}}

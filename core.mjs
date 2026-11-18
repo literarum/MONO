@@ -125,7 +125,9 @@ export function normalizeSegments(chunks) {
       const midpoint=(a+b)/2;
       if(midpoint+0.00001<plan.start||midpoint>=plan.end+0.00001)continue;
       const text=String(item.text??'').trim();
-      if(text)result.push({start:Math.max(0,a),end:b,text,chunk:plan.index});
+      // Segment-level confidence proxy exp(avg_logprob); uncalibrated, used only to point at doubtful places.
+      const logprob=Number(item.avg_logprob),confidence=Number.isFinite(logprob)?Math.round(Math.min(1,Math.exp(logprob))*1000)/1000:undefined;
+      if(text)result.push({start:Math.max(0,a),end:b,text,chunk:plan.index,...(confidence!==undefined?{confidence}:{})});
     }
   }
   return collapseLoops(dedupeBoundaries(result.sort((a,b)=>a.start-b.start)));

@@ -1,3 +1,4 @@
+import {summaryRoute} from './summary-routes.mjs';
 import {LocalSessions} from './session.mjs';import {WorkerClient} from './worker-client.mjs';
 import {libraryRoute,readJSON} from './library-routes.mjs';
 import {captureRoute} from './capture-routes.mjs';
@@ -21,6 +22,7 @@ export async function localRoute(req,res,url,mode,services={}){
   if(await credentialsRoute(req,res,url,services.keyManager))return true;
   if(await captureRoute(req,res,url,localWorker))return true;
   if(await audioRoute(req,res,url,services.preparation))return true;
+  if(await summaryRoute(req,res,url,localWorker,{keyManager:services.keyManager,summarizer:services.summarizer,speakers:services.resolveSpeakers}))return true;
   if(await libraryRoute(req,res,url,localWorker,services))return true;
   if(url.pathname==='/api/local/preflight'&&req.method==='GET'){send(res,200,await preflight({worker:localWorker,runtime:services.runtime||(()=>({})),keyManager:services.keyManager}));return true}
   if(url.pathname==='/api/local/status'&&req.method==='GET'){send(res,200,await localWorker.call('status'));return true}

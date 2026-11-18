@@ -4,7 +4,7 @@ from datetime import datetime
 from local_core.paths import identifier
 from local_core.protocol import CoreError
 
-PATCH_FIELDS={'title','duration','mime','source','status','transcript','jobId','job','clientKey','serverAcked','completedAt','estimatedUSD','transcriptionStartedAt','importKey','gapMarkers','chunkCount','lastChunkAt','peaks','bookmarks'}
+PATCH_FIELDS={'summary','title','duration','mime','source','status','transcript','jobId','job','clientKey','serverAcked','completedAt','estimatedUSD','transcriptionStartedAt','importKey','gapMarkers','chunkCount','lastChunkAt','peaks','bookmarks'}
 STATUSES={'saved','requesting','recording','paused','uploading','queued','processing','completed','failed','cancelled','interrupted','importing','migrating','damaged'}
 TRACKS={'mic','system','mix','original'}
 def invalid():raise CoreError('INVALID_RECORD','Проверьте данные записи')
@@ -23,10 +23,29 @@ def transcript(value):
     for key,limit in [('rawText',32*1024**2),('model',200),('language',32)]:
         if key in value and not string(value[key],limit):invalid()
     for segment in segments:
-        if not isinstance(segment,dict) or set(segment)-{'id','start','end','text','original'}:invalid()
+        if not isinstance(segment,dict) or set(segment)-{'id','start','end','text','original','confidence'}:invalid()
+        if 'confidence' in segment and (not number(segment['confidence']) or segment['confidence']>1):invalid()
         if not number(segment.get('start')) or not number(segment.get('end')) or segment['end']<segment['start'] or not string(segment.get('text'),20000):invalid()
         if 'original' in segment and not string(segment['original'],20000):invalid()
         if 'id' in segment and not (integer(segment['id']) or string(segment['id'],100,False)):invalid()
+
+def summary(value):
+    """Meeting summary written by the language model on the person's request."""
+    if value is None:return
+    if not isinstance(value,dict) or set(value)-{'overview','topics','decisions','actions','questions','model','createdAt','sourceSegments'}:invalid()
+    if not string(value.get('overview',''),8000):invalid()
+    for key,fields_allowed in [('topics',{'title','points','at'}),('decisions',{'text','at'}),('actions',{'text','owner','due','at'}),('questions',{'text','at'})]:
+        rows=value.get(key,[])
+        if not isinstance(rows,list) or len(rows)>200:invalid()
+        for row in rows:
+            if not isinstance(row,dict) or set(row)-fields_allowed:invalid()
+            for name in ['title','text','owner','due']:
+                if name in row and not string(row[name],2000):invalid()
+            if 'at' in row and row['at'] is not None and not number(row['at']):invalid()
+            if 'points' in row and (not isinstance(row['points'],list) or len(row['points'])>50 or any(not string(p,2000) for p in row['points'])):invalid()
+    if 'model' in value and not string(value['model'],200):invalid()
+    if 'createdAt' in value and not stamp(value['createdAt']):invalid()
+    if 'sourceSegments' in value and not integer(value['sourceSegments']):invalid()
 
 def gaps(value):
     if not isinstance(value,list) or len(value)>10000:invalid()
@@ -62,6 +81,7 @@ def fields(value):
         if not isinstance(marks,list) or len(marks)>1000:invalid()
         for mark in marks:
             if not isinstance(mark,dict) or set(mark)-{'at','label'} or not number(mark.get('at')) or ('label' in mark and not string(mark['label'],200)):invalid()
+    if 'summary' in value:summary(value['summary'])
     if 'gapMarkers' in value:gaps(value['gapMarkers'])
     if 'transcript' in value:transcript(value['transcript'])
 

@@ -16,6 +16,7 @@ import {captureSelection,selectionKey} from './transcription-selection.js';
 import {Preflight,mountPreflight,remember} from './preflight.js';
 import {LevelPreview,addBookmark,SaveClock,BatteryWatch,DEFAULT_TITLE,suggestTitle} from './studio-extras.js';
 import {speakerFor,SPEAKER_NAMES} from './speakers.js';
+import {paragraphs,isDoubtful,nextDoubtful,silenceSkips,skipTarget,savedSeconds,cleanText,transcriptStats,learnTerms,rememberTerms,promptWithTerms} from './intelligence.js';
 import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -319,7 +320,7 @@ function startAudioCare(){
 function markDoneWhileAway(){if(!document.title.startsWith('✓')){const previous=document.title;document.title='✓ Расшифровка готова — MONO';document.addEventListener('visibilitychange',()=>{if(!document.hidden&&document.title.startsWith('✓'))document.title=previous},{once:true})}}
 /** «?» — every keyboard shortcut in one sheet. */
 function showShortcuts(){
- const rows=[['Ctrl + Alt + R','Начать или остановить запись из любого окна Windows'],['B','Отметить важный момент во время записи'],['Пробел, F9 или Ctrl + Пробел','Воспроизведение и пауза в редакторе (пауза отступает на 2 с)'],['Alt + ← / →','Перемотка на 5 с в редакторе'],['Shift + «Копировать»','Скопировать текст с таймкодами'],['Esc','Закрыть окно или список'],['?','Эта подсказка']];
+ const rows=[['Ctrl + Alt + R','Начать или остановить запись из любого окна Windows'],['B','Отметить важный момент во время записи'],['Пробел, F9 или Ctrl + Пробел','Воспроизведение и пауза в редакторе (пауза отступает на 2 с)'],['Alt + ← / →','Перемотка на 5 с в редакторе'],['Shift + «Копировать»','Скопировать текст с таймкодами'],['N','Следующее место, где модель не уверена (в редакторе)'],['Esc','Закрыть окно или список'],['?','Эта подсказка']];
  modal('Сочетания клавиш','<dl class="shortcut-list">'+rows.map(([k,v])=>`<dt><kbd>${h(k)}</kbd></dt><dd>${h(v)}</dd>`).join('')+'</dl>');
 }
 /** Ctrl+Alt+R anywhere in Windows (registered by the launcher) starts or stops recording. */
@@ -749,7 +750,7 @@ async function startTranscription(rec){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
  if(!rec||rec.status==='recording'||!rec.size){notify('Нет доступного аудиофайла.','error');return}
  if(['queued','processing','uploading'].includes(rec.status)){go('jobs');return}
- const selection=captureSelection(rec.id,audioReview?.selected,settings);
+ const selection=captureSelection(rec.id,audioReview?.selected,{...settings,prompt:promptWithTerms(settings.prompt,learnedTerms())});
  if(rec.status==='completed'){
   modal('Повторная транскрибация',`Вариант: ${selection.title}.\n\nЭто создаст новый платный запрос и заменит текущую расшифровку. Исходный звук останется на устройстве. Продолжить?`,
    [{text:'Повторить',primary:true,run:()=>uploadTranscription(rec,true,selection)}]);return;
@@ -831,7 +832,7 @@ async function pollJobs(){
      if(!result.ok)throw new Error('Результат ещё не получен');
      const data=await result.json();
      const segments=(data.segments?.length?data.segments:[{start:0,end:data.duration||r.duration||0,text:data.text||''}]).map((s,i)=>({
-       start:s.start,end:s.end,text:s.text,original:s.text,id:i
+       start:s.start,end:s.end,text:s.text,original:s.text,id:i,...(Number.isFinite(s.confidence)?{confidence:s.confidence}:{})
      }));
      await patchRecording(r.id,{status:'completed',duration:data.duration||r.duration,
        completedAt:new Date().toISOString(),estimatedUSD:job.estimatedUSD||0,
@@ -919,7 +920,7 @@ async function renderEditor(id){
  $('#editor-heading').textContent=rec.title;
  $('#editor-helper').textContent=hasTranscript?'Исправления сохраняются автоматически на этом устройстве.':'Прослушайте запись перед расшифровкой. Аудио остаётся на компьютере до подтверждения отправки.';
  $('#copy-transcript').hidden=!hasTranscript;$('#export-transcript').hidden=!hasTranscript;$('#editor-transcribe').textContent=hasTranscript?'Расшифровать заново':'Расшифровать';$('#editor-transcribe').disabled=['recording','requesting','processing','queued','uploading'].includes(rec.status)||!rec.size;$('#editor-download').disabled=!rec.size;
- void renderEditorSegments(rec);
+ renderSummary(rec);void renderEditorSegments(rec);
  if(state.playerURL)URL.revokeObjectURL(state.playerURL);
  state.playerURL=null;
  const audio=$('#audio-element');audio.pause();audio.removeAttribute('src');
@@ -932,11 +933,137 @@ async function renderEditor(id){
  $('#player-total').textContent=shortTime(rec.duration);
  $('#player-now').textContent='00:00';$('#player-seek').value='0';$('#player-toggle').innerHTML=icon('play');
 }
+// ---- Transcript intelligence: on-device analysis + the meeting summary (on request) ----
+const TERMS_KEY='mono-learned-terms',SMART_KEY='mono-smart-speed';
+function learnedTerms(){try{const v=JSON.parse(localStorage.getItem(TERMS_KEY)||'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:{}}catch{return {}}}
+function saveTerms(book){try{localStorage.setItem(TERMS_KEY,JSON.stringify(book))}catch{}renderLearnedTerms()}
+function renderLearnedTerms(){
+ const host=$('#learned-terms');if(!host)return;const terms=Object.keys(learnedTerms());host.hidden=!terms.length;
+ host.innerHTML=terms.length?`<div class="field-label">Выучено из ваших исправлений</div><p class="field-hint">MONO добавляет эти слова к подсказке при следующих расшифровках, пока хватает места. Нажмите на слово, чтобы забыть его.</p><div class="term-list">${terms.map(t=>`<button type="button" class="term-chip" data-forget="${h(t)}" aria-label="Забыть «${h(t)}»">${h(t)}<span aria-hidden="true"> ×</span></button>`).join('')}</div>`:'';
+}
+/** Called when the person leaves an edited fragment: names and terms they typed are learned. */
+function learnFromEdit(el){
+ const s=state.visibleSegments.get(Number(el.dataset.segment));if(!s||typeof s.original!=='string'||s.original===el.value)return;
+ const terms=learnTerms(s.original,el.value);if(!terms.length)return;
+ const book=learnedTerms(),fresh=terms.filter(t=>!book[t]);saveTerms(rememberTerms(book,terms));
+ if(fresh.length)notify(`MONO запомнил: ${fresh.slice(0,3).join(', ')}${fresh.length>3?'…':''}. Учтём при следующей расшифровке.`);
+}
+
+let insight=null,insightPending=null;
+let smartSpeed=(()=>{try{return localStorage.getItem(SMART_KEY)==='1'}catch{return false}})(),skipping=0;
+/** Paragraph starts, doubtful places, pauses to skip and statistics for the open record. */
+async function insightFor(rec,profile){
+ const count=rec.transcriptSummary?.segmentCount??rec.transcript?.segments?.length??0;
+ if(!count){insight=null;renderInsight(rec);return null}
+ const key=`${rec.id}:${count}:${profile?1:0}`;if(insight?.key===key)return insight;
+ if(insightPending?.key!==key)insightPending={key,promise:(async()=>{
+  const full=rec.transcript?.segments?.length===count?rec:await getRecording(rec.id);const segments=full?.transcript?.segments||[];
+  const speakerOf=s=>speakerFor(s,profile);const groups=paragraphs(segments,{speakerOf});
+  return {key,id:rec.id,segments,starts:new Set(groups.map(g=>g.indices[0])),doubts:segments.reduce((n,s)=>n+(isDoubtful(s)?1:0),0),skips:silenceSkips(segments,{duration:Number(rec.duration)||Infinity}),stats:transcriptStats(segments,{speakerOf,duration:Number(rec.duration)||0}),last:-1};
+ })().catch(()=>null)};
+ const pending=insightPending,value=await pending.promise;if(insightPending===pending)insightPending=null;
+ if(value&&state.editorId===rec.id){insight=value;renderInsight(rec)}
+ return value;
+}
+function renderInsight(rec){
+ const view=insight?.id===rec?.id?insight:null,stats=view?.stats;
+ $('#editor-pace-row').hidden=!stats?.wordsPerMinute;if(stats?.wordsPerMinute)setText('#editor-pace',`${stats.wordsPerMinute} слов/мин`);
+ const people=Object.entries(stats?.speakers||{}).filter(([,p])=>p.seconds>0);
+ $('#editor-share-row').hidden=people.length<2;if(people.length>=2)setText('#editor-share',people.map(([who,p])=>`${SPEAKER_NAMES[who]} ${Math.round(p.share*100)} %`).join(' · '));
+ const chip=$('#next-doubt');chip.hidden=!view?.doubts;if(view?.doubts)chip.textContent=`Проверить на слух: ${view.doubts} ${plural(view.doubts,'место','места','мест')} →`;
+ const smart=$('#smart-speed'),saved=savedSeconds(view?.skips);smart.hidden=saved<5;
+ smart.setAttribute('aria-pressed',String(smartSpeed));smart.textContent=smartSpeed?`Без пауз · −${shortTime(saved)}`:'Без пауз';
+}
+function plural(n,one,few,many){const a=n%10,b=n%100;return a===1&&b!==11?one:a>=2&&a<=4&&(b<12||b>14)?few:many}
+/** Smart Speed: while playing, a long pause between phrases is jumped over (keeps 0.45 s of air). */
+function smartSkip(time){
+ if(!smartSpeed||!insight?.skips?.length||insight.id!==state.editorId)return;
+ const playing=audioReview?audioReview.player.snapshot.playing:!$('#audio-element').paused;if(!playing||performance.now()<skipping)return;
+ const to=skipTarget(insight.skips,time);if(to===null)return;skipping=performance.now()+600;
+ if(audioReview)void audioReview.player.seek(to).catch(()=>{});else $('#audio-element').currentTime=to;
+}
+async function gotoDoubt(){
+ if(!insight?.doubts)return;const index=nextDoubtful(insight.segments,insight.last);if(index<0)return;insight.last=index;
+ if($('#editor-search').value){$('#editor-search').value=''}
+ const page=Math.floor(index/65),rec=state.records.find(r=>r.id===state.editorId);
+ if(page!==state.editorPage&&rec){state.editorPage=page;await renderEditorSegments(rec)}
+ const el=$(`#editor-content [data-segment="${index}"]`);if(!el)return;
+ el.closest('.transcript-paragraph')?.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});el.focus({preventScroll:true});
+ const start=Number(insight.segments[index]?.start);if(Number.isFinite(start)&&canAudition()){if(audioReview)void audioReview.player.seek(start).catch(()=>{});else $('#audio-element').currentTime=start}
+}
+
+const SUMMARY_SECTIONS=[['decisions','Решения'],['actions','Задачи'],['questions','Открытые вопросы']];
+const actionText=a=>`${a.text}${a.owner?` — ${a.owner}`:''}${a.due?` (срок: ${a.due})`:''}`;
+function summaryLines(s){
+ const lines=['Конспект'];if(s.overview)lines.push(s.overview);
+ for(const [key,title] of SUMMARY_SECTIONS)if(s[key]?.length){lines.push(title);for(const row of s[key])lines.push('• '+(key==='actions'?actionText(row):row.text))}
+ if(s.topics?.length){lines.push('Темы');for(const t of s.topics)lines.push('• '+t.title+(t.points?.length?': '+t.points.join('; '):''))}
+ return lines;
+}
+function summaryMarkdown(s){
+ const out=['## Конспект'];if(s.overview)out.push('',s.overview);
+ for(const [key,title] of SUMMARY_SECTIONS)if(s[key]?.length)out.push('',`### ${title}`,...s[key].map(row=>(key==='actions'?'- [ ] ':'- ')+(key==='actions'?actionText(row):row.text)+(Number.isFinite(row.at)?` _(${shortTime(row.at)})_`:'')));
+ if(s.topics?.length)out.push('','### Темы',...s.topics.map(t=>`- **${t.title}**${t.points?.length?': '+t.points.join('; '):''}`));
+ return out.join('\n');
+}
+const summaryTasks=new Map();
+function renderSummary(rec){
+ const panel=$('#summary-panel'),button=$('#summary-open'),s=rec.summary,has=Boolean(rec.transcript||rec.transcriptSummary),task=summaryTasks.get(rec.id);
+ button.hidden=!has||!storageDetails().local;button.disabled=Boolean(task);
+ button.innerHTML=icon('sparkle')+' '+(task?`Конспект · ${task.done||0}/${task.total||1}`:s?'Конспект':'Составить конспект');
+ if(!s||!has){panel.hidden=true;panel.replaceChildren();return}
+ const header=$('.editor-document-header');if(header.nextElementSibling!==panel)header.after(panel); // the summary reads first, above audio tools
+ const at=t=>Number.isFinite(t)?` <button type="button" class="summary-at" data-seek="${t}" title="Прослушать это место">${shortTime(t)}</button>`:'';
+ const list=(title,rows,fmt)=>rows?.length?`<h3>${title}</h3><ul>${rows.map(r=>`<li>${fmt(r)}${at(r.at)}</li>`).join('')}</ul>`:'';
+ const count=rec.transcriptSummary?.segmentCount??rec.transcript?.segments?.length;const stale=s.sourceSegments&&count&&count!==s.sourceSegments;
+ const empty=!s.overview&&!s.decisions?.length&&!s.actions?.length&&!s.questions?.length&&!s.topics?.length;
+ panel.innerHTML=`<header class="summary-head"><div class="small-label">КОНСПЕКТ ВСТРЕЧИ</div><div class="summary-tools"><button class="btn btn-subtle btn-small" type="button" data-summary="copy">Копировать</button><button class="btn btn-subtle btn-small" type="button" data-summary="redo">Обновить</button><button class="btn btn-subtle btn-small" type="button" data-summary="hide" aria-expanded="true">Свернуть</button></div></header>`+
+  (empty?'<p class="summary-overview">В расшифровке не нашлось решений, задач или тем.</p>':'')+
+  (s.overview?`<p class="summary-overview">${h(s.overview)}</p>`:'')+
+  list('Решения',s.decisions,r=>h(r.text))+
+  list('Задачи',s.actions,r=>`${h(r.text)}${r.owner?` <span class="summary-tag">${h(r.owner)}</span>`:''}${r.due?` <span class="summary-tag summary-due">${h(r.due)}</span>`:''}`)+
+  list('Открытые вопросы',s.questions,r=>h(r.text))+
+  list('Темы',s.topics,r=>`<strong>${h(r.title)}</strong>${r.points?.length?`<span class="summary-points">${r.points.map(h).join(' · ')}</span>`:''}`)+
+  `<p class="field-hint">${stale?'<strong>Расшифровка изменилась после конспекта — нажмите «Обновить».</strong> ':''}Составлено языковой моделью${s.model?' '+h(s.model):''} по тексту расшифровки. Проверяйте важное по ссылкам на время.</p>`;
+ panel.hidden=state.summaryHidden===rec.id;
+}
+function requestSummary(rec){
+ if(!state.health?.groq){connectGroq(()=>requestSummary(rec));return}
+ modal('Составить конспект встречи?','В Groq будет отправлен <strong>только текст расшифровки</strong> — аудио остаётся на компьютере. Модель выделит решения, задачи с ответственными, открытые вопросы и темы со ссылками на время.\n\nСтоимость — по тарифу Groq за токены; на бесплатном тарифе действуют дневные лимиты. Подтвердите, если участники встречи согласны на обработку текста.',
+  [{text:'Составить конспект',primary:true,run:()=>runSummary(rec.id)}]);
+}
+async function runSummary(id){
+ const local=await localLibraryClient();if(!local)return;state.summaryHidden=null;
+ summaryTasks.set(id,{done:0,total:1});const refreshButton=()=>{const rec=state.records.find(r=>r.id===id);if(rec&&state.editorId===id)renderSummary(rec)};refreshButton();
+ try{
+  let task=await local.json(`/records/${id}/summary`,{method:'POST',body:{consent:true}});
+  while(task.status==='running'){summaryTasks.set(id,task);refreshButton();await new Promise(r=>setTimeout(r,1500));task=await local.json(`/records/${id}/summary`)}
+  if(task.status==='failed')throw new Error(task.error||'Не удалось составить конспект');
+  if(task.status==='done'){const rec=await getRecording(id,{transcript:false});state.records=state.records.map(r=>r.id===id?{...r,...rec}:r);notify('Конспект готов');}
+ }catch(error){notify('Конспект: '+(error.message||'не удалось составить'),'error')}
+ finally{summaryTasks.delete(id);refreshButton()}
+}
+async function copySummary(){
+ const rec=state.records.find(r=>r.id===state.editorId);if(!rec?.summary)return;
+ try{await navigator.clipboard.writeText(summaryMarkdown(rec.summary).replace(/^#+ /gm,''));notify('Конспект скопирован')}catch(e){notify('Не удалось скопировать: '+e.message,'error')}
+}
+function mountIntelligence(){
+ renderLearnedTerms();
+ $('#learned-terms').addEventListener('click',e=>{const chip=e.target.closest('[data-forget]');if(!chip)return;const book=learnedTerms();delete book[chip.dataset.forget];saveTerms(book)});
+ $('#editor-content').addEventListener('focusout',e=>{if(e.target.matches?.('.segment-edit'))learnFromEdit(e.target)});
+ $('#next-doubt').onclick=()=>void gotoDoubt();
+ $('#smart-speed').onclick=()=>{smartSpeed=!smartSpeed;try{localStorage.setItem(SMART_KEY,smartSpeed?'1':'0')}catch{}renderInsight(state.records.find(r=>r.id===state.editorId));notify(smartSpeed?'Паузы между фразами будут пропускаться':'Паузы снова слышны')};
+ $('#summary-open').onclick=()=>{const rec=state.records.find(r=>r.id===state.editorId);if(!rec)return;if(rec.summary&&state.summaryHidden===rec.id){state.summaryHidden=null;renderSummary(rec);$('#summary-panel').scrollIntoView({block:'nearest'});return}if(rec.summary){$('#summary-panel').scrollIntoView({block:'nearest',behavior:'smooth'});return}requestSummary(rec)};
+ $('#summary-panel').addEventListener('click',e=>{const action=e.target.closest('[data-summary]')?.dataset.summary;const rec=state.records.find(r=>r.id===state.editorId);if(!action||!rec)return;
+  if(action==='copy')void copySummary();else if(action==='redo')requestSummary(rec);else if(action==='hide'){state.summaryHidden=rec.id;renderSummary(rec)}});
+ document.addEventListener('keydown',e=>{if(state.view!=='editor'||e.code!=='KeyN'||e.ctrlKey||e.metaKey||e.altKey||e.repeat||!$('#modal').hidden||e.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;e.preventDefault();void gotoDoubt()});
+}
 /** While audio plays, the spoken paragraph is highlighted and kept in view (never while the
  * person is typing in the transcript, and never fighting a manual scroll for 4 s). */
 let followed=null,manualScrollAt=0;
 function followPlayback(time){
  if(state.view!=='editor'||!Number.isFinite(time))return;
+ smartSkip(time);
  const rows=[...document.querySelectorAll('#editor-content .transcript-paragraph')];let current=null;
  for(const row of rows){const start=Number(row.querySelector('.segment-time')?.dataset.seek);if(Number.isFinite(start)&&start<=time+.05)current=row;else if(Number.isFinite(start))break}
  if(current===followed)return;followed?.classList.remove('is-playing');followed=current;current?.classList.add('is-playing');
@@ -964,13 +1091,13 @@ async function renderEditorSegments(rec){
    visible=page.segments.map(({index,...s})=>({s,i:index}));
   }catch(e){if(generation===pageGeneration)notify(e.message,'error');return}
  }
- const profile=await speakerProfile(rec);if(generation!==pageGeneration||state.editorId!==rec.id)return;
+ const profile=await speakerProfile(rec);const view=await insightFor(rec,profile);if(generation!==pageGeneration||state.editorId!==rec.id)return;
  const pageCount=Math.max(1,Math.ceil(total/pageSize));
  state.editorPage=Math.min(state.editorPage,pageCount-1);
  visible??=filtered.slice(state.editorPage*pageSize,(state.editorPage+1)*pageSize);
  state.visibleSegments=new Map(visible.map(({s,i})=>[i,s]));
  $('#editor-content').innerHTML=visible.length?visible.map(({s,i})=>
- `<div class="transcript-paragraph"><button class="segment-time" data-seek="${Number(s.start)||0}" title="Прослушать с этого места">${shortTime(s.start)}</button>${speakerBadge(s,profile)}<textarea class="segment-edit ${search?'match':''}" rows="${Math.min(5,Math.max(2,Math.ceil(s.text.length/85)))}" data-segment="${i}" aria-label="Фрагмент текста ${i+1}">${h(s.text)}</textarea></div>`).join(''):`<div class="empty-state"><strong>${!rec.transcript&&!rec.transcriptSummary?'Запись готова к прослушиванию':'Нет совпадений'}</strong><p>${!rec.transcript&&!rec.transcriptSummary?'Запустите плеер, затем при необходимости создайте расшифровку.':'Попробуйте другой поисковый запрос.'}</p></div>`;
+ `<div class="transcript-paragraph${view?.starts.has(i)&&i>0?' paragraph-start':''}"><button class="segment-time" data-seek="${Number(s.start)||0}" title="Прослушать с этого места">${shortTime(s.start)}</button>${speakerBadge(s,profile)}<textarea class="segment-edit ${search?'match':''}${isDoubtful(view?.segments[i]??s)?' is-doubtful':''}"${isDoubtful(view?.segments[i]??s)?' title="Модель не уверена в этом месте — проверьте на слух"':''} rows="${Math.min(5,Math.max(2,Math.ceil(s.text.length/85)))}" data-segment="${i}" aria-label="Фрагмент текста ${i+1}">${h(s.text)}</textarea></div>`).join(''):`<div class="empty-state"><strong>${!rec.transcript&&!rec.transcriptSummary?'Запись готова к прослушиванию':'Нет совпадений'}</strong><p>${!rec.transcript&&!rec.transcriptSummary?'Запустите плеер, затем при необходимости создайте расшифровку.':'Попробуйте другой поисковый запрос.'}</p></div>`;
  $('#editor-pagination').innerHTML=pageCount>1?`<button data-page="-1" ${state.editorPage===0?'disabled':''}>← Назад</button><span>${state.editorPage+1} / ${pageCount}</span><button data-page="1" ${state.editorPage>=pageCount-1?'disabled':''}>Далее →</button>`:'';
 }
 function storeEdit(id,index,text){
@@ -991,7 +1118,7 @@ function editSegment(el){
  state.pendingEdits.set(key,item);$('#editor-status').textContent='Сохраняем…';
 }
 async function copyText(event){
- try{await flushEdits();const r=await getRecording(state.editorId);if(!r?.transcript)return;const stamps=event?.shiftKey||event?.altKey;await navigator.clipboard.writeText(r.transcript.segments.map(s=>stamps?`[${shortTime(s.start)}] ${s.text}`:s.text).join('\n\n'));notify('Текст скопирован')}
+ try{await flushEdits();const r=await getRecording(state.editorId);if(!r?.transcript)return;const stamps=event?.shiftKey||event?.altKey;const profile=await speakerProfile(r);await navigator.clipboard.writeText(paragraphs(r.transcript.segments,{speakerOf:s=>speakerFor(s,profile)}).map(p=>`${stamps?`[${shortTime(p.start)}] `:''}${p.speaker?SPEAKER_NAMES[p.speaker]+': ':''}${p.text}`).join('\n\n'));notify('Текст скопирован')}
  catch(e){notify('Не удалось скопировать текст: '+e.message,'error')}
 }
 function srtTime(t,sep=','){
@@ -1028,10 +1155,10 @@ function docxBlob(paragraphs){
 }
 function exportRecord(){
  const rec=state.records.find(r=>r.id===state.editorId);if(!rec||!(rec.transcript||rec.transcriptSummary))return;
- modal('Экспорт расшифровки',`<label class="field-label" for="export-format">Формат файла</label><select class="select" id="export-format"><option value="txt">TXT — обычный текст</option><option value="md">Markdown</option><option value="docx">DOCX — документ Word</option><option value="json">JSON — данные и метки</option><option value="srt">SRT — субтитры</option><option value="vtt">VTT — субтитры</option><option value="pdf">PDF — через печать браузера</option></select><label class="field-label" for="export-version" style="margin-top:18px">Версия текста</label><select class="select" id="export-version"><option value="edited">Отредактированный</option><option value="original">Исходный результат модели</option></select>`,
- [{text:'Экспортировать',primary:true,run:async()=>{const format=$('#export-format').value,version=$('#export-version').value;await doExport(rec,format,version)}}]);
+ modal('Экспорт расшифровки',`<label class="field-label" for="export-format">Формат файла</label><select class="select" id="export-format"><option value="txt">TXT — обычный текст</option><option value="md">Markdown</option><option value="docx">DOCX — документ Word</option><option value="json">JSON — данные и метки</option><option value="srt">SRT — субтитры</option><option value="vtt">VTT — субтитры</option><option value="pdf">PDF — через печать браузера</option></select><label class="field-label" for="export-version" style="margin-top:18px">Версия текста</label><select class="select" id="export-version"><option value="edited">Отредактированный</option><option value="clean">Чистый — без «э-э», «м-м» и запинок</option><option value="original">Исходный результат модели</option></select><label class="field-label" for="export-layout" style="margin-top:18px">Разбивка текста</label><select class="select" id="export-layout"><option value="paragraphs">Абзацы — по паузам и говорящим</option><option value="segments">Фрагменты, как у модели</option></select>${rec.summary?'<label class="check-row" style="margin-top:18px"><input type="checkbox" id="export-summary" checked> Добавить конспект в начало</label>':''}`,
+ [{text:'Экспортировать',primary:true,run:async()=>{const format=$('#export-format').value,version=$('#export-version').value,layout=$('#export-layout').value,withSummary=Boolean($('#export-summary')?.checked);await doExport(rec,format,version,{layout,withSummary})}}]);
 }
-async function doExport(rec,format,version){
+async function doExport(rec,format,version,{layout='segments',withSummary=false}={}){
  // Open the print window synchronously in the originating click gesture.
  const printWindow=format==='pdf'?window.open('','_blank'):null;
  if(format==='pdf'&&!printWindow){notify('Разрешите всплывающие окна для печати PDF.','error');return}
@@ -1039,19 +1166,24 @@ async function doExport(rec,format,version){
  const latest=await getRecording(rec.id);
  if(!latest?.transcript){printWindow?.close();notify('Транскрипт недоступен','error');return}
  const profile=await speakerProfile(latest);
- const segments=latest.transcript.segments.map(s=>{const who=speakerFor(s,profile),text=version==='original'?s.original??s.text:s.text;return {...s,text:who?`${SPEAKER_NAMES[who]}: ${text}`:text,...(who?{speaker:who}:{})}});
- const text=segments.map(s=>s.text).join('\n\n');
+ const base=latest.transcript.segments.map(s=>{const who=speakerFor(s,profile),raw=version==='original'?s.original??s.text:s.text;return {...s,text:version==='clean'?cleanText(raw):raw,...(who?{speaker:who}:{})}}).filter(s=>s.text);
+ const label=s=>s.speaker?`${SPEAKER_NAMES[s.speaker]}: ${s.text}`:s.text;
+ const segments=base.map(s=>({...s,text:label(s)}));
+ // Reading formats get paragraphs; subtitle and data formats keep the model's timing.
+ const blocks=layout==='paragraphs'?paragraphs(base,{speakerOf:s=>s.speaker||null}).map(p=>label(p)):segments.map(s=>s.text);
+ const summary=withSummary&&latest.summary?summaryLines(latest.summary):[];
+ const text=[...(summary.length?[...summary,'']:[]),...blocks].join('\n\n');
  let blob;
  if(format==='txt')blob=new Blob([text],{type:'text/plain;charset=utf-8'});
- else if(format==='md')blob=new Blob([`# ${rec.title}\n\n${text}\n`],{type:'text/markdown;charset=utf-8'});
- else if(format==='json')blob=new Blob([JSON.stringify({title:rec.title,model:latest.transcript.model,duration:rec.duration,segments},null,2)],{type:'application/json;charset=utf-8'});
+ else if(format==='md')blob=new Blob([`# ${rec.title}\n\n${summary.length?summaryMarkdown(latest.summary)+'\n\n## Расшифровка\n\n'+blocks.join('\n\n'):text}\n`],{type:'text/markdown;charset=utf-8'});
+ else if(format==='json')blob=new Blob([JSON.stringify({title:rec.title,model:latest.transcript.model,duration:rec.duration,...(latest.summary?{summary:latest.summary}:{}),segments},null,2)],{type:'application/json;charset=utf-8'});
  else if(format==='srt'||format==='vtt'){
   const rows=segments.map((s,i)=>`${format==='srt'?i+1+'\n':''}${srtTime(s.start,format==='vtt'?'.':',')} --> ${srtTime(Math.max(s.end,s.start+.1),format==='vtt'?'.':',')}\n${s.text}\n`).join('\n');
   blob=new Blob([format==='vtt'?'WEBVTT\n\n'+rows:rows],{type:'text/plain;charset=utf-8'});
- }else if(format==='docx')blob=docxBlob([rec.title,...segments.map(s=>s.text)]);
+ }else if(format==='docx')blob=docxBlob([rec.title,...summary,...blocks]);
  else if(format==='pdf'){
   const win=printWindow;
-  win.document.write(`<html lang="ru"><head><meta charset="utf-8"><title>${h(rec.title)}</title><style>body{max-width:800px;margin:60px auto;padding:0 24px;font:16px/1.8 Arial;color:#111}h1{font-size:30px}p{margin:0 0 18px}@media print{body{margin:0}}</style></head><body><h1>${h(rec.title)}</h1>${segments.map(s=>`<p>${h(s.text)}</p>`).join('')}</body></html>`);
+  win.document.write(`<html lang="ru"><head><meta charset="utf-8"><title>${h(rec.title)}</title><style>body{max-width:800px;margin:60px auto;padding:0 24px;font:16px/1.8 Arial;color:#111}h1{font-size:30px}p{margin:0 0 18px}@media print{body{margin:0}}</style></head><body><h1>${h(rec.title)}</h1>${summary.map(line=>`<p>${h(line)}</p>`).join('')}${blocks.map(line=>`<p>${h(line)}</p>`).join('')}</body></html>`);
   win.document.close();win.focus();setTimeout(()=>win.print(),350);return;
  }
  if(blob){downloadBlob(blob,rec.title.replace(/[\\/:*?"<>|]/g,'_').slice(0,80)+'.'+format);notify('Файл подготовлен к скачиванию')}
@@ -1157,6 +1289,7 @@ function wire(){
  $('#editor-search').addEventListener('input',()=>{state.editorPage=0;const rec=state.records.find(r=>r.id===state.editorId);if(rec)renderEditorSegments(rec)});
  $('#editor-content').addEventListener('input',e=>{if(e.target.matches('.segment-edit'))editSegment(e.target)});
  $('#copy-transcript').onclick=copyText;$('#export-transcript').onclick=exportRecord;
+ mountIntelligence();
  $('#editor-transcribe').onclick=()=>{const rec=state.records.find(r=>r.id===state.editorId);if(rec)void startTranscription(rec)};
  $('#editor-download').onclick=()=>{const rec=state.records.find(r=>r.id===state.editorId);if(rec)void downloadAudio(rec)};
  $('#player-toggle').onclick=async()=>{if(audioReview){if(audioReview.player.snapshot.playing)audioReview.player.pause();else if(canAudition())await audioReview.player.play().catch(error=>{if(error.name!=='AbortError')notify(error.message,'error')});return}const a=$('#audio-element');if(!a.src)return notify('Аудиофайл недоступен','error');if(a.paused)await playAudition(a);else a.pause()};

@@ -12,6 +12,7 @@ import {localRoute,localWorker,authorizeLocalRequest} from './backend/local/rout
 import {systemAccent} from './backend/local/appearance.mjs';
 import {checkUpdate} from './backend/local/updates.mjs';
 import {KeyManager} from './backend/groq/key-manager.mjs';
+import {Summarizer} from './backend/groq/summary.mjs';
 import {OriginalMedia} from './backend/audio/original-media.mjs';
 import {AudioPreparation} from './backend/audio/preparation-service.mjs';
 
@@ -458,6 +459,8 @@ async function submitLibraryJob(record,source,options){
     jobs.set(id,job);await save(job);saved=true;void pump();return {id,status:'queued'};
   }finally{if(!saved){jobs.delete(id);if(ownedSource)await unlink(ownedSource).catch(()=>{})}uploadingKeys.delete(clientKey);uploadsInFlight--}
 }
+// Chat API base follows the transcription endpoint (tests point both at a local fake).
+const summarizer=new Summarizer({getKey:()=>keyManager.getKey(),base:process.env.MONO_GROQ_CHAT_BASE||GROQ_ENDPOINT.replace(/\/audio\/transcriptions\/?$/,'')});
 async function route(req,res){
   let url;
   try{url=new URL(req.url,'http://local.invalid')}catch{fail(res,400,'Неверный URL');return}
@@ -474,7 +477,7 @@ async function route(req,res){
     res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.write(': ok\n\n');
     eventClients.add(res);const ping=setInterval(()=>res.write(': ping\n\n'),25000);req.on('close',()=>{clearInterval(ping);eventClients.delete(res)});return;
   }
-  if(await localRoute(req,res,url,DEPLOY_MODE,{runtime:async()=>{await toolsReady;if(!config.ffmpeg||!config.ffprobe)await detectTools({force:true});return {ffmpeg:config.ffmpeg,ffprobe:config.ffprobe}},preparation,keyManager,resolveOriginal:(id,options)=>originalMedia.ensure(id,options),resolveSpeakers:async id=>{await toolsReady;return config.ffmpeg?originalMedia.speakers(id):null},submitLibraryJob,isLibraryBusy:()=>uploadsInFlight>0||[...jobs.values()].some(job=>['queued','processing'].includes(job.status))}))return;
+  if(await localRoute(req,res,url,DEPLOY_MODE,{runtime:async()=>{await toolsReady;if(!config.ffmpeg||!config.ffprobe)await detectTools({force:true});return {ffmpeg:config.ffmpeg,ffprobe:config.ffprobe}},preparation,keyManager,summarizer,resolveOriginal:(id,options)=>originalMedia.ensure(id,options),resolveSpeakers:async id=>{await toolsReady;return config.ffmpeg?originalMedia.speakers(id):null},submitLibraryJob,isLibraryBusy:()=>uploadsInFlight>0||[...jobs.values()].some(job=>['queued','processing'].includes(job.status))}))return;
   let pathname;
   try{pathname=decodeURIComponent(url.pathname)}catch{fail(res,400,'Некорректное кодирование URL');return}
   if(DEPLOY_MODE==='local'&&(/^\/api\/jobs(?:\/|$)/.test(pathname)||pathname==='/api/metrics')){

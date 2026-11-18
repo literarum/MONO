@@ -55,7 +55,14 @@ export class LibraryClient{
  })}
  transcript(id,{offset=0,limit=65,query='',signal}={}){return this.json(`/records/${id}/transcript?`+new URLSearchParams({offset:String(offset),limit:String(limit),q:query}),{signal})}
  submit(id,options){return this.json(`/records/${id}/transcribe`,{method:'POST',body:options})}
- edit(id,index,text){return this.serial(id,async()=>{const r=await this.current(id);return this.remember(await this.json(`/records/${id}/transcript/edit`,{method:'PUT',headers:{'Content-Type':'application/json','X-Mono-Version':String(r.version)},body:JSON.stringify({index,text})}))})}
+ edit(id,index,text){return this.serial(id,async()=>{
+  // A fragment edit is one field. When only metadata moved on (a summary, a title, bookmarks) it is
+  // replayed once on the fresh version; a different transcript (re-transcribed) is never overwritten.
+  const send=r=>this.json(`/records/${id}/transcript/edit`,{method:'PUT',headers:{'Content-Type':'application/json','X-Mono-Version':String(r.version)},body:JSON.stringify({index,text})});
+  const r=await this.current(id);
+  try{return this.remember(await send(r))}
+  catch(error){if(error.code!=='VERSION_CONFLICT')throw error;const fresh=await this.get(id);if(fresh.transcriptSummary?.segmentCount!==r.transcriptSummary?.segmentCount||fresh.transcriptSummary?.model!==r.transcriptSummary?.model)throw error;return this.remember(await send(fresh))}
+ })}
  segment(id,index,blob,{track='original',frames=0}={}){return this.serial(id,async()=>{const receipt=await this.json(`/records/${id}/segments/${track}/${index}`,{method:'PUT',headers:{'X-Mono-Frames':String(frames)},body:blob});await this.get(id);return receipt})}
  trash(id){return this.serial(id,async()=>{const r=await this.current(id);return this.remember(await this.json(`/records/${id}/trash`,{method:'POST',body:{expectedVersion:r.version}}))})}
  restore(id,version){return this.serial(id,async()=>{const r=await this.current(id);return this.remember(await this.json(`/records/${id}/restore`,{method:'POST',body:{expectedVersion:version??r.version}}))})}
