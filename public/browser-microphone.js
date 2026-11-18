@@ -46,10 +46,10 @@ export class BrowserMicrophoneClient{
  async acquire(inputId,intent,accessTimeout){
   let last=null;
   for(const audio of CONSTRAINT_LADDER(inputId)){
-   for(let attempt=0;attempt<2;attempt++){
+   for(let attempt=0;attempt<3;attempt++){
     intent?.throwIfAborted?.();
     try{const stream=await waitFor(this.devices.getUserMedia({audio,video:false}),intent,late=>late.getTracks().forEach(track=>track.stop()),accessTimeout);if(last)this.recovered=last.name;return stream}
-    catch(error){last=error;if(!RETRYABLE.has(error?.name)||error?.name==='AbortError'&&intent?.aborted)throw error;if(error.name!=='NotReadableError'||attempt)break;await new Promise(resolve=>setTimeout(resolve,300))}
+    catch(error){last=error;if(!RETRYABLE.has(error?.name)||error?.name==='AbortError'&&intent?.aborted)throw error;if(error.name!=='NotReadableError'||attempt>=2)break;await new Promise(resolve=>setTimeout(resolve,attempt?1200:300))}
    }
   }
   throw last;

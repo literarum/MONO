@@ -143,25 +143,28 @@ public static class CoreAudio
     }
     static string? DefaultId(IDeviceEnumerator enumerator,DataFlow flow)
     {
-        int result=enumerator.GetDefaultAudioEndpoint(flow,DeviceRole.Console,out var device);
-        if(unchecked((uint)result)==0x80070490)return null;
-        ComAudio.Check(result);try{ComAudio.Check(device.GetId(out var id));return id;}finally{ComAudio.Release(device);}
+        // No default (0x80070490) or any other failure: "no default", never an exception —
+        // one odd endpoint must not take the whole capture module down.
+        if(enumerator.GetDefaultAudioEndpoint(flow,DeviceRole.Console,out var device)!=0)return null;
+        try{return device.GetId(out var id)==0?id:null;}finally{ComAudio.Release(device);}
     }
+    /// Active endpoints only. A device that fails any query (Bluetooth endpoints mid-reconnect,
+    /// virtual drivers, endpoints without a property store) is skipped instead of aborting the
+    /// whole inventory: before, one such device made the helper exit at start-up and MONO fell
+    /// back to the browser channel on that PC.
     static IReadOnlyList<AudioDevice> List(IDeviceEnumerator enumerator,DataFlow flow)
     {
-        string? defaultId=DefaultId(enumerator,flow);ComAudio.Check(enumerator.EnumAudioEndpoints(flow,1,out var collection));var result=new List<AudioDevice>();
+        string? defaultId=DefaultId(enumerator,flow);var result=new List<AudioDevice>();
+        if(enumerator.EnumAudioEndpoints(flow,1,out var collection)!=0)return result;
         try{
-            ComAudio.Check(collection.GetCount(out var count));if(count>256)throw new AudioFailure("INTERNAL");
-            for(uint i=0;i<count;i++){
-                ComAudio.Check(collection.Item(i,out var device));
+            if(collection.GetCount(out var count)!=0)return result;
+            for(uint i=0;i<count&&i<256;i++){
+                if(collection.Item(i,out var device)!=0)continue;
                 try{
-                    ComAudio.Check(device.GetId(out var id));ComAudio.Check(device.OpenPropertyStore(0,out var properties));
-                    string? name=null;try{
-                        var key=new PropertyKey(new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"),14);ComAudio.Check(properties.GetValue(ref key,out var value));
-                        try{if(value.Type==31)name=Marshal.PtrToStringUni(value.Pointer);}finally{ComAudio.PropVariantClear(ref value);}
-                    }finally{ComAudio.Release(properties);}
-                    result.Add(new AudioDevice(id,string.IsNullOrWhiteSpace(name)?(flow==DataFlow.Capture?"Устройство ввода":"Устройство вывода"):name,id==defaultId));
-                }finally{ComAudio.Release(device);}
+                    if(device.GetId(out var id)!=0||string.IsNullOrEmpty(id))continue;
+                    result.Add(new AudioDevice(id,FriendlyName(device,flow),id==defaultId));
+                }catch(Exception error) when(error is COMException or InvalidCastException or AudioFailure){}
+                finally{ComAudio.Release(device);}
             }
         }finally{ComAudio.Release(collection);}
         return result;

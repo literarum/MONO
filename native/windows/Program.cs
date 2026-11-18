@@ -64,7 +64,9 @@ internal static class Program
         Console.InputEncoding=new UTF8Encoding(false,true);Console.OutputEncoding=new UTF8Encoding(false);
         try{
             if(args.Length!=4||args[0]!="--protocol"||args[1]!="1"||args[2]!="--capture-root")return 2;
-            ValidateRoot(args[3]);Devices(true);
+            ValidateRoot(args[3]);
+            // Stay alive even if Windows refuses the inventory: diagnosis and later retries need the process.
+            try{Devices(true);}catch(Exception error) when(error is COMException or AudioFailure or InvalidCastException){Emit("ready",new(){{"protocol",1},{"platform","windows"},{"supported",false},{"modes",Array.Empty<string>()},{"inputDevices",Array.Empty<object>()},{"outputDevices",Array.Empty<object>()},{"reason",error is AudioFailure f?f.Code:"INVENTORY_FAILED"},{"nativeCode",(error as COMException)?.HResult.ToString("X8")}});}
             using var input=Console.OpenStandardInput();var chunk=new byte[4096];using var line=new MemoryStream();bool oversized=false;
             while(true){int read=input.Read(chunk);if(read==0)break;for(int i=0;i<read;i++){
                 byte value=chunk[i];if(value==10){

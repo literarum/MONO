@@ -19,7 +19,7 @@ export function mountSelect(select){
  const choose=i=>{if(i<0||select.options[i]?.disabled)return;const changed=select.selectedIndex!==i;select.selectedIndex=i;sync();layer?.close('select');if(changed){select.dispatchEvent(new Event('input',{bubbles:true}));select.dispatchEvent(new Event('change',{bubbles:true}))}};
  const open=()=>{
   if(popup||select.disabled)return;
-  popup=document.createElement('div');popup.className='select-popup glass';popup.id=`select-popup-${++serial}`;popup.setAttribute('role','listbox');popup.setAttribute('aria-label',button.getAttribute('aria-label')||label?.textContent||'Варианты');
+  popup=document.createElement('div');popup.className='select-popup';popup.id=`select-popup-${++serial}`;popup.setAttribute('role','listbox');popup.setAttribute('aria-label',button.getAttribute('aria-label')||label?.textContent||'Варианты');
   const list=document.createElement('div');list.className='select-options';popup.append(list);
   options().forEach((option,i)=>{const el=document.createElement('div');el.role='option';el.id=`${popup.id}-${i}`;el.dataset.index=String(i);el.className='select-option';el.textContent=option.label;el.setAttribute('aria-disabled',String(option.disabled));el.addEventListener('pointerdown',e=>e.preventDefault());el.addEventListener('click',()=>choose(i));list.append(el)});
   document.body.append(popup);scroll=mountScrollArea(list,{axes:'y'});

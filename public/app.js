@@ -114,7 +114,7 @@ function onNativeState(value){
  updateRecordUI();
  if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId));syncLevelPreview();
   if(wasActive&&value.state==='interrupted')markRecoveredSeen(value.recordId);
-  if(wasActive&&value.state==='interrupted'&&!(Number(value.savedBytes)>0)&&AUTOPILOT_RETRY.has(value.errorCode)&&autopilot.selection&&autopilot.steps.length){void autopilotRetry(value.errorCode).then(handled=>{if(!handled)notify(captureFailureMessage(value),'error',fixFor(value.errorCode))});void refresh().catch(()=>{});return}
+  if(wasActive&&value.state==='interrupted'&&!(Number(value.savedBytes)>0)&&AUTOPILOT_RETRY.has(value.errorCode)&&autopilot.selection&&autopilot.steps.length){void autopilotRetry(value.errorCode).then(handled=>{if(!handled)void notifyCaptureError(captureFailureMessage(value),value.errorCode)});void refresh().catch(()=>{});return}
   if(wasActive&&value.state==='interrupted'&&value.errorCode==='DEVICE_LOST'&&(Number(value.savedBytes)>0||Number(value.savedFrames)>0)){void continueAfterDeviceChange(value.recordId);return}void refresh().catch(e=>notify(e.message,'error'));if(wasActive)notify(value.state==='ready'?'Запись сохранена в библиотеке.':captureFailureMessage(value),value.state==='ready'?'info':'error',value.state==='ready'?{text:'Открыть',run:()=>go('editor',value.recordId)}:fixFor(value.errorCode))}
 }
 /** Autopilot (Apple: recover quietly; ask only when nothing else can help).
@@ -143,14 +143,14 @@ async function startWithAutopilot(selection){
  arm(selection);
  for(;;){
   try{return await nativeController.start(selection)}
-  catch(error){const next=AUTOPILOT_RETRY.has(error?.code)?autopilotNext():null;if(!next)throw error;notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));if(next.mode==='browser')notify('Записываем через запасной канал — окно MONO.');selection=next}
+  catch(error){const next=AUTOPILOT_RETRY.has(error?.code)?autopilotNext():null;if(!next)throw error;notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));if(next.mode==='browser'&&selection.mode!=='browser')notify('Записываем через запасной канал — окно MONO.');selection=next}
  }
 }
 async function autopilotRetry(code){
  const next=autopilotNext();if(!next)return false;
  notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));
- try{if(next.mode==='browser')notify('Записываем через запасной канал — окно MONO.');await nativeController.start(next);return true}
- catch(error){if(AUTOPILOT_RETRY.has(error?.code)&&await autopilotRetry(error.code))return true;notify(captureErrors[error?.code]||error.message||'Не удалось начать запись.','error',fixFor(error?.code||code));return true}
+ try{if(next.mode==='browser'&&autopilot.mode!=='browser')notify('Записываем через запасной канал — окно MONO.');await nativeController.start(next);return true}
+ catch(error){if(AUTOPILOT_RETRY.has(error?.code)&&await autopilotRetry(error.code))return true;void notifyCaptureError(captureErrors[error?.code]||error.message||'Не удалось начать запись.',error?.code||code);return true}
 }
 /** A headset unplugged mid-meeting: the confirmed part is kept and recording continues
  * on the current system device as a linked take, instead of silently stopping. */
@@ -179,7 +179,7 @@ async function initializeNative(local){
  if(!nativeController){
   const client=new BrowserMicrophoneClient(new CaptureClient({library:local}));captureSources=new CaptureSources(client,local);
   mediaInterlock=new MediaInterlock({status:options=>client.status(options),channel:typeof BroadcastChannel==='function'?new BroadcastChannel('mono-media'):null});
-  nativeController=new NativeCaptureController(client,{onState:onNativeState,onError:error=>notify(error.message,'error',fixFor(error.code)),onIntent:options=>mediaInterlock.beforeCapture(options)});
+  nativeController=new NativeCaptureController(client,{onState:onNativeState,onError:error=>notify(error.message,'error',fixFor(error.code)),onIntent:async options=>{if(levelPreview.active||levelPreview.wanted){levelPreview.stop();await new Promise(resolve=>setTimeout(resolve,250))}return mediaInterlock.beforeCapture(options)}});
   const studio=$('#audio-source').closest('.side-card');studio.replaceChildren();mountCaptureSources(studio,{model:captureSources,onError:error=>notify(error.message,'error'),onNotice:message=>notify(message)});
   const card=document.createElement('article');card.className='glass settings-card';card.innerHTML='<div class="settings-card-icon"><svg><use href="#i-mic"/></svg></div><h2>Источники записи</h2><div class="settings-capture-sources"></div><button type="button" class="btn btn-outline btn-small" id="check-native-sound">Проверить звук</button>';$('#view-settings .settings-grid').prepend(card);mountCaptureSources(card.querySelector('.settings-capture-sources'),{model:captureSources,onError:error=>notify(error.message,'error')});card.querySelector('button#check-native-sound').onclick=()=>void showSetup('sound').catch(error=>notify(error.message,'error'));
   const guide=$('.studio-side>.side-card:not(.capture-sources)');guide.replaceChildren();mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
@@ -284,6 +284,14 @@ function notify(message,type='info',action=null){
   }
   clearTimeout(entry.timer);
   entry.timer=setTimeout(()=>{entry.el.remove();if(active.get(key)===entry)active.delete(key)},action?12000:6500);
+}
+/** «Busy» microphone: name the app Windows says is using it, instead of a generic guess. */
+async function notifyCaptureError(message,code){
+ let extra='';
+ if(['DEVICE_BUSY','START_TIMEOUT','BROWSER_AUDIO_ERROR'].includes(code)&&storageDetails().local){
+  try{const local=await localLibraryClient();const {apps}=await local.json('/microphone-users',{signal:AbortSignal.timeout(5000)});if(apps?.length)extra=` Сейчас микрофон, похоже, использует: ${apps.slice(0,3).join(', ')} — закройте его или выключите в нём микрофон.`}catch{}
+ }
+ notify(message+extra,'error',fixFor(code));
 }
 /** The one action that resolves a capture/archive failure code. */
 function fixFor(code){
@@ -472,7 +480,7 @@ function chosenMime(){
 }
 async function beginRecord(){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
- if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');if(!nativeController.snapshot.connected){try{await nativeController.connect()}catch(error){notify(`Модуль записи не отвечает${error?.code?' ('+error.code+')':''}. Откройте «Настройки → Предполётная проверка».`,'error');void preflight?.run({force:true}).catch(()=>{});return}}const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}await startWithAutopilot(await autopilotBeforeStart(await captureSources.selection()))}catch(error){if(error?.name!=='AbortError')notify(error.message||'Не удалось начать запись.','error',fixFor(error.code))}return}
+ if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');if(!nativeController.snapshot.connected){try{await nativeController.connect()}catch(error){notify(`Модуль записи не отвечает${error?.code?' ('+error.code+')':''}. Откройте «Настройки → Предполётная проверка».`,'error');void preflight?.run({force:true}).catch(()=>{});return}}const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}await startWithAutopilot(await autopilotBeforeStart(await captureSources.selection()))}catch(error){if(error?.name!=='AbortError')void notifyCaptureError(error.message||'Не удалось начать запись.',error.code)}return}
  if(state.recordBusy||state.capture)return;
  state.recordBusy=true;
  let capture=null;
@@ -571,39 +579,43 @@ async function finalizeRecord(r){
    void startTranscription(finished);
  }
 }
-function drawWave(){
+/** Studio rendering budget (weak laptops): the wave is drawn at ≤30 fps and only when it
+ * changes; the meter moves with transform (no layout); the dB figure updates ≤5×/s.
+ * Before: ~20 layouts and ~180 ms of main thread per second at 4× CPU throttling. */
+const meter={scale:-1,text:'',at:0};let waveDrawnAt=0,waveSignature='';
+function setMeter(rms,now){
+ const db=rms>0?20*Math.log10(rms):-90,scale=rms>0?Math.max(0,Math.min(1,(db+65)/65)):0;
+ if(Math.abs(scale-meter.scale)>.004){$('#level-fill').style.transform=`scaleX(${scale.toFixed(3)})`;meter.scale=scale}
+ if(now-meter.at>200){meter.at=now;const text=rms>0?`${Math.round(db)} dB`:'−∞ dB';if(text!==meter.text){meter.text=text;setText('#level-num',text)}}
+}
+function drawWave(now=performance.now()){
  nativeFrame=0;
- const canvas=$('#record-wave'),c=canvas.getContext('2d'),r=state.capture;
- const dark=document.body.dataset.theme==='dark';
- const width=canvas.width,height=canvas.height;
- c.clearRect(0,0,width,height);
+ const r=state.capture,keepGoing=Boolean(state.capture)||levelPreview.active&&state.view==='record';
+ if(now-waveDrawnAt<32){if(keepGoing)nativeFrame=requestAnimationFrame(drawWave);return}
+ const step=Math.min(4,Math.max(1,Math.round((now-waveDrawnAt)/33)));waveDrawnAt=now;
+ const canvas=$('#record-wave'),c=canvas.getContext('2d');
  const values=[];
  if(r&&!r.paused){
    let rms=0;
    if(r.native){rms=r.snapshot.connected&&r.snapshot.state==='recording'?Math.max(0,...Object.values(r.snapshot.levels||{}).map(level=>level.rms||0)):0}
    else{const a=new Uint8Array(r.capture.analyser.fftSize);r.capture.analyser.getByteTimeDomainData(a);for(const v of a){const f=(v-128)/128;rms+=f*f}rms=Math.sqrt(rms/a.length)}
-   const db=rms>0?20*Math.log10(rms):-90;
-   $('#level-fill').style.width=`${Math.max(0,Math.min(100,(db+65)/65*100))}%`;
-   setText('#level-num',rms>0?`${Math.round(db)} dB`:'−∞ dB');
-   r.peaks.push(Math.min(1,rms*5));if(r.peaks.length>500)r.peaks.shift();
+   setMeter(rms,now);
+   for(let k=0;k<step;k++)r.peaks.push(Math.min(1,rms*5));if(r.peaks.length>500)r.peaks.splice(0,r.peaks.length-500);
    values.push(...r.peaks.slice(-90));
- }else {
-   const rms=!r&&levelPreview.active?levelPreview.rms():0,db=rms>0?20*Math.log10(rms):-90;
-   $('#level-fill').style.width=rms>0?`${Math.max(0,Math.min(100,(db+65)/65*100))}%`:'0%';setText('#level-num',rms>0?`${Math.round(db)} dB`:'−∞ dB');
-   if(rms>0){state.previewPeaks=(state.previewPeaks||[]).concat(Math.min(1,rms*5)).slice(-90);values.push(...state.previewPeaks)}
+ }else{
+   const rms=!r&&levelPreview.active?levelPreview.rms():0;setMeter(rms,now);
+   if(rms>0){const peaks=state.previewPeaks||(state.previewPeaks=[]);for(let k=0;k<step;k++)peaks.push(Math.min(1,rms*5));if(peaks.length>90)peaks.splice(0,peaks.length-90);values.push(...peaks)}
    else for(let i=0;i<90;i++)values.push(storageDetails().local||r?.paused?0:.045+Math.sin(i*1.71)**2*.07);
  }
- const count=90,gap=width/count,bar=3.8;
- c.fillStyle=dark?'rgba(237,237,238,.85)':'rgba(38,39,43,.82)';
- for(let i=0;i<count;i++){
-   const v=values[Math.max(0,values.length-count+i)]??.035;
-   const bh=Math.max(3,v*(height*.83));
-   c.globalAlpha=i<count-20?.35+(i/count)*.5:1;
-   c.fillRect(i*gap+gap/2-bar/2,(height-bh)/2,bar,bh);
+ const dark=document.body.dataset.theme==='dark',signature=dark+values.map(v=>Math.round(v*60)).join(',');
+ if(signature!==waveSignature){
+  waveSignature=signature;const width=canvas.width,height=canvas.height;c.clearRect(0,0,width,height);
+  const count=90,gap=width/count,bar=3.8;c.fillStyle=dark?'rgba(237,237,238,.85)':'rgba(38,39,43,.82)';
+  for(let i=0;i<count;i++){const v=values[Math.max(0,values.length-count+i)]??.035,bh=Math.max(3,v*(height*.83));c.globalAlpha=i<count-20?.35+(i/count)*.5:1;c.fillRect(i*gap+gap/2-bar/2,(height-bh)/2,bar,bh)}
+  c.globalAlpha=1;
  }
- c.globalAlpha=1;
- if(state.capture){if(!r?.native)updateRecordUI();nativeFrame=requestAnimationFrame(drawWave)}
- else if(levelPreview.active&&state.view==='record')nativeFrame=requestAnimationFrame(drawWave);
+ if(state.capture&&!r?.native)updateRecordUI();
+ if(keepGoing)nativeFrame=requestAnimationFrame(drawWave);
 }
 /** Connect Groq in place (sheet), then continue what the person was doing. */
 function connectGroq(onConnected){
