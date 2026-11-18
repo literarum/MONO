@@ -49,3 +49,32 @@ test('window side: signal, frames and plain-language microphone findings',()=>{
  const text=formatReport({generatedAt:'t',findings:sortFindings([{level:'advisory',title:'Б'},{level:'warning',title:'А',action:'сделать'}]),server:{app:{version:'0.4.0'}},window:{}});
  assert.ok(text.indexOf('✖ А')<text.indexOf('● Б'));assert.match(text,/Что сделать: сделать/);assert.match(text,/ДАННЫЕ ДЛЯ ПОДДЕРЖКИ/);
 });
+
+import {trends,parsePowercfg,usbSelectiveSuspend,diskHealth,EVENT_CODES} from '../backend/local/diagnostics.mjs';
+import {consolidate} from '../public/diagnostics.js';
+test('trends: intermittent faults over a week, by device; USB power saving named as the likely cause',()=>{
+ const now=Date.parse('2026-11-18T12:00:00Z'),at=d=>new Date(now-d*86400e3).toISOString();
+ const rows=[{at:at(1),level:'event',message:'DEVICE_LOST · USB Mic'},{at:at(2),level:'event',message:'DEVICE_LOST · USB Mic'},{at:at(3),level:'event',message:'DEVICE_LOST · Realtek'},{at:at(9),level:'event',message:'DEVICE_LOST · USB Mic'},{at:at(1),level:'error',message:'DEVICE_LOST'}];
+ const t=trends(rows,{now});assert.equal(t.counts.DEVICE_LOST,3);assert.equal(t.devices.DEVICE_LOST['USB Mic'],2);
+ const f=findings({trends:t,power:{usbSelectiveSuspend:{ac:true,dc:true}}}).find(x=>x.title==='Микрофон периодически отключается');
+ assert.match(f.detail,/USB Mic/);assert.match(f.action,/Временное отключение USB-порта/);
+ assert.match(findings({trends:t,power:{usbSelectiveSuspend:{ac:false,dc:false}}})[0].action,/без хаба/);
+ assert.ok(EVENT_CODES.has('SAFETY_USED')&&!EVENT_CODES.has('ANYTHING'));
+});
+test('powercfg is parsed in any Windows language; USB and disk probes are skipped off Windows',async()=>{
+ assert.deepEqual(parsePowercfg('Current AC Power Setting Index: 0x00000000\r\nCurrent DC Power Setting Index: 0x00000001\r\n'),{ac:false,dc:true});
+ assert.equal(parsePowercfg('Ошибка'),null);
+ assert.equal(await usbSelectiveSuspend({platform:'linux'}),null);
+ assert.deepEqual(await usbSelectiveSuspend({platform:'win32',exec:async()=>'a: 0x00000001\nb: 0x00000001\n'}),{ac:true,dc:true});
+ const disks=await diskHealth({platform:'win32',exec:async()=>JSON.stringify({FriendlyName:'NVMe X',MediaType:'SSD',HealthStatus:'Warning',OperationalStatus:['Predictive Failure']})});
+ assert.deepEqual(disks,[{name:'NVMe X',media:'SSD',health:'Warning',status:'Predictive Failure'}]);
+ assert.equal(findings({disks})[0].title,'Windows сообщает о проблеме с диском');
+ assert.equal(await diskHealth({platform:'win32',exec:async()=>null}),null,'no PowerShell → unknown, not a failure');
+});
+test('root cause: consequences fold into the cause instead of being listed as separate faults',()=>{
+ const out=consolidate([{level:'caution',title:'Микрофон выключен в Windows'},{level:'warning',title:'Микрофон открылся, но передаёт полную тишину'},{level:'warning',title:'Windows запрещает доступ к микрофону'},{level:'advisory',title:'Groq отвечает медленно'}]);
+ assert.deepEqual(out.map(f=>f.title),['Windows запрещает доступ к микрофону','Groq отвечает медленно']);
+ assert.match(out[0].detail,/Следствия этой причины \(2\)/);
+ const offline=consolidate([{level:'caution',title:'Нет связи с Groq'},{level:'caution',title:'Нет сети'}]);assert.deepEqual(offline.map(f=>f.title),['Нет сети']);
+ assert.equal(consolidate([{level:'caution',title:'Нет связи с Groq'}]).length,1,'without a known cause nothing is hidden');
+});

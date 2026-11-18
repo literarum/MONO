@@ -1,11 +1,11 @@
-const CACHE='mono-shell-v28';
+const CACHE='mono-shell-v29';
 // Static modules only; credential requests remain excluded with every /api/ URL.
 const APP_FILES=['/','/index.html','/styles.css','/ui/tokens.css','/ui/controls.css','/ui/scroll-area.css','/ui/motion.css','/ui/index.js','/ui/select.js','/ui/select-model.js','/ui/layers.js','/ui/scroll-area.js','/ui/scroll-model.js','/ui/drawer.js','/ui/drawer-model.js','/app.js','/db.js','/legacy-db.js','/library-client.js','/library-migration.js','/backup-core.js','/manifest.webmanifest','/icon.svg','/icon-maskable.svg','/icon-192.png','/icon-512.png','/icon-maskable-512.png'];
 APP_FILES.push('/credentials.js','/capture-client.js','/native-capture.js','/native-sources.js','/onboarding-model.js','/onboarding.js','/help.js','/help-model.js','/media-interlock.js');
 APP_FILES.push('/audio-review.js','/ui/player.js','/transcription-selection.js');
 APP_FILES.push('/browser-microphone.js','/microphone-pcm.js','/microphone-worklet.js');
 APP_FILES.push('/capture-diagnostic.js','/preflight.js','/ui/glass.css');
-APP_FILES.push('/studio-extras.js','/speakers.js','/autopilot.js','/intelligence.js','/diagnostics.js');
+APP_FILES.push('/studio-extras.js','/speakers.js','/autopilot.js','/intelligence.js','/diagnostics.js','/safety-track.js');
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(APP_FILES.map(url=>new Request(url,{cache:'reload'})))).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',event=>{

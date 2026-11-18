@@ -37,6 +37,10 @@ for line in sys.stdin:
         if args.behavior=='unsafe':emit('segment',sessionId=session,track='mic',index=0,relativeFile='../escape.wav',format='pcm_s16le',sampleRate=16000,channels=1,startMonotonicNs=origin,frames=32000,sha256='0'*64);continue
         for track in ['system'] if args.behavior=='wrong-track' else ['mic','system'] if mode=='both' else [mode]:segment(track,0,origin)
         end=origin+2_000_000_000
+        if args.behavior=='fail-mid-take':
+            # The system module fails for good after ~6 s of a take (driver or helper fault).
+            failing=session
+            threading.Timer(6.5,lambda:emit('error',sessionId=failing,code='INTERNAL',stage='capture-mic/read',nativeCode='88890006')).start()
         if args.behavior=='device-lost-once':
             # The first take loses its device after the first committed part; later takes are healthy.
             marker=os.path.join(os.path.dirname(os.path.abspath(args.capture_root)),'.fixture-device-lost')

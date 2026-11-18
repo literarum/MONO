@@ -1,7 +1,7 @@
 // Deep diagnostics: actively tests every system MONO depends on and explains what it found.
 // Privacy: never titles, transcripts, keys or file paths. Device names stay (needed to tell
 // "which microphone"); everything else is codes, numbers and states.
-import os from 'node:os';import path from 'node:path';import {readFileSync} from 'node:fs';import {writeFile,rename,statfs} from 'node:fs/promises';
+import os from 'node:os';import {execFile} from 'node:child_process';import path from 'node:path';import {readFileSync} from 'node:fs';import {writeFile,rename,statfs} from 'node:fs/promises';
 import {writeProbe,oneDriveRoot,BYTES_PER_HOUR} from './preflight.mjs';import {microphonePrivacy,microphoneUsers} from './privacy.mjs';
 
 /** Paths, keys and e-mail-like strings removed from any text that may end up in a report. */
@@ -54,7 +54,27 @@ export async function probeGroq({keyManager,base='https://api.groq.com/openai/v1
  }catch(error){return {configured:true,managed:Boolean(status.managed),error:networkCode(error),ms:Math.round(performance.now()-started)}}
 }
 
-export async function collect({worker,runtime,keyManager,journal,health=()=>({}),jobs=()=>[],toolVersion=async()=>null,groqBase,fetch,env=process.env,privacy=microphonePrivacy,users=microphoneUsers}){
+/** Health events from the window (device lost, start failure, fallback…), kept in the journal for trend analysis. */
+export const EVENT_CODES=new Set(['DEVICE_LOST','START_FAILED','BROWSER_FALLBACK','SILENCE','CAPTURE_ERROR','SAFETY_USED','SAFETY_FAILED','STALE_SAVE','SCRUB_DAMAGED']);
+export function trends(rows,{days=7,now=Date.now()}={}){
+ const counts={},devices={};
+ for(const r of rows||[]){if(r.level!=='event'||now-Date.parse(r.at)>days*86400e3)continue;const [code,device]=String(r.message).split(' · ');counts[code]=(counts[code]||0)+1;if(device){devices[code]??={};devices[code][device]=(devices[code][device]||0)+1}}
+ return {days,counts,devices};
+}
+const run=(file,args,ms)=>new Promise(resolve=>{try{execFile(file,args,{timeout:ms,windowsHide:true,maxBuffer:1024*1024},(error,stdout)=>resolve(error?null:String(stdout)))}catch{resolve(null)}});
+/** powercfg output is localized; the two hex indexes (AC, then DC) are what matters. */
+export function parsePowercfg(text){const values=[...String(text||'').matchAll(/:\s*0x([0-9a-f]{8})\s*$/gim)].map(m=>parseInt(m[1],16));return values.length>=2?{ac:values.at(-2)===1,dc:values.at(-1)===1}:null}
+export async function usbSelectiveSuspend({platform=process.platform,exec=run}={}){
+ if(platform!=='win32')return null;
+ // Subgroup «USB settings» / «USB selective suspend setting».
+ return parsePowercfg(await exec('powercfg',['/query','SCHEME_CURRENT','2a737441-1930-4402-8d77-b2bebba308a3','48e6b7a6-50f5-4782-a5d4-53bb8f07e226'],5000));
+}
+export async function diskHealth({platform=process.platform,exec=run}={}){
+ if(platform!=='win32')return null;
+ const out=await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command','Get-PhysicalDisk | Select-Object FriendlyName,MediaType,HealthStatus,OperationalStatus | ConvertTo-Json -Compress'],9000);
+ try{const value=JSON.parse(out);return (Array.isArray(value)?value:[value]).map(d=>({name:scrub(d.FriendlyName),media:String(d.MediaType??''),health:String(d.HealthStatus??''),status:[].concat(d.OperationalStatus??[]).map(String).join(', ')}))}catch{return null}
+}
+export async function collect({worker,runtime,keyManager,journal,health=()=>({}),jobs=()=>[],toolVersion=async()=>null,groqBase,fetch,env=process.env,privacy=microphonePrivacy,users=microphoneUsers,usb=usbSelectiveSuspend,disks=diskHealth}){
  const report={generatedAt:new Date().toISOString(),app:{},system:{},core:{},archive:{},capture:{},groq:{},jobs:{},journal:[]};
  const h=health();
  report.app={version:h.version,mode:h.mode,uptimeSeconds:h.uptimeSeconds,launcher:Boolean(env.MONO_LAUNCHER),node:process.version,startsLastHour:journal?.starts(3600e3)??null,startsLastDay:journal?.starts(86400e3)??null};
@@ -83,6 +103,8 @@ export async function collect({worker,runtime,keyManager,journal,health=()=>({})
  const mic=await settle(privacy,4000);report.capture.privacy=mic.ok?{blocked:Boolean(mic.value?.blocked),scope:mic.value?.scope||null}:null;
  const holders=await settle(users,5000);report.capture.heldBy=holders.ok?(holders.value||[]).slice(0,5).map(scrub):null;
  report.groq=await probeGroq({keyManager,base:groqBase,fetch});
+ report.power={usbSelectiveSuspend:await usb().catch(()=>null)};report.disks=await disks().catch(()=>null);
+ report.trends=trends(journal?.rows);
  const list=jobs();const by={};for(const j of list)by[j.status]=(by[j.status]||0)+1;
  report.jobs={counts:by,recentErrors:list.filter(j=>j.error).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0,5).map(j=>({status:j.status,stage:scrub(j.stage),error:scrub(j.error),attempts:j.attempts||0}))};
  report.journal=(journal?.rows||[]).slice(-40);
@@ -128,6 +150,16 @@ export function findings(r){
  else if(g.http===200&&g.whisper===false)out.push(F('caution','Модель распознавания недоступна ключу','whisper-large-v3-turbo нет в списке моделей.','Проверьте ограничения моделей в организации Groq.'));
  else if(g.ms>3000)out.push(F('advisory','Groq отвечает медленно',`${g.ms} мс на служебный запрос.`));
  if(r.jobs?.recentErrors?.length)out.push(F('advisory','Были ошибки расшифровки',r.jobs.recentErrors.map(e=>e.error).slice(0,2).join(' · ')));
+ const t=r.trends?.counts||{},topDevice=code=>Object.entries(r.trends?.devices?.[code]||{}).sort((a,b)=>b[1]-a[1])[0]?.[0];
+ if(t.DEVICE_LOST>=2){const usb=r.power?.usbSelectiveSuspend,device=topDevice('DEVICE_LOST');
+  out.push(F('caution','Микрофон периодически отключается',`${t.DEVICE_LOST} раз за ${r.trends.days} дн.${device?` Чаще всего — «${device}».`:''}${usb&&(usb.ac||usb.dc)?' В Windows включено временное отключение USB-портов для экономии энергии.':''}`,
+   usb&&(usb.ac||usb.dc)?'Панель управления → Электропитание → Изменить параметры схемы → Дополнительные параметры → Параметры USB → «Временное отключение USB-порта»: Запрещено (для батареи и сети). Подключайте микрофон прямо к ноутбуку, без хаба.':'Подключайте микрофон прямо к ноутбуку, без хаба и удлинителя; попробуйте другой порт; отключите энергосбережение устройства в Диспетчере устройств.'))}
+ if(t.START_FAILED>=3)out.push(F('caution','Запись часто не начинается с первого раза',`${t.START_FAILED} неудачных стартов за ${r.trends.days} дн. MONO восстанавливал их сам.`,'Пришлите этот отчёт: по журналу будет видно, на каком шаге.'));
+ if(t.BROWSER_FALLBACK>=3)out.push(F('advisory','Системный модуль записи часто уступает запасному каналу',`${t.BROWSER_FALLBACK} раз за ${r.trends.days} дн.`,'Звук компьютера в такие моменты не пишется. Пришлите отчёт.'));
+ if(t.SAFETY_USED)out.push(F('advisory','Страховочная дорожка уже спасала запись',`${t.SAFETY_USED} раз за ${r.trends.days} дн.`));
+ if(t.SCRUB_DAMAGED)out.push(F('warning','Проверка целостности нашла повреждённые записи',`${t.SCRUB_DAMAGED} шт. Повреждение возникло на диске после сохранения.`,'Проверьте диск (свойства диска → Сервис → Проверить) и восстановите записи из резервной копии.'));
+ const sick=(r.disks||[]).filter(d=>d.health&&d.health!=='Healthy');
+ if(sick.length)out.push(F('warning','Windows сообщает о проблеме с диском',sick.map(d=>`«${d.name}»: ${d.health}${d.status?` (${d.status})`:''}`).join('; ')+'.','Сделайте резервную копию архива как можно скорее и проверьте диск.'));
  if(r.system?.freeMemoryGB!==undefined&&r.system.freeMemoryGB<.5)out.push(F('caution','Почти закончилась оперативная память',`Свободно ${r.system.freeMemoryGB} ГБ из ${r.system.memoryGB}.`,'Закройте лишние программы: интерфейс может тормозить, а запись — прерываться.'));
  return out;
 }

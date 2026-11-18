@@ -89,3 +89,23 @@ export function formatReport(report){
  lines.push('','ДАННЫЕ ДЛЯ ПОДДЕРЖКИ (без названий записей, текста, ключей и путей)',JSON.stringify({server:report.server,window:report.window,microphone:report.microphone,recentWindowErrors:report.recentWindowErrors},null,1));
  return lines.join('\n');
 }
+
+/** Root-cause consolidation (as a central maintenance computer does): when a cause is known,
+ * its consequences are folded into it instead of being listed as separate faults. */
+const CAUSES=[
+ {cause:/^Windows запрещает доступ к микрофону$|^Доступ к микрофону запрещён$/,effects:/микрофон|Микрофон|Окну запрещён доступ/},
+ {cause:/^Ядро архива не отвечает$|^Ядро не ответило на диагностику$/,effects:/архив|Папка|модуль записи|записи/},
+ {cause:/^Нет сети$/,effects:/Groq/},
+ {cause:/^Папка архива недоступна$/,effects:/Запись на диск|места на диске|блокирует запись/},
+];
+export function consolidate(list){
+ let out=sortFindings(list);
+ for(const rule of CAUSES){
+  const root=out.find(f=>rule.cause.test(f.title));if(!root)continue;
+  const folded=out.filter(f=>f!==root&&rule.effects.test(f.title)&&!rule.cause.test(f.title));
+  if(!folded.length)continue;
+  out=out.filter(f=>!folded.includes(f));
+  const index=out.indexOf(root);out[index]={...root,detail:[root.detail,`Следствия этой причины (${folded.length}): ${folded.map(f=>f.title.toLowerCase()).join('; ')}.`].filter(Boolean).join(' ')};
+ }
+ return out;
+}
