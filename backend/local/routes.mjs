@@ -25,6 +25,7 @@ export async function localRoute(req,res,url,mode,services={}){
   if(await summaryRoute(req,res,url,localWorker,{keyManager:services.keyManager,summarizer:services.summarizer,speakers:services.resolveSpeakers}))return true;
   if(await libraryRoute(req,res,url,localWorker,services))return true;
   if(url.pathname==='/api/local/preflight'&&req.method==='GET'){send(res,200,await preflight({worker:localWorker,runtime:services.runtime||(()=>({})),keyManager:services.keyManager}));return true}
+  if(url.pathname==='/api/local/diagnostics'&&req.method==='GET'&&services.diagnostics){send(res,200,await services.diagnostics());return true}
   if(url.pathname==='/api/local/status'&&req.method==='GET'){send(res,200,await localWorker.call('status'));return true}
   if(url.pathname==='/api/local/microphone-users'&&req.method==='GET'){send(res,200,{apps:await microphoneUsers()});return true}
   if(url.pathname==='/api/local/storage'&&req.method==='GET'){

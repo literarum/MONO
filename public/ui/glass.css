@@ -281,3 +281,16 @@ kbd{font:600 12px/1 var(--font);padding:5px 8px;border-radius:7px;border:1px sol
 .term-chip{border:1px solid var(--glass-rim-soft);background:var(--glass-fill-control);color:var(--text);border-radius:999px;padding:4px 10px;font-size:12px}
 .term-chip:hover{background:color-mix(in srgb,var(--tint) 16%,transparent)}
 @media print{.summary-tools,.summary-at{display:none!important}.summary-panel{border:0!important;background:none!important;padding:0!important}}
+
+/* ---- Deep diagnostics ---- */
+.deep-progress{animation:pulse 1.6s ease-in-out infinite}
+@media (prefers-reduced-motion: reduce){.deep-progress{animation:none}}
+.deep-findings{list-style:none;padding:0;margin:8px 0 12px;display:flex;flex-direction:column;gap:10px;white-space:normal}
+.deep-findings li{display:grid;grid-template-columns:18px 1fr;gap:8px;align-items:start}
+.deep-findings strong{display:block;color:var(--text);font-size:13px}
+.deep-findings span,.deep-findings em{display:block;font-size:12px;line-height:1.5}
+.deep-findings em{font-style:normal;color:var(--text);opacity:.85}
+.deep-mark{font-size:12px;line-height:20px;color:var(--muted)}
+.deep-findings li[data-level=warning] .deep-mark{color:#e5484d}
+.deep-findings li[data-level=caution] .deep-mark{color:#f5a524}
+.modal-content .inline-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}

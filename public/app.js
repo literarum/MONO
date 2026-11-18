@@ -13,7 +13,8 @@ import {mountGuidance,mountHelp} from './help.js';
 import {MediaInterlock} from './media-interlock.js';
 import {AudioReview} from './audio-review.js';
 import {captureSelection,selectionKey} from './transcription-selection.js';
-import {Preflight,mountPreflight,remember} from './preflight.js';
+import {Preflight,mountPreflight,remember,recentErrors} from './preflight.js';
+import {windowProbe,microphoneProbe,windowFindings,sortFindings,formatReport} from './diagnostics.js';
 import {LevelPreview,addBookmark,SaveClock,BatteryWatch,DEFAULT_TITLE,suggestTitle} from './studio-extras.js';
 import {speakerFor,SPEAKER_NAMES} from './speakers.js';
 import {paragraphs,isDoubtful,nextDoubtful,silenceSkips,skipTarget,savedSeconds,cleanText,transcriptStats,learnTerms,rememberTerms,promptWithTerms} from './intelligence.js';
@@ -223,7 +224,7 @@ async function initializeNative(local){
   // Pre-flight check: compact (problems only) in the studio, full in settings.
   preflight=new Preflight(local);
   const studioCheck=document.createElement('div');studioCheck.className='glass side-card';$('.studio-side').prepend(studioCheck);mountPreflight(studioCheck,{model:preflight,compact:true,onError:()=>{}});
-  const settingsCheck=document.createElement('article');settingsCheck.className='glass settings-card';settingsCheck.innerHTML='<div class="settings-card-icon"><svg><use href="#i-check"/></svg></div><h2>Предполётная проверка</h2><div></div>';$('#view-settings .settings-grid').prepend(settingsCheck);mountPreflight(settingsCheck.lastElementChild,{model:preflight,onError:error=>notify(error.message,'error')});
+  const settingsCheck=document.createElement('article');settingsCheck.className='glass settings-card';settingsCheck.innerHTML='<div class="settings-card-icon"><svg><use href="#i-check"/></svg></div><h2>Предполётная проверка</h2><div></div>';$('#view-settings .settings-grid').prepend(settingsCheck);mountPreflight(settingsCheck.lastElementChild,{model:preflight,onError:error=>notify(error.message,'error'),onDeep:()=>void runDeepDiagnostics()});
  }
  await nativeController.connect();
  await captureSources.load();
@@ -383,7 +384,7 @@ function fixFor(code){
  if(['SLEEP','DISCONTINUITY'].includes(code))return {text:'Продолжить запись',run:()=>{go('record');return beginRecord()}};
  if(code==='GROQ_NOT_CONFIGURED'||code==='INVALID_API_KEY')return {text:'Подключить Groq',run:()=>connectGroq(()=>{})};
  // Nothing to fix automatically: one tap copies what support needs (no recordings, no keys).
- if(code&&storageDetails().local)return {text:'Скопировать диагностику',run:()=>{go('settings');setTimeout(()=>document.querySelector('.preflight-copy')?.click(),300)}};
+ if(code&&storageDetails().local)return {text:'Диагностика',run:()=>void runDeepDiagnostics()};
  return null;
 }
 let modalReturnFocus=null;
@@ -396,6 +397,35 @@ function modal(title,body,actions=[]){
     btn.textContent=action.text;btn.onclick=()=>{closeModal();void Promise.resolve().then(action.run).catch(e=>notify(e.message,'error'))};container.append(btn);
   }
   $('#modal').hidden=false;container.querySelector('button').focus();
+}
+/** «Глубокая диагностика»: active tests of the core, archive, sound, Groq and this window,
+ * with conclusions in plain words and a report that never contains titles, text, keys or paths. */
+let deepRunning=false;
+async function runDeepDiagnostics(){
+ if(deepRunning)return;deepRunning=true;
+ const recording=captureActive(nativeController?.snapshot)||Boolean(state.capture);
+ modal('Глубокая диагностика','<p class="deep-progress" role="status">Проверяем ядро, архив, звук, Groq и окно — около 10 секунд.'+(recording?'':' Скажите что-нибудь в микрофон.')+'</p>');
+ try{
+  const local=await localLibraryClient();if(!recording)levelPreview.stop();
+  const [server,windowInfo,microphone]=await Promise.all([
+   local?local.json('/diagnostics',{signal:AbortSignal.timeout(45000)}).catch(error=>({error:error.code||error.message})):Promise.resolve(null),
+   windowProbe().catch(()=>null),
+   recording?Promise.resolve({skipped:'recording'}):microphoneProbe().catch(()=>null)]);
+  const findings=sortFindings([...(server?.findings||[]),...(server?.error?[{level:'warning',title:'Ядро не ответило на диагностику',detail:String(server.error),action:'Перезапустите MONO.'}]:[]),...windowFindings(windowInfo,microphone)]);
+  const report={generatedAt:new Date().toISOString(),findings,server:server&&!server.error?{...server,findings:undefined}:server,window:windowInfo,microphone,recentWindowErrors:recentErrors()};
+  const text=formatReport(report);
+  if($('#modal').hidden){notify('Диагностика готова','info',{text:'Показать',run:()=>showDeepReport(findings,text)});return}
+  showDeepReport(findings,text);
+ }catch(error){notify('Диагностика не завершилась: '+error.message,'error')}
+ finally{deepRunning=false;syncLevelPreview()}
+}
+function showDeepReport(findings,text){
+ const mark={warning:'✖',caution:'▲',advisory:'●'};
+ const body=(findings.length?`<p>${findings.some(f=>f.level==='warning')?'Есть проблемы, которые мешают работе:':'Найдено:'}</p><ul class="deep-findings">${findings.map(f=>`<li data-level="${f.level}"><span class="deep-mark" aria-hidden="true">${mark[f.level]||'•'}</span><div><strong>${h(f.title)}</strong>${f.detail?`<span>${h(f.detail)}</span>`:''}${f.action?`<em>${h(f.action)}</em>`:''}</div></li>`).join('')}</ul>`:'<p><strong>Проблем не найдено.</strong> Ядро, архив, звук, Groq и окно в порядке.</p>')+
+  '<p class="field-hint">В отчёте нет названий записей, текста, ключей и путей к файлам. Названия звуковых устройств остаются — по ним видно, какой микрофон проверялся.</p><div class="inline-actions"><button type="button" class="btn btn-primary btn-small" id="deep-copy">Скопировать отчёт</button><button type="button" class="btn btn-outline btn-small" id="deep-save">Сохранить файл</button></div>';
+ modal('Глубокая диагностика',body);const close=$('#modal-actions .btn-outline');if(close)close.textContent='Закрыть';
+ $('#deep-copy').onclick=async()=>{try{await navigator.clipboard.writeText(text);$('#deep-copy').textContent='Скопировано'}catch(e){notify('Не удалось скопировать: '+e.message,'error')}};
+ $('#deep-save').onclick=()=>downloadBlob(new Blob([text],{type:'text/plain;charset=utf-8'}),`MONO-диагностика-${new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')}.txt`);
 }
 function closeModal(){
   if($('#modal').hidden)return;

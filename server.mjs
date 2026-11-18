@@ -13,6 +13,7 @@ import {systemAccent} from './backend/local/appearance.mjs';
 import {checkUpdate} from './backend/local/updates.mjs';
 import {KeyManager} from './backend/groq/key-manager.mjs';
 import {Summarizer} from './backend/groq/summary.mjs';
+import {Journal,collect as collectDiagnostics} from './backend/local/diagnostics.mjs';
 import {OriginalMedia} from './backend/audio/original-media.mjs';
 import {AudioPreparation} from './backend/audio/preparation-service.mjs';
 
@@ -24,6 +25,8 @@ startupPhase('imports.ready');
 const base=path.dirname(fileURLToPath(import.meta.url));
 const pub=path.join(base,'public');
 const storage=path.resolve(process.env.MONO_DATA_DIR||path.join(base,'local-data'));
+// Core black box for «Глубокая диагностика»: every warning/error and each start, kept across restarts.
+const journal=new Journal({file:path.join(storage,'diagnostics-journal.json')});journal.capture();journal.note('start','MONO запущен');
 const folders={jobs:path.join(storage,'jobs'),audio:path.join(storage,'audio'),segments:path.join(storage,'segments')};
 const DEPLOY_MODE=process.env.MONO_DEPLOY_MODE||'local';
 const HOST=process.env.MONO_HOST||(DEPLOY_MODE==='proxy'?'0.0.0.0':'127.0.0.1');
@@ -477,7 +480,8 @@ async function route(req,res){
     res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.write(': ok\n\n');
     eventClients.add(res);const ping=setInterval(()=>res.write(': ping\n\n'),25000);req.on('close',()=>{clearInterval(ping);eventClients.delete(res)});return;
   }
-  if(await localRoute(req,res,url,DEPLOY_MODE,{runtime:async()=>{await toolsReady;if(!config.ffmpeg||!config.ffprobe)await detectTools({force:true});return {ffmpeg:config.ffmpeg,ffprobe:config.ffprobe}},preparation,keyManager,summarizer,resolveOriginal:(id,options)=>originalMedia.ensure(id,options),resolveSpeakers:async id=>{await toolsReady;return config.ffmpeg?originalMedia.speakers(id):null},submitLibraryJob,isLibraryBusy:()=>uploadsInFlight>0||[...jobs.values()].some(job=>['queued','processing'].includes(job.status))}))return;
+  if(await localRoute(req,res,url,DEPLOY_MODE,{runtime:async()=>{await toolsReady;if(!config.ffmpeg||!config.ffprobe)await detectTools({force:true});return {ffmpeg:config.ffmpeg,ffprobe:config.ffprobe}},preparation,keyManager,summarizer,diagnostics:()=>collectDiagnostics({worker:localWorker,keyManager,journal,groqBase:process.env.MONO_GROQ_CHAT_BASE||GROQ_ENDPOINT.replace(/\/audio\/transcriptions\/?$/,''),health:publicHealth,jobs:()=>[...jobs.values()],
+    runtime:async()=>{await toolsReady;return {ffmpeg:config.ffmpeg,ffprobe:config.ffprobe}},toolVersion:async()=>config.ffmpeg?(await run('ffmpeg',['-version'],5000)).split('\n')[0].slice(0,80):null}),resolveOriginal:(id,options)=>originalMedia.ensure(id,options),resolveSpeakers:async id=>{await toolsReady;return config.ffmpeg?originalMedia.speakers(id):null},submitLibraryJob,isLibraryBusy:()=>uploadsInFlight>0||[...jobs.values()].some(job=>['queued','processing'].includes(job.status))}))return;
   let pathname;
   try{pathname=decodeURIComponent(url.pathname)}catch{fail(res,400,'Некорректное кодирование URL');return}
   if(DEPLOY_MODE==='local'&&(/^\/api\/jobs(?:\/|$)/.test(pathname)||pathname==='/api/metrics')){
