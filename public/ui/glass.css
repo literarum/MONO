@@ -126,3 +126,51 @@ h1,h2,.studio-timer{font-family:var(--font-display)}
 body[data-theme=light] .setup-panel,body[data-theme=light] .modal-panel{background:rgba(250,250,252,.95)!important}
 body:not([data-theme=light]) .setup-panel,body:not([data-theme=light]) .modal-panel{background:rgba(28,30,38,.95)!important}
 .setup-backdrop,.modal-backdrop{background:rgba(0,0,0,.28)!important;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+
+/* Compact overview: the record action and recent takes first, no marketing banner. */
+#view-dashboard.active{display:flex!important;flex-direction:column}
+#view-dashboard .hero{min-height:0!important;order:0}
+#view-dashboard .hero-art,#view-dashboard .hero-bottom,#view-dashboard .hero-grid{display:none!important}
+#view-dashboard .hero-content{width:100%!important;padding:28px 28px 26px!important}
+#view-dashboard .hero h1{font-size:clamp(30px,3.4vw,44px)!important;letter-spacing:-.03em!important;margin:0 0 8px!important;line-height:1.05!important}
+#view-dashboard .hero h1 br{display:none}#view-dashboard .hero h1 span{margin-left:.25em}
+#view-dashboard .hero-description{margin:0 0 18px;max-width:60ch}
+#view-dashboard .recent-header{order:1}#view-dashboard #recent-list{order:2}
+#view-dashboard .section-title-line:not(.recent-header){order:3}#view-dashboard .metrics-grid{order:4}
+
+/* Scroll edge effect (iOS 26): content softens under the floating toolbar. */
+.main-scroll-shell{position:relative}
+.main-scroll-shell::before{content:"";position:absolute;left:0;right:0;top:0;height:28px;z-index:3;pointer-events:none;background:linear-gradient(var(--bg),transparent);opacity:0;transition:opacity .2s}
+body.content-scrolled .main-scroll-shell::before{opacity:1}
+body.content-scrolled .topbar{box-shadow:var(--glass-shadow),0 8px 24px rgba(0,0,0,.18),inset 0 1px 0 var(--glass-shine)!important}
+
+/* Start → Pause | Важно | Stop: the capsule splits instead of swapping (no layout jump). */
+.studio-buttons{min-height:72px;align-items:center}
+.studio-buttons.is-recording>.btn:not([hidden]){animation:capsule-split .32s cubic-bezier(.2,.9,.25,1.15) both}
+.studio-buttons.is-recording>.btn:nth-of-type(3){animation-delay:.03s}.studio-buttons.is-recording>.btn:nth-of-type(4){animation-delay:.06s}
+@keyframes capsule-split{from{transform:scaleX(.6);opacity:0}to{transform:none;opacity:1}}
+#mark-record{color:var(--text)}
+#record-saved{display:inline-block;min-height:1.4em}
+
+/* Bookmarks in the editor */
+.editor-marks{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}.editor-marks:empty{display:none}
+.editor-marks .small-label{flex-basis:100%}
+.mark-chip{border:1px solid var(--glass-rim-soft);background:var(--glass-fill-control);color:var(--text);border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer}
+.mark-chip:hover{background:color-mix(in srgb,var(--tint) 16%,transparent)}
+
+/* Toast with its fix */
+.toast .toast-action{margin-left:10px;vertical-align:middle}
+
+/* Floating mini-player: a glass capsule above the editor content, always reachable. */
+#view-editor .audio-player{position:sticky!important;bottom:max(16px,env(safe-area-inset-bottom));z-index:6;border-radius:999px!important;
+ -webkit-backdrop-filter:var(--glass-blur)!important;backdrop-filter:var(--glass-blur)!important;background:var(--glass-fill-strong)!important;box-shadow:var(--glass-shadow),inset 0 1px 0 var(--glass-shine)!important}
+@media(max-width:990px){#view-editor .audio-player{bottom:calc(84px + env(safe-area-inset-bottom))}}
+@media (prefers-reduced-motion:reduce){.studio-buttons.is-recording>.btn{animation:none!important}.main-scroll-shell::before{transition:none}}
+@media (prefers-reduced-transparency:reduce){#view-editor .audio-player{background:var(--surface)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}}
+.setup-meter{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;align-items:center;margin:12px 0}
+.setup-meter .level-track{height:8px;border-radius:999px;background:var(--glass-fill-control);overflow:hidden}
+.setup-meter-fill{height:100%;width:0;background:linear-gradient(90deg,#30d158,#ffd60a 75%,#ff453a);transition:width .12s linear}
+.setup-meter-hint{grid-column:1/-1;font-size:12px;color:var(--muted,inherit)}
+.speaker-badge{align-self:flex-start;font-size:11px;font-weight:600;border-radius:999px;padding:2px 8px;margin:6px 6px 0 0;white-space:nowrap}
+.speaker-me{background:color-mix(in srgb,var(--tint) 18%,transparent);color:var(--tint)}
+.speaker-others{background:color-mix(in srgb,#bf5af2 18%,transparent);color:#bf5af2}

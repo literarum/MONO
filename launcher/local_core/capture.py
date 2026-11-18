@@ -144,7 +144,13 @@ class CaptureService:
         # Staged uploads/renders use unique files and never conflict with a
         # new capture; only an archive copy/move must block recording.
         if self.config.transfers.active:fail('LIBRARY_BUSY')
-        if not self._launch() or not self.ready:fail('CAPTURE_NOT_READY')
+        if not self._launch():fail('CAPTURE_NOT_READY')
+        # After any failure the helper is restarted (an error must never leave a hot input
+        # open); the next start waits for its 'ready' instead of failing immediately.
+        until=time.monotonic()+8
+        while not self.ready and self.error!='NOT_SUPPORTED' and self.child is not None and self.child.poll() is None and time.monotonic()<until:
+            self.tick();time.sleep(.02)
+        if not self.ready:fail('CAPTURE_NOT_READY')
         mode=params.get('mode')
         if mode not in self.capability.get('modes',[]):fail('INVALID_CAPTURE_MODE')
         for field,devices in [('inputId','inputDevices'),('outputId','outputDevices')]:

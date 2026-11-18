@@ -71,6 +71,23 @@ jobs:
           Start-Process powershell -ArgumentList '-NoProfile','-Command',$script -WindowStyle Hidden
           Start-Sleep -Seconds 3
 
+      - name: Microphone blocked by Windows privacy → clear error, system audio still records
+        shell: pwsh
+        env:
+          MONO_EXPECT_MIC_DENIED: '1'
+        run: python scripts/ci/windows_audio_check.py
+
+      - name: Allow desktop apps to use the microphone (Windows privacy switch)
+        shell: pwsh
+        run: |
+          # Off on Windows Server images: capture then fails with E_ACCESSDENIED (0x80070005).
+          $key = 'Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone'
+          foreach ($path in "HKLM:\$key", "HKCU:\$key", "HKCU:\$key\NonPackaged") {
+            New-Item -Path $path -Force | Out-Null
+            Set-ItemProperty -Path $path -Name Value -Value Allow
+          }
+          if (Test-Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy') { Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy' }
+
       - name: Native capture through CaptureService (every mode + restart)
         shell: pwsh
         run: python scripts/ci/windows_audio_check.py

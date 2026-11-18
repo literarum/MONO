@@ -51,6 +51,14 @@ class CaptureStateTests(unittest.TestCase):
         self.assertEqual(service.status().get('savedBytes'),0)
     def test_helper_crash_preserves_committed_parts_and_marks_interrupted(self):
         service=self.ready();started=service.start({'mode':'mic'});self.spin(lambda:self.config.get_library().get_record(started['recordId'])['size']>0);service.child.kill();service.child.wait();self.spin(lambda:service.status()['state']=='interrupted');self.assertEqual(self.config.get_library().get_record(started['recordId'])['status'],'interrupted');self.assertEqual(len(self.config.get_library()._raw(started['recordId'])['_segments']),1)
+    def test_start_right_after_a_failed_session_waits_for_the_restarted_helper(self):
+        # Seen on Windows: an ACCESS_DENIED microphone killed the helper, and every next
+        # start (even system audio) failed with CAPTURE_NOT_READY until MONO restarted.
+        service=self.ready();service.start({'mode':'mic'});service.child.kill();service.child.wait()
+        self.spin(lambda:service.status()['state']=='interrupted')
+        again=service.start({'mode':'mic'})
+        self.spin(lambda:service.status()['state']=='recording' and service.status()['recordId']==again['recordId'])
+        service.stop();self.spin(lambda:service.status()['state']=='ready')
     def test_foreign_relative_file_is_rejected_before_archive_publication(self):
         service=self.ready('unsafe');started=service.start({'mode':'mic'});self.spin(lambda:service.status()['state'] in ['interrupted','error']);record=self.config.get_library().get_record(started['recordId']);self.assertEqual(record['size'],0);self.assertNotEqual(record['status'],'saved')
     def test_unrequested_system_track_is_not_committed_in_microphone_mode(self):

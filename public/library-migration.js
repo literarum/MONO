@@ -17,6 +17,10 @@ async function legacyConnection(){
 }
 const get=(db,store,key)=>request(db.transaction(store,'readonly').objectStore(store).get(key));
 async function nextRecord(db,after){const cursor=await request(db.transaction('recordings','readonly').objectStore('recordings').openCursor(after===undefined?undefined:IDBKeyRange.lowerBound(after,true)));return cursor?{key:cursor.key,record:cursor.value}:null}
+/** True when the old in-browser library (before the desktop archive) has records. */
+export async function hasLegacyRecords(){
+ try{for await(const item of scanLegacyDB())return Boolean(item);return false}catch{return false}
+}
 export async function* scanLegacyDB(){
  const db=await legacyConnection();if(!db)return;
  try{

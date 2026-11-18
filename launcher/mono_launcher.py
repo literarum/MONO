@@ -671,6 +671,8 @@ def _run_session(*, dev: bool, smoke: bool, preferred_ui: str, smoke_hold: float
         child_env = server_environment(roots={"data": folder}, executables=executables, developer=dev)
         instance_id = secrets.token_urlsafe(24)
         child_env["MONO_LAUNCHER_INSTANCE_ID"] = instance_id
+        hotkey_token = secrets.token_urlsafe(32)
+        child_env["MONO_LAUNCHER_TOKEN"] = hotkey_token
         session_file = folder / "session.json"
         args = [executables["node"], str(backend / "server.mjs")]
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -697,6 +699,11 @@ def _run_session(*, dev: bool, smoke: bool, preferred_ui: str, smoke_hold: float
                 if smoke_hold > 0:
                     time.sleep(smoke_hold)
                 return 0
+            try:
+                from hotkey import start_global_hotkey
+                start_global_hotkey(URL, hotkey_token, logger)
+            except Exception as error:  # a hotkey is a convenience, never a launch blocker
+                logger.warning("Global hotkey unavailable: %s", error)
             launch_window(folder, URL, logger, preferred=preferred_ui)
             return 0
         except LaunchError as exc:

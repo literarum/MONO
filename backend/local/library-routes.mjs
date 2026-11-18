@@ -34,7 +34,7 @@ export async function streamAudio(req,res,descriptor){
   for await(const part of createReadStream(file.path,{start:first,end:last})){if(res.destroyed)return;if(!res.write(part))await once(res,'drain')}
  }res.end();
 }
-export async function libraryRoute(req,res,url,worker,{submitLibraryJob,isLibraryBusy,resolveOriginal,preparation}={}){
+export async function libraryRoute(req,res,url,worker,{submitLibraryJob,isLibraryBusy,resolveOriginal,preparation,resolveSpeakers}={}){
  const base='/api/local',pathname=url.pathname;
  if(!pathname.startsWith(base+'/records')&&!pathname.startsWith(base+'/library/')&&!pathname.startsWith(base+'/migration/'))return false;
  try{
@@ -64,9 +64,10 @@ export async function libraryRoute(req,res,url,worker,{submitLibraryJob,isLibrar
    let meta;try{const raw=req.headers['x-mono-record'];if(!raw||raw.length>8000)throw new Error();meta=JSON.parse(decodeURIComponent(raw));if(!meta||typeof meta.title!=='string'||meta.title.length>500||typeof meta.mime!=='string')throw new Error()}catch{send(res,400,{error:'Проверьте параметры аудиофайла',code:'INVALID_RECORD'});return true}
    const uploaded=await receive(req,worker);try{send(res,201,await worker.call('records.import',{meta,...uploaded},{timeoutMs:60000}))}finally{await worker.call('stage.discard',{id:uploaded.stagingId}).catch(()=>{})}return true;
   }
-  const match=pathname.match(/^\/api\/local\/records\/([a-f0-9-]{36})(?:\/(audio|trash|restore|transcribe|transcript(?:\/edit)?|segments\/(mic|system|mix|original)\/(\d+)))?$/);
+  const match=pathname.match(/^\/api\/local\/records\/([a-f0-9-]{36})(?:\/(audio|speakers|trash|restore|transcribe|transcript(?:\/edit)?|segments\/(mic|system|mix|original)\/(\d+)))?$/);
   if(!match)return false;const id=match[1],action=match[2];
   if(!action&&req.method==='GET'){send(res,200,await worker.call('records.get',{id}));return true}
+  if(action==='speakers'&&req.method==='GET'){send(res,200,{profile:resolveSpeakers?await resolveSpeakers(id):null});return true}
   if(!action&&req.method==='PATCH'){send(res,200,await worker.call('records.patch',{...await readJSON(req),id}));return true}
   if(action==='transcribe'&&req.method==='POST'){
    if((await worker.call('status')).libraryBusy){send(res,409,{error:'Дождитесь завершения копирования',code:'LIBRARY_BUSY'});return true}

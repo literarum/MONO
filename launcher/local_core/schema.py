@@ -4,7 +4,7 @@ from datetime import datetime
 from local_core.paths import identifier
 from local_core.protocol import CoreError
 
-PATCH_FIELDS={'title','duration','mime','source','status','transcript','jobId','job','clientKey','serverAcked','completedAt','estimatedUSD','transcriptionStartedAt','importKey','gapMarkers','chunkCount','lastChunkAt','peaks'}
+PATCH_FIELDS={'title','duration','mime','source','status','transcript','jobId','job','clientKey','serverAcked','completedAt','estimatedUSD','transcriptionStartedAt','importKey','gapMarkers','chunkCount','lastChunkAt','peaks','bookmarks'}
 STATUSES={'saved','requesting','recording','paused','uploading','queued','processing','completed','failed','cancelled','interrupted','importing','migrating','damaged'}
 TRACKS={'mic','system','mix','original'}
 def invalid():raise CoreError('INVALID_RECORD','Проверьте данные записи')
@@ -57,6 +57,11 @@ def fields(value):
         for key in ['completed','total']:
             if key in job and not integer(job[key],0,1000000):invalid()
     if 'peaks' in value and (not isinstance(value['peaks'],list) or len(value['peaks'])>500 or any(not number(n) or n>1 for n in value['peaks'])):invalid()
+    if 'bookmarks' in value:
+        marks=value['bookmarks']
+        if not isinstance(marks,list) or len(marks)>1000:invalid()
+        for mark in marks:
+            if not isinstance(mark,dict) or set(mark)-{'at','label'} or not number(mark.get('at')) or ('label' in mark and not string(mark['label'],200)):invalid()
     if 'gapMarkers' in value:gaps(value['gapMarkers'])
     if 'transcript' in value:transcript(value['transcript'])
 

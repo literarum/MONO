@@ -15,6 +15,7 @@ work = Path(tempfile.mkdtemp(prefix="mono-audio-"))
 os.environ["MONO_CONFIG_DIR"] = str(work / "config")
 os.environ["MONO_DEFAULT_LIBRARY_ROOT"] = str(work / "library")
 from local_core.config import LocalConfig  # noqa: E402
+DENIED = os.environ.get("MONO_EXPECT_MIC_DENIED") == "1"
 
 
 def peak_of(file: Path) -> float:
@@ -81,6 +82,9 @@ def main() -> int:
                       "duration": raw.get("duration"), "segments": len(raw["_segments"]), "peaks": {k: round(v, 4) for k, v in peaks.items()},
                       "format": {k: raw["_segments"][0].get(k) for k in ("sampleRate", "channels", "bitsPerSample", "formatTag")} if raw["_segments"] else None}
             ok = status["state"] == "ready" and raw["_segments"] and all(v > 0.01 for v in peaks.values())
+            if DENIED and mode in ("mic", "both"):
+                # Privacy switch off: the failure must be named precisely, not "busy".
+                ok = status.get("errorCode") == "ACCESS_DENIED"
             result["ok"] = bool(ok)
             failed |= not ok
         except Exception as error:  # report everything, keep testing other modes
@@ -90,12 +94,12 @@ def main() -> int:
         # A second start right after stop must not report DEVICE_BUSY.
     if caps.get("modes"):
         try:
-            first = service.start({"mode": "mic"});
+            first = service.start({"mode": "system" if DENIED else "mic"});
             t = time.monotonic() + 3
             while time.monotonic() < t: service.tick(); time.sleep(0.02)
             service.stop(); t = time.monotonic() + 10
             while service.status()["state"] not in ("ready", "interrupted", "error") and time.monotonic() < t: service.tick(); time.sleep(0.02)
-            again = service.start({"mode": "mic"}); t = time.monotonic() + 3
+            again = service.start({"mode": "system" if DENIED else "mic"}); t = time.monotonic() + 3
             while time.monotonic() < t: service.tick(); time.sleep(0.02)
             status = service.status(); service.stop()
             report["restart"] = {"state": status["state"], "errorCode": status.get("errorCode")}
