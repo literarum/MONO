@@ -314,7 +314,7 @@ async function backgroundAudioCare(reason='timer'){
   const privacy=result?.checks?.find(check=>check.id==='mic-privacy');
   if(privacy&&!audioCare.told.has('privacy')){audioCare.told.add('privacy');notify(privacy.title+'. '+privacy.action,'error',fixFor('ACCESS_DENIED'))}
  }finally{audioCare.running=false}
- if(reason==='timer'||reason==='start')void weeklyScrub().catch(()=>{});
+ if(reason==='timer'&&performance.now()>10*60e3)void weeklyScrub().catch(()=>{}); // never competes with start-up
 }
 function startAudioCare(){
  if(audioCare.started)return;audioCare.started=true;
@@ -470,7 +470,7 @@ function announceNewWarnings(result){
  }
  for(const id of announced)if(!result?.checks?.some(item=>item.id===id&&item.level==='warning'))announced.delete(id); // cleared → may warn again later
 }
-/** Weekly integrity scrub of the archive (re-hash every stored part), in 20-second passes. */
+/** Weekly integrity scrub of the archive (re-hash every stored part) in short 5-second passes, never during start-up or a take. */
 async function weeklyScrub(){
  let last=0;try{last=Number(localStorage.getItem('mono-last-scrub'))||0}catch{}
  if(Date.now()-last<7*86400e3)return;

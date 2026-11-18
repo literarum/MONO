@@ -32,7 +32,7 @@ export async function localRoute(req,res,url,mode,services={}){
    services.journal.note('event',[body.code,body.device&&scrub(body.device).replace(/ · /g,' ')].filter(Boolean).join(' · '));send(res,200,{ok:true});return true}
   if(url.pathname==='/api/local/diagnostics/scrub'&&req.method==='POST'){
    const body=await readJSON(req,1000);if(body.cursor!==undefined&&body.cursor!==null&&(typeof body.cursor!=='string'||!/^[a-f0-9-]{36}$/.test(body.cursor))){send(res,400,{code:'INVALID_SCRUB',error:'Неверный курсор'});return true}
-   const result=await localWorker.call('library.scrub',{cursor:body.cursor||null,budgetSeconds:20},{timeoutMs:60000});
+   const result=await localWorker.call('library.scrub',{cursor:body.cursor||null,budgetSeconds:5},{timeoutMs:30000});
    (result.damaged||[]).forEach(()=>services.journal?.note('event','SCRUB_DAMAGED'));
    if(result.complete)services.journal?.note('scrub',`Проверено записей: ${result.checked}, повреждено: ${result.damaged.length}, недоступно: ${result.unreadable.length}`);
    send(res,200,result);return true}
