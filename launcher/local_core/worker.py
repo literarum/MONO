@@ -48,6 +48,8 @@ def dispatch(method,params):
         if operation=='devices':return service.devices()
         if operation=='status':service.tick();return service.status()
         if operation=='check_access':return service.check_access()
+        if operation=='diagnose':return service.diagnose()
+        if operation=='repair':return service.diagnose(repair=params or {})
         if operation=='test':return service.test(params)
         if operation=='discard_test':return service.discard_test(params['recordId'])
         if operation=='start':return service.start(params)

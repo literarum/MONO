@@ -11,14 +11,14 @@ const FIXTURE=fileURLToPath(new URL('../fixtures/audio-helper.py',import.meta.ur
 // The helper is started as an executable; a shell wrapper is enough off Windows.
 const skip=!playwright?'playwright is not installed':process.platform==='win32'?'fixture helper wrapper needs a POSIX shell':false;
 function helper(behavior){const dir=mkdtempSync(path.join(tmpdir(),'mono-helper-')),file=path.join(dir,'helper.sh');writeFileSync(file,`#!/bin/sh\nexec python3 '${FIXTURE}' "$@" --behavior ${behavior}\n`);chmodSync(file,0o755);return file}
-async function open(t,server){
+async function open(t,server,mode='both'){
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
  const context=await browser.newContext();await context.grantPermissions(['microphone'],{origin:server.url});
  const page=await context.newPage();page.errors=[];page.on('pageerror',error=>page.errors.push(error.message));
  await page.goto(server.url+'/');
- await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();const headers={'Content-Type':'application/json','X-Mono-CSRF':csrf};
+ await page.evaluate(async mode=>{const {csrf}=await (await fetch('/api/local/session')).json();const headers={'Content-Type':'application/json','X-Mono-CSRF':csrf};
   await fetch('/api/local/library/configure',{method:'POST',headers,body:JSON.stringify({useDefault:true})});
-  await fetch('/api/local/preferences',{method:'PATCH',headers,body:JSON.stringify({onboarding:{completed:true,keySkipped:true,soundTested:true},capture:{mode:'both'}})});});
+  await fetch('/api/local/preferences',{method:'PATCH',headers,body:JSON.stringify({onboarding:{completed:true,keySkipped:true,soundTested:true},capture:{mode}})});},mode);
  await page.reload();await page.waitForFunction(()=>document.querySelector('#nav-count'));return page;
 }
 const records=page=>page.evaluate(async()=>(await (await fetch('/api/local/records?limit=10&q=&trash=false')).json()).items);
@@ -55,5 +55,28 @@ test('recording continues as a linked take when the audio device disappears',{sk
  await page.click('#stop-record');
  await page.waitForFunction(async()=>{const {items}=await (await fetch('/api/local/records?limit=5&q=&trash=false')).json();return items.some(r=>/продолжение$/.test(r.title)&&r.status==='saved')},null,{timeout:15000,polling:300});
  const items=await records(page);assert.equal(items.length,2);assert.ok(items.some(r=>r.status==='interrupted'&&r.duration>0),'first part kept');
+ assert.deepEqual(page.errors,[]);
+});
+
+test('autopilot: a microphone muted in Windows is detected, shown in pre-flight and fixed on Record',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('muted')});const page=await open(t,server);
+ await page.click('.nav-link[data-view=record]');
+ await page.waitForSelector('.preflight-item[data-level=caution]:has-text("Микрофон выключен в Windows")',{timeout:20000});
+ await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);await page.click('#start-record');
+ await page.waitForSelector('.toast:has-text("MONO включил его")',{timeout:20000});
+ const diagnosis=await page.evaluate(async()=>(await fetch('/api/local/capture/diagnose')).json());
+ assert.equal(diagnosis.inputs[0].muted,false);
+ await page.waitForFunction(()=>!document.querySelector('#stop-record').hidden,null,{timeout:15000});await page.click('#stop-record');
+ assert.deepEqual(page.errors,[]);
+});
+
+test('autopilot: when the system module cannot open the microphone, the take continues on the browser channel',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('open-failure')});const page=await open(t,server,'mic');
+ await page.click('.nav-link[data-view=record]');await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);
+ await page.click('#start-record');
+ await page.waitForSelector('.toast:has-text("запасной канал")',{timeout:20000});
+ await page.waitForFunction(()=>/Подтверждено в архиве/.test(document.querySelector('#record-saved').textContent),null,{timeout:20000});
+ await page.waitForTimeout(1500);await page.click('#stop-record');
+ await page.waitForFunction(async()=>{const {items}=await (await fetch('/api/local/records?limit=5&q=&trash=false')).json();return items.some(r=>r.status==='saved'&&r.duration>0)},null,{timeout:20000,polling:300});
  assert.deepEqual(page.errors,[]);
 });

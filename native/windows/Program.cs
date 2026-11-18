@@ -35,6 +35,17 @@ internal static class Program
         if(!recent.Add(requestId))throw new AudioFailure("INTERNAL");order.Enqueue(requestId);if(order.Count>4096)recent.Remove(order.Dequeue());
         var parameters=request.GetProperty("params");if(parameters.ValueKind!=JsonValueKind.Object)throw new AudioFailure("INTERNAL");
         if(method=="enumerate"){Devices(false);return;}
+        if(method=="diagnose"||method=="repair"){
+            string? failure=null;
+            if(method=="repair"){
+                bool? mute=parameters.TryGetProperty("mute",out var m)&&m.ValueKind is JsonValueKind.True or JsonValueKind.False?m.GetBoolean():null;
+                float? level=parameters.TryGetProperty("minimumVolume",out var l)&&l.ValueKind==JsonValueKind.Number?(float)Math.Clamp(l.GetDouble(),0,1):null;
+                try{CoreAudio.RepairInput(DeviceId(parameters,"inputId"),mute,level);}catch(AudioFailure error){failure=error.Code;}catch(Exception error) when(error is COMException or InvalidCastException){failure="REPAIR_FAILED";}
+            }
+            IReadOnlyList<InputHealth> inputs=[];try{inputs=CoreAudio.DiagnoseInputs();}catch(Exception error) when(error is AudioFailure or COMException or InvalidCastException){failure??="DIAGNOSE_FAILED";}
+            Emit("diagnosis",new(){{"inputs",inputs.Select(d=>new Dictionary<string,object?>{{"id",d.Id},{"name",d.Name},{"default",d.Default},{"state",d.State},{"muted",d.Muted},{"volume",d.Volume}}).ToArray()},{"repairError",failure}});
+            return;
+        }
         string? sid=parameters.TryGetProperty("sessionId",out var sidElement)?sidElement.GetString():null;
         if(method=="start"){
             string? mode=parameters.GetProperty("mode").GetString();

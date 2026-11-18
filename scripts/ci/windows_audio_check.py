@@ -44,6 +44,18 @@ def peak_of(file: Path) -> float:
     raise ValueError(f"unsupported format tag={tag} bits={bits}")
 
 
+def record_peak(service, library, mode, seconds):
+    started = service.start({"mode": mode}); record = started["recordId"]
+    until = time.monotonic() + seconds
+    while time.monotonic() < until:
+        service.tick(); time.sleep(0.02)
+    service.stop(); until = time.monotonic() + 10
+    while service.status()["state"] in ("stopping", "recording", "requesting", "paused") and time.monotonic() < until:
+        service.tick(); time.sleep(0.02)
+    parts = library._raw(record)["_segments"]
+    return round(max((peak_of(library.root / p["path"]) for p in parts), default=0.0), 4)
+
+
 def main() -> int:
     config = LocalConfig()
     config.configure({"useDefault": True})
@@ -106,6 +118,26 @@ def main() -> int:
             failed |= status["state"] not in ("recording", "requesting")
         except Exception as error:
             report["restart"] = {"exception": f"{type(error).__name__}: {error}"}; failed = True
+    # Doctor: Windows' view of the microphone, then mute → detect → repair → record the tone.
+    doctor = {}
+    try:
+        doctor["diagnosis"] = service.diagnose()
+        if not DENIED:
+            doctor["afterMute"] = service.diagnose(repair={"mute": True})
+            silent = record_peak(service, library, "mic", 4)
+            doctor["mutedTakePeak"] = silent
+            doctor["afterRepair"] = service.diagnose(repair={"mute": False, "minimumVolume": 0.5})
+            doctor["repairedTakePeak"] = record_peak(service, library, "mic", 4)
+            default = lambda r: next((d for d in r.get("inputs", []) if d.get("default")), {})
+            ok = (doctor["diagnosis"].get("available") and default(doctor["diagnosis"]).get("state") == "active"
+                  and default(doctor["afterMute"]).get("muted") is True and default(doctor["afterRepair"]).get("muted") is False
+                  and (doctor["repairedTakePeak"] or 0) > 0.01)
+            doctor["ok"] = bool(ok)
+            failed |= not ok
+    except Exception as error:
+        doctor["exception"] = f"{type(error).__name__}: {error}"
+        failed |= not DENIED
+    report["doctor"] = doctor
     service.close()
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if failed else 0

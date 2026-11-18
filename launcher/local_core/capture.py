@@ -167,6 +167,27 @@ class CaptureService:
         try:self._send('start',{'sessionId':self.session_id,'mode':mode,'inputId':params.get('inputId'),'outputId':params.get('outputId')})
         except CoreError:self._interrupt('CAPTURE_HELPER_UNAVAILABLE');raise
         return self.status()
+    def diagnose(self,repair=None):
+        """Windows view of every microphone: present, disabled, muted, input level.
+        repair={'inputId','mute','minimumVolume'} changes one endpoint first (on user intent)."""
+        if not self._launch():return {'available':False,'reason':'HELPER_UNAVAILABLE'}
+        until=time.monotonic()+8
+        while not self.ready and self.error!='NOT_SUPPORTED' and self.child is not None and self.child.poll() is None and time.monotonic()<until:
+            self.tick();time.sleep(.02)
+        if self.child is None or self.child.poll() is not None:return {'available':False,'reason':'HELPER_UNAVAILABLE'}
+        before=getattr(self,'diagnosis_seq',0)
+        params={}
+        if repair:
+            if repair.get('inputId') is not None and not isinstance(repair.get('inputId'),str):fail('INVALID_CAPTURE')
+            if 'mute' in repair and type(repair['mute']) is not bool:fail('INVALID_CAPTURE')
+            if 'minimumVolume' in repair and (type(repair['minimumVolume']) not in [int,float] or not 0<=repair['minimumVolume']<=1):fail('INVALID_CAPTURE')
+            params={k:repair[k] for k in ['inputId','mute','minimumVolume'] if k in repair}
+        self._send('repair' if repair else 'diagnose',params or {'sessionId':self.session_id})
+        until=time.monotonic()+5
+        while getattr(self,'diagnosis_seq',0)==before and time.monotonic()<until:
+            self.tick();time.sleep(.02)
+        if getattr(self,'diagnosis_seq',0)==before:return {'available':False,'reason':'TIMEOUT'}
+        return {'available':True,**self.diagnosis}
     def pause(self):
         if self.selected_engine=='browser':fail('BROWSER_CAPTURE_OWNER')
         if self.state!='recording' or self.pending:fail('INVALID_CAPTURE_STATE')
@@ -237,6 +258,19 @@ class CaptureService:
                 self.capability.update({'supported':event['supported'],'modes':event['modes']});self.ready=event['supported']
                 if not self.ready:self.error='NOT_SUPPORTED'
                 if not self.active:self.state='ready' if self.ready else 'error'
+            return
+        if kind=='diagnosis':
+            inputs=event.get('inputs')
+            if not isinstance(inputs,list) or len(inputs)>256:fail('INVALID_CAPTURE_PROTOCOL')
+            rows=[]
+            for d in inputs:
+                if not isinstance(d,dict) or not isinstance(d.get('id'),str) or not isinstance(d.get('name'),str) or type(d.get('default')) is not bool or not integer(d.get('state')):fail('INVALID_CAPTURE_PROTOCOL')
+                muted=d.get('muted');volume=d.get('volume')
+                if muted is not None and type(muted) is not bool:fail('INVALID_CAPTURE_PROTOCOL')
+                if volume is not None and (type(volume) not in [int,float] or not 0<=volume<=1):fail('INVALID_CAPTURE_PROTOCOL')
+                rows.append({'id':d['id'][:4096],'name':d['name'][:500],'default':d['default'],'state':{1:'active',2:'disabled',4:'missing',8:'unplugged'}.get(d['state'],'unknown'),'muted':muted,'volume':volume})
+            self.diagnosis={'inputs':rows,'repairError':event.get('repairError') if isinstance(event.get('repairError'),str) else None}
+            self.diagnosis_seq=getattr(self,'diagnosis_seq',0)+1
             return
         if event.get('sessionId')!=self.session_id:return
         if not self.active:return

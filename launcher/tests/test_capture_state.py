@@ -59,6 +59,16 @@ class CaptureStateTests(unittest.TestCase):
         again=service.start({'mode':'mic'})
         self.spin(lambda:service.status()['state']=='recording' and service.status()['recordId']==again['recordId'])
         service.stop();self.spin(lambda:service.status()['state']=='ready')
+    def test_diagnosis_reports_every_microphone_and_repair_unmutes(self):
+        service=self.ready()
+        report=service.diagnose()
+        self.assertTrue(report['available']);self.assertEqual([d['state'] for d in report['inputs']],['active','disabled'])
+        self.assertIs(report['inputs'][0]['muted'],False)
+        muted=service.diagnose(repair={'mute':True});self.assertIs(muted['inputs'][0]['muted'],True)
+        fixed=service.diagnose(repair={'mute':False,'minimumVolume':.5});self.assertIs(fixed['inputs'][0]['muted'],False)
+        with self.assertRaises(CoreError):service.diagnose(repair={'minimumVolume':2})
+        # Diagnosis never disturbs a following recording.
+        started=service.start({'mode':'mic'});self.spin(lambda:service.status()['state']=='recording');service.stop();self.spin(lambda:service.status()['state']=='ready')
     def test_foreign_relative_file_is_rejected_before_archive_publication(self):
         service=self.ready('unsafe');started=service.start({'mode':'mic'});self.spin(lambda:service.status()['state'] in ['interrupted','error']);record=self.config.get_library().get_record(started['recordId']);self.assertEqual(record['size'],0);self.assertNotEqual(record['status'],'saved')
     def test_unrequested_system_track_is_not_committed_in_microphone_mode(self):

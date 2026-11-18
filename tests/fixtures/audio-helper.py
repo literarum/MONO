@@ -1,7 +1,8 @@
 """Synthetic protocol fixture. This never proves physical audio capture."""
 import argparse,hashlib,json,os,sys,wave,threading,struct,time
 from pathlib import Path
-parser=argparse.ArgumentParser();parser.add_argument('--protocol');parser.add_argument('--capture-root');parser.add_argument('--behavior',default='normal');args=parser.parse_args()
+fixture_muted=False
+parser=argparse.ArgumentParser();parser.add_argument('--protocol');parser.add_argument('--capture-root');parser.add_argument('--behavior',default='normal');args=parser.parse_args();fixture_muted=args.behavior=='muted'
 root=Path(args.capture_root);root.mkdir(parents=True,exist_ok=True);sequence=0;session=None;previous=None;mode='mic';origin=10_000_000_000;end=origin;output_lock=threading.Lock();closed=threading.Event()
 def emit(event,**fields):
     global sequence
@@ -51,6 +52,9 @@ for line in sys.stdin:
         end=origin+6_000_000_000
     elif method=='stop':
         if args.behavior!='ignore-stop':emit('state',sessionId=session,state='idle',monotonicNs=end)
+    elif method in ['diagnose','repair']:
+        if method=='repair' and 'mute' in params:fixture_muted=params['mute']
+        emit('diagnosis',inputs=[{'id':'mic-fixture','name':'Fixture microphone','default':True,'state':1,'muted':fixture_muted,'volume':.8},{'id':'mic-off','name':'Disabled microphone','default':False,'state':2,'muted':None,'volume':None}],repairError=None)
     elif method=='enumerate':emit('devices',inputDevices=[{'id':'mic-fixture','name':'Fixture microphone','default':True}],outputDevices=[{'id':'system-fixture','name':'Fixture output','default':True}])
 closed.set()
 if heart.is_alive():heart.join(timeout=1)

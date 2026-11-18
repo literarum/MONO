@@ -38,6 +38,8 @@ export class Preflight{
   })().finally(()=>{this.running=null});
   return this.running;
  }
+ /** Apply a repair offered by a check (unmute / raise input level), then re-check. */
+ async fix(repair){await this.library.json('/capture/repair',{method:'POST',body:repair});return this.run({force:true})}
  /** Before recording: null when it may proceed, otherwise the blocking warning. */
  async gate(){
   try{const result=await this.run();return result.checks.find(item=>item.level==='warning')||null}
@@ -53,7 +55,9 @@ export function mountPreflight(host,{model,onError=()=>{},compact=false}){
  const render=result=>{
   host.dataset.level=result.level;summary.textContent=SUMMARY[result.level];
   const visible=compact?result.checks.filter(item=>item.level!=='ok'):result.checks;
-  list.replaceChildren(...visible.map(item=>{const row=document.createElement('li');row.className='preflight-item';row.dataset.level=item.level;const title=document.createElement('strong');title.textContent=item.title;const detail=document.createElement('span');detail.textContent=[item.detail,item.action].filter(Boolean).join(' ');row.append(title,detail);return row}));
+  list.replaceChildren(...visible.map(item=>{const row=document.createElement('li');row.className='preflight-item';row.dataset.level=item.level;const title=document.createElement('strong');title.textContent=item.title;const detail=document.createElement('span');detail.textContent=[item.detail,item.action].filter(Boolean).join(' ');row.append(title,detail);
+   if(item.fix&&model.fix){const fix=document.createElement('button');fix.type='button';fix.className='btn btn-primary btn-small preflight-fix';fix.textContent='Исправить';fix.onclick=async()=>{fix.disabled=true;try{await model.fix(item.fix)}catch(error){onError(error)}finally{fix.disabled=false}};row.append(fix)}
+   return row}));
   list.hidden=!visible.length;
  };
  const unsubscribe=model.subscribe(render);

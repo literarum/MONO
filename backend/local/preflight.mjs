@@ -6,7 +6,18 @@ import {statfs,access} from 'node:fs/promises';import {constants} from 'node:fs'
 // Worst case on disk: native float32 stereo at 48 kHz (browser capture is ~4× smaller).
 export const BYTES_PER_HOUR=48000*2*4*3600;
 const LEVELS=['ok','advisory','caution','warning'];
-const check=(id,level,title,detail,action=null)=>({id,level,title,detail,...(action?{action}:{})});
+const check=(id,level,title,detail,action=null,fix=null)=>({id,level,title,detail,...(action?{action}:{}),...(fix?{fix}:{})});
+/** Microphone health as Windows reports it, turned into checks; fixable ones carry a repair. */
+export function microphoneChecks(report){
+ const out=[];if(!report?.available||!Array.isArray(report.inputs))return out;
+ const active=report.inputs.filter(d=>d.state==='active'),disabled=report.inputs.filter(d=>d.state==='disabled');
+ if(!active.length&&disabled.length)out.push(check('mic-disabled','caution','Микрофон отключён в Windows',`Отключено: ${disabled.map(d=>d.name).slice(0,3).join(', ')}.`,'Параметры → Система → Звук → Все звуковые устройства → выберите микрофон → «Разрешить».'));
+ const main=active.find(d=>d.default)||active[0];if(!main)return out;
+ if(main.muted===true)out.push(check('mic-muted','caution','Микрофон выключен в Windows',`«${main.name}» без звука — запись будет тихой.`,'MONO включит его сам при старте записи.',{inputId:main.id,mute:false,minimumVolume:.5}));
+ else if(typeof main.volume==='number'&&main.volume<.05)out.push(check('mic-level','caution','Громкость микрофона почти 0',`«${main.name}»: ${Math.round(main.volume*100)} %.`,'MONO поднимет её при старте записи.',{inputId:main.id,minimumVolume:.5}));
+ if(/hands-?free|головн\S* гарнитур|телефон/i.test(main.name))out.push(check('mic-handsfree','advisory','Bluetooth-гарнитура в режиме громкой связи',`«${main.name}»: Windows снижает качество звука, пока микрофон гарнитуры открыт.`,'Для лучшего качества используйте встроенный или проводной микрофон.'));
+ return out;
+}
 async function timed(promise,ms){let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'})),ms)})])}finally{clearTimeout(timer)}}
 
 export async function preflight({worker,runtime,keyManager,now=()=>performance.now(),privacy=microphonePrivacy}){
@@ -39,6 +50,7 @@ export async function preflight({worker,runtime,keyManager,now=()=>performance.n
   else if(capture.reason==='NOT_SUPPORTED')checks.push(check('capture','caution','Звуковые устройства не найдены','Системный модуль записи работает, но Windows не сообщает ни микрофона, ни устройства вывода.','Подключите микрофон или наушники и нажмите «Проверить снова».'));
   else checks.push(check('capture','advisory','Системный модуль записи не установлен','Микрофон записывается через окно браузера. Звук компьютера недоступен.'));
  }catch{checks.push(check('capture','advisory','Системный модуль записи не ответил','Микрофон записывается через окно браузера.'))}
+ try{checks.push(...microphoneChecks(await timed(worker.call('capture.diagnose'),7000)))}catch{}
  try{const mic=await timed(privacy(),4000);
   if(mic?.blocked)checks.push(check('mic-privacy','caution',mic.scope==='desktop'?'Windows запрещает классическим приложениям доступ к микрофону':'Доступ к микрофону выключен в Windows','Микрофон не запишется ни через модуль записи, ни через окно браузера. Звук компьютера записывать можно.','Параметры → Конфиденциальность и защита → Микрофон: включите доступ и «Разрешить классическим приложениям».'));
  }catch{}

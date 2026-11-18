@@ -16,6 +16,7 @@ import {captureSelection,selectionKey} from './transcription-selection.js';
 import {Preflight,mountPreflight} from './preflight.js';
 import {LevelPreview,addBookmark,SaveClock,BatteryWatch} from './studio-extras.js';
 import {speakerFor,SPEAKER_NAMES} from './speakers.js';
+import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const setText=(selector,value)=>{const element=$(selector);if(element.textContent!==value)element.textContent=value};
@@ -72,19 +73,29 @@ async function playAudition(media){if(!canAudition())return;try{if(storageDetail
 const captureHealth={session:null,lastSound:0,clipUntil:0};
 function captureHealthHint(value){
  const now=performance.now();
- if(captureHealth.session!==value.sessionId){Object.assign(captureHealth,{session:value.sessionId,lastSound:now,clipUntil:0})}
+ if(captureHealth.session!==value.sessionId){Object.assign(captureHealth,{session:value.sessionId,lastSound:now,clipUntil:0,repairTried:false})}
  if(value.state!=='recording'){captureHealth.lastSound=now;return ''}
  const levels=Object.values(value.levels||{}).filter(level=>Number.isFinite(level?.rms)&&(level.ageMs??0)<3000);
  // −50 dBFS RMS: below any normal speech, above typical digital silence.
  if(!levels.length||levels.some(level=>level.rms>0.00316))captureHealth.lastSound=now;
  if(levels.some(level=>level.clippedFrames>=3))captureHealth.clipUntil=now+4000;
- if(now-captureHealth.lastSound>10000)return ' · ⚠ Микрофон молчит больше 10 с — проверьте выбранный вход и его громкость';
+ if(now-captureHealth.lastSound>10000){if(!captureHealth.repairTried){captureHealth.repairTried=true;void silenceRepair(value)}return ' · ⚠ Микрофон молчит больше 10 с — проверьте выбранный вход и его громкость'}
  if(now<captureHealth.clipUntil)return ' · ⚠ Перегрузка входа — уменьшите усиление микрофона или отодвиньтесь';
  return '';
+}
+/** Ten seconds of silence while recording: if Windows muted the microphone or set its level
+ * to ~0, fix it in place (the take continues); otherwise the on-screen hint stays. */
+async function silenceRepair(value){
+ if(!['mic','both'].includes(autopilot.mode))return;
+ try{const local=await localLibraryClient();const report=await local.json('/capture/diagnose',{signal:AbortSignal.timeout(7000)});
+  const {target}=pickInput(report,autopilot.inputId);
+  if(needsRepair(target)){await local.json('/capture/repair',{method:'POST',body:REPAIR(target)});notify(`Микрофон «${target.name}» был выключен в Windows — включили, запись продолжается.`);captureHealth.lastSound=performance.now()}
+ }catch{}
 }
 function onNativeState(value){
  const wasActive=Boolean(state.capture?.native&&captureActive(state.capture.snapshot)&&state.capture.id===value.recordId);
  const active=captureActive(value);captureSources?.setBusy(active);
+ if(value.state==='recording'&&value.connected)autopilot.selection=null; // started: nothing left to recover
  mediaInterlock?.observe(value);
  audioReview?.captureState(value);
  if(active){
@@ -102,7 +113,43 @@ function onNativeState(value){
  updateRecordUI();
  if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId));syncLevelPreview();
   if(wasActive&&value.state==='interrupted')markRecoveredSeen(value.recordId);
+  if(wasActive&&value.state==='interrupted'&&!(Number(value.savedBytes)>0)&&AUTOPILOT_RETRY.has(value.errorCode)&&autopilot.selection&&autopilot.steps.length){void autopilotRetry(value.errorCode).then(handled=>{if(!handled)notify(captureFailureMessage(value),'error',fixFor(value.errorCode))});void refresh().catch(()=>{});return}
   if(wasActive&&value.state==='interrupted'&&value.errorCode==='DEVICE_LOST'&&(Number(value.savedBytes)>0||Number(value.savedFrames)>0)){void continueAfterDeviceChange(value.recordId);return}void refresh().catch(e=>notify(e.message,'error'));if(wasActive)notify(value.state==='ready'?'Запись сохранена в библиотеке.':captureFailureMessage(value),value.state==='ready'?'info':'error',value.state==='ready'?{text:'Открыть',run:()=>go('editor',value.recordId)}:fixFor(value.errorCode))}
+}
+/** Autopilot (Apple: recover quietly; ask only when nothing else can help).
+ * Before a microphone take: Windows' own view of the microphone. A muted endpoint or a
+ * near-zero input level is fixed on the spot — the person just pressed Record, so the intent
+ * is explicit — and said in one line. A chosen microphone that disappeared falls back to
+ * the system default instead of failing. */
+async function autopilotBeforeStart(selection){
+ if(!['mic','both'].includes(selection.mode))return selection;
+ let local,report;try{local=await localLibraryClient();report=await local.json('/capture/diagnose',{signal:AbortSignal.timeout(7000)})}catch{return selection}
+ if(!report?.available||!Array.isArray(report.inputs))return selection;
+ const {target,fallback,disabledOnly}=pickInput(report,selection.inputId);
+ if(disabledOnly){notify('Микрофон отключён в Windows. Включите его: Параметры → Система → Звук → Все звуковые устройства.','error',/Windows/i.test(navigator.userAgent)?{text:'Открыть параметры звука',run:()=>{window.open('ms-settings:sound','_blank')}}:null);return selection}
+ if(fallback){selection={...selection,inputId:null};notify('Выбранный микрофон недоступен — записываем с микрофона по умолчанию.')}
+ if(needsRepair(target)){
+  try{const after=await local.json('/capture/repair',{method:'POST',body:REPAIR(target)});if(!after?.repairError)notify(`Микрофон «${target.name}» был выключен в Windows — MONO включил его.`)}catch{}
+ }
+ return selection;
+}
+/** Start failures that a different path can fix: same mode on the default devices, then the
+ * browser channel for a microphone-only take. Two attempts per press, then an honest message. */
+const autopilot={selection:null,steps:[],mode:null};
+function arm(selection){autopilot.selection=selection;autopilot.mode=selection.mode;autopilot.inputId=selection.inputId;autopilot.steps=recoverySteps(selection,(captureSources?.capability?.modes||[]).includes('browser'))}
+function autopilotNext(){return autopilot.selection?autopilot.steps.shift()||null:null}
+async function startWithAutopilot(selection){
+ arm(selection);
+ for(;;){
+  try{return await nativeController.start(selection)}
+  catch(error){const next=AUTOPILOT_RETRY.has(error?.code)?autopilotNext():null;if(!next)throw error;notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));if(next.mode==='browser')notify('Записываем через запасной канал — окно MONO.');selection=next}
+ }
+}
+async function autopilotRetry(code){
+ const next=autopilotNext();if(!next)return false;
+ notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));
+ try{if(next.mode==='browser')notify('Записываем через запасной канал — окно MONO.');await nativeController.start(next);return true}
+ catch(error){if(AUTOPILOT_RETRY.has(error?.code)&&await autopilotRetry(error.code))return true;notify(captureErrors[error?.code]||error.message||'Не удалось начать запись.','error',fixFor(error?.code||code));return true}
 }
 /** A headset unplugged mid-meeting: the confirmed part is kept and recording continues
  * on the current system device as a linked take, instead of silently stopping. */
@@ -396,7 +443,7 @@ function chosenMime(){
 }
 async function beginRecord(){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
- if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');if(!nativeController.snapshot.connected){try{await nativeController.connect()}catch(error){notify(`Модуль записи не отвечает${error?.code?' ('+error.code+')':''}. Откройте «Настройки → Предполётная проверка».`,'error');void preflight?.run({force:true}).catch(()=>{});return}}const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}await nativeController.start(await captureSources.selection())}catch(error){if(error?.name!=='AbortError')notify(error.message||'Не удалось начать запись.','error',fixFor(error.code))}return}
+ if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');if(!nativeController.snapshot.connected){try{await nativeController.connect()}catch(error){notify(`Модуль записи не отвечает${error?.code?' ('+error.code+')':''}. Откройте «Настройки → Предполётная проверка».`,'error');void preflight?.run({force:true}).catch(()=>{});return}}const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}await startWithAutopilot(await autopilotBeforeStart(await captureSources.selection()))}catch(error){if(error?.name!=='AbortError')notify(error.message||'Не удалось начать запись.','error',fixFor(error.code))}return}
  if(state.recordBusy||state.capture)return;
  state.recordBusy=true;
  let capture=null;
