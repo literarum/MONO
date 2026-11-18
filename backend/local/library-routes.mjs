@@ -67,7 +67,7 @@ export async function libraryRoute(req,res,url,worker,{submitLibraryJob,isLibrar
   const match=pathname.match(/^\/api\/local\/records\/([a-f0-9-]{36})(?:\/(audio|speakers|trash|restore|transcribe|transcript(?:\/edit)?|segments\/(mic|system|mix|original)\/(\d+)))?$/);
   if(!match)return false;const id=match[1],action=match[2];
   if(!action&&req.method==='GET'){send(res,200,await worker.call('records.get',{id}));return true}
-  if(action==='speakers'&&req.method==='GET'){send(res,200,{profile:resolveSpeakers?await resolveSpeakers(id):null});return true}
+  if(action==='speakers'&&req.method==='GET'){let profile=null;try{profile=resolveSpeakers?await resolveSpeakers(id):null}catch{}send(res,200,{profile});return true}
   if(!action&&req.method==='PATCH'){send(res,200,await worker.call('records.patch',{...await readJSON(req),id}));return true}
   if(action==='transcribe'&&req.method==='POST'){
    if((await worker.call('status')).libraryBusy){send(res,409,{error:'Дождитесь завершения копирования',code:'LIBRARY_BUSY'});return true}

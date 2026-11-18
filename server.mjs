@@ -445,6 +445,7 @@ async function route(req,res){
   }
   if(url.pathname==='/api/local/events'&&req.method==='GET'){
     const denied=authorizeLocalRequest(req);if(denied){fail(res,denied,'Доступ отклонён');return}
+    if(eventClients.size>=16){fail(res,429,'Слишком много окон');return}
     res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.write(': ok\n\n');
     eventClients.add(res);const ping=setInterval(()=>res.write(': ping\n\n'),25000);req.on('close',()=>{clearInterval(ping);eventClients.delete(res)});return;
   }

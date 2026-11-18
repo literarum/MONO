@@ -36,6 +36,12 @@ for line in sys.stdin:
         if args.behavior=='unsafe':emit('segment',sessionId=session,track='mic',index=0,relativeFile='../escape.wav',format='pcm_s16le',sampleRate=16000,channels=1,startMonotonicNs=origin,frames=32000,sha256='0'*64);continue
         for track in ['system'] if args.behavior=='wrong-track' else ['mic','system'] if mode=='both' else [mode]:segment(track,0,origin)
         end=origin+2_000_000_000
+        if args.behavior=='device-lost-once':
+            # The first take loses its device after the first committed part; later takes are healthy.
+            marker=os.path.join(os.path.dirname(os.path.abspath(args.capture_root)),'.fixture-device-lost')
+            if not os.path.exists(marker):
+                open(marker,'w').close();lost=session
+                threading.Timer(1.5,lambda:emit('error',sessionId=lost,code='DEVICE_LOST',stage='capture-mic/read',nativeCode='88890004')).start()
     elif method=='pause':
         emit('state',sessionId=session,state='paused',monotonicNs=end)
         if args.behavior=='paused-data':segment('mic',1,origin+4_000_000_000)

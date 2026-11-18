@@ -48,15 +48,22 @@ function markMoment(){
 }
 async function saveMarks(id){
  if(takeMarks.id!==id||!takeMarks.marks.length)return;const bookmarks=takeMarks.marks;Object.assign(takeMarks,{id:null,marks:[]});
- try{await patchRecording(id,{bookmarks})}catch(error){notify('Отметки не сохранены: '+error.message,'error')}
+ // Read the finished record first: the capture service bumped its version on stop.
+ for(let attempt=0;attempt<3;attempt++){
+  try{await getRecording(id);await patchRecording(id,{bookmarks});return}
+  catch(error){if(error.code!=='VERSION_CONFLICT'||attempt===2){notify('Отметки не сохранены: '+error.message,'error');return}await new Promise(resolve=>setTimeout(resolve,300))}
+ }
 }
 /** Live level before recording: only in the studio, only when idle, only with permission already granted. */
 function syncLevelPreview(){
  const idle=state.view==='record'&&!state.capture&&!captureActive(nativeController?.snapshot)&&!document.hidden;
- if(!idle){if(levelPreview.wanted)levelPreview.stop();return}
+ if(!idle){if(levelPreview.wanted){levelPreview.stop();clearTimeout(state.previewTimer);if(!state.capture&&!captureActive(nativeController?.snapshot))setText('#record-caption','ГОТОВО К ЗАПИСИ')}return}
  const choice=captureSources?.value||{},mode=captureSources?.fallbackMode?.()||choice.mode||'mic';
  if(mode==='system')return levelPreview.stop();
- void levelPreview.start(mode==='browser'?choice.browserInputId||null:null).then(ok=>{if(ok&&!nativeFrame)nativeFrame=requestAnimationFrame(drawWave)});
+ // The microphone is only listened to, never recorded, and only for 45 s per visit:
+ // Windows shows its "microphone in use" indicator while the preview is open.
+ if(levelPreview.wanted||state.previewDone===state.viewVisit)return;
+ void levelPreview.start(mode==='browser'?choice.browserInputId||null:null).then(ok=>{if(!ok)return;const visit=state.viewVisit;setText('#record-caption','МИКРОФОН ПРОСЛУШИВАЕТСЯ · НЕ ЗАПИСЫВАЕТСЯ');clearTimeout(state.previewTimer);state.previewTimer=setTimeout(()=>{if(state.viewVisit===visit){state.previewDone=visit;levelPreview.stop();if(!state.capture)setText('#record-caption','ГОТОВО К ЗАПИСИ')}},45000);if(!nativeFrame)nativeFrame=requestAnimationFrame(drawWave)});
 }
 function pauseAudition(){audioReview?.player.pause();if(mediaInterlock)mediaInterlock.pauseAll();else document.querySelectorAll('audio,video').forEach(media=>media.pause())}
 function canAudition(){if(storageDetails().local&&(!nativeController?.snapshot.connected||captureActive(nativeController.snapshot))){notify('Завершите запись перед прослушиванием, чтобы звук плеера не попал в неё.','error');return false}return true}
@@ -93,12 +100,17 @@ function onNativeState(value){
  $('#stop-record').disabled=value.state==='stopping';$('#pause-record').innerHTML=icon(value.state==='paused'?'play':'pause')+(value.state==='paused'?' Продолжить':' Пауза');
  setText('#record-saved',!value.connected?(active?'Связь потеряна. Остановка и сохранение не подтверждены.':'Подключаемся к модулю записи…'+(nativeController?.lastError?.code?` (${nativeController.lastError.code})`:'')):value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве: '+durationText(value.duration)+(value.state==='recording'?' · сохранено '+saveClock.text():'')+captureHealthHint(value):value.errorCode?captureFailureMessage(value):'Аудио сохраняется в выбранной папке');
  updateRecordUI();
- if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId);syncLevelPreview();
+ if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId));syncLevelPreview();
+  if(wasActive&&value.state==='interrupted')markRecoveredSeen(value.recordId);
   if(wasActive&&value.state==='interrupted'&&value.errorCode==='DEVICE_LOST'&&(Number(value.savedBytes)>0||Number(value.savedFrames)>0)){void continueAfterDeviceChange(value.recordId);return}void refresh().catch(e=>notify(e.message,'error'));if(wasActive)notify(value.state==='ready'?'Запись сохранена в библиотеке.':captureFailureMessage(value),value.state==='ready'?'info':'error',value.state==='ready'?{text:'Открыть',run:()=>go('editor',value.recordId)}:fixFor(value.errorCode))}
 }
 /** A headset unplugged mid-meeting: the confirmed part is kept and recording continues
  * on the current system device as a linked take, instead of silently stopping. */
-const continuations=[];
+const continuations=[],continuationTitles=new Map();
+async function applyContinuationTitle(id){
+ const title=continuationTitles.get(id);if(!title)return;continuationTitles.delete(id);
+ for(let attempt=0;attempt<3;attempt++){try{await getRecording(id);await patchRecording(id,{title});await refresh();return}catch(error){if(error.code!=='VERSION_CONFLICT')return;await new Promise(resolve=>setTimeout(resolve,300))}}
+}
 async function continueAfterDeviceChange(previousId){
  const now=Date.now();while(continuations.length&&now-continuations[0]>300000)continuations.shift();
  if(continuations.length>=3){notify('Устройство звука несколько раз отключилось. Запись остановлена, подтверждённые фрагменты сохранены.','error',fixFor('DEVICE_LOST'));return}
@@ -106,8 +118,9 @@ async function continueAfterDeviceChange(previousId){
  try{
   await new Promise(resolve=>setTimeout(resolve,1200));await captureSources.load();
   const selection=await captureSources.selection();const previous=state.records.find(r=>r.id===previousId)||await getRecording(previousId).catch(()=>null);
-  const started=await nativeController.start({...selection,inputId:null,outputId:selection.outputId?null:selection.outputId});
-  if(started?.recordId&&previous?.title)await patchRecording(started.recordId,{title:previous.title.replace(/ · продолжение( \d+)?$/,'')+' · продолжение'}).catch(()=>{});
+  const started=await nativeController.start({...selection,inputId:null,outputId:null});
+  // The archive updates a live record continuously; the linked title is applied when the take ends.
+  if(started?.recordId&&previous?.title)continuationTitles.set(started.recordId,previous.title.replace(/ · продолжение$/,'')+' · продолжение');
   notify('Запись продолжается. Первая часть сохранена в библиотеке.','info',{text:'Открыть первую часть',run:()=>go('editor',previousId)});
  }catch(error){notify('Не удалось продолжить запись: '+(error.message||error.code),'error',fixFor(error.code||'DEVICE_LOST'))}
  void refresh().catch(()=>{});
@@ -202,7 +215,7 @@ function fixFor(code){
  if(code==='ACCESS_DENIED'&&/Windows/i.test(navigator.userAgent))return {text:'Открыть параметры Windows',run:()=>{window.open('ms-settings:privacy-microphone','_blank')}};
  if(['ACCESS_DENIED','ACCESS_TIMEOUT','DEVICE_LOST','DEVICE_BUSY','START_TIMEOUT','NO_AUDIO_CAPTURED','UNSUPPORTED_FORMAT','NOT_SUPPORTED','BROWSER_AUDIO_ERROR'].includes(code))return {text:'Проверить звук',run:()=>showSetup('sound')};
  if(['LIBRARY_MISSING','LIBRARY_NOT_CONFIGURED','DISK_FULL'].includes(code))return {text:'Выбрать папку',run:()=>{go('settings');showLibrarySetup()}};
- if(['CAPTURE_HELPER_UNAVAILABLE','CAPTURE_HELPER_TIMEOUT','CAPTURE_CONNECTION_LOST','CAPTURE_NOT_READY','CAPTURE_BUSY'].includes(code))return {text:'Переподключить',run:async()=>{await nativeController?.connect();await preflight?.run({force:true}).catch(()=>{});notify('Модуль записи подключён.')}};
+ if(['CAPTURE_HELPER_UNAVAILABLE','CAPTURE_HELPER_TIMEOUT','CAPTURE_CONNECTION_LOST','CAPTURE_NOT_READY','STOP_PENDING'].includes(code))return {text:'Переподключить',run:async()=>{await nativeController?.connect();await preflight?.run({force:true}).catch(()=>{});notify('Модуль записи подключён.')}};
  if(code==='GROQ_NOT_CONFIGURED'||code==='INVALID_API_KEY')return {text:'Подключить Groq',run:()=>connectGroq(()=>{})};
  return null;
 }
@@ -261,6 +274,7 @@ function renderRoute({preserveDrawer=false}={}){
   if(!preserveDrawer)closeDrawer('route');
   if(view==='library')renderLibrary();
   if(view==='jobs')renderJobs();
+  if(view==='record'&&state.previewView!=='record')state.viewVisit=(state.viewVisit||0)+1;state.previewView=view;
   syncLevelPreview();
   $('#main').scrollTo({top:0,behavior:'instant'});
 }
@@ -436,7 +450,7 @@ function updateRecordUI(){
  if(r?.native){const value=r.snapshot,labels={requesting:'Подключаем звук',recording:'Идёт запись',paused:'Пауза',stopping:'Сохраняем'};$('#record-state').classList.toggle('recording',value.state==='recording'&&value.connected);setText('#record-state',value.connected?labels[value.state]:'Нет связи');setText('#record-caption',value.state==='paused'?'ПАУЗА СОХРАНЯЕТСЯ НА ШКАЛЕ ВРЕМЕНИ':value.state==='recording'?'ПОДТВЕРЖДЕНО В АРХИВЕ':'ОЖИДАЕМ ПОДТВЕРЖДЕНИЕ');setText('#record-timer',durationText(value.duration));return}
  $('#record-state').classList.toggle('recording',Boolean(r&&!r.paused));
  $('#record-state').innerHTML=r?(r.paused?'Пауза':`<span class="tiny-dot"></span> Идёт запись`):`<span class="tiny-dot"></span> Ожидание`;
- $('#record-caption').textContent=r?(r.paused?'ЗАПИСЬ ПРИОСТАНОВЛЕНА':'ЗАПИСЬ В ПРОЦЕССЕ'):'ГОТОВО К ЗАПИСИ';
+ $('#record-caption').textContent=r?(r.paused?'ЗАПИСЬ ПРИОСТАНОВЛЕНА':'ЗАПИСЬ В ПРОЦЕССЕ'):levelPreview.active?'МИКРОФОН ПРОСЛУШИВАЕТСЯ · НЕ ЗАПИСЫВАЕТСЯ':'ГОТОВО К ЗАПИСИ';
  $('#record-timer').textContent=durationText(currentRecordingSeconds());
 }
 function pauseRecord(){
@@ -1003,6 +1017,7 @@ async function init(){
  void pollJobs();setInterval(()=>{if(!document.hidden)void pollJobs()},3500);document.addEventListener('visibilitychange',()=>{if(!document.hidden)void pollJobs()});
  if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{})}
 }
+function markRecoveredSeen(id){try{const seen=JSON.parse(localStorage.getItem('mono-recovered-seen')||'[]');if(!seen.includes(id)){seen.push(id);localStorage.setItem('mono-recovered-seen',JSON.stringify(seen.slice(-200)))}}catch{}}
 /** After a crash or power loss: say which take was recovered and how much of it is safe. */
 function announceRecovered(){
  let seen;try{seen=new Set(JSON.parse(localStorage.getItem('mono-recovered-seen')||'[]'))}catch{seen=new Set()}

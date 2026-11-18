@@ -70,7 +70,7 @@ def prepare(stage: Path) -> Path:
     (stage/'launcher').mkdir()
     if not core_input:
         shutil.copytree(PROJECT / 'launcher' / 'local_core',stage / 'launcher' / 'local_core',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
-    for name in ('mono_launcher.py','native_bundle.py','ffmpeg_bundle.py','core_bundle.py','notice_bundle.py','ffmpeg-windows.lock.json','ffmpeg-source-windows.lock.json'):
+    for name in ('mono_launcher.py','hotkey.py','native_bundle.py','ffmpeg_bundle.py','core_bundle.py','notice_bundle.py','ffmpeg-windows.lock.json','ffmpeg-source-windows.lock.json'):
         shutil.copy2(PROJECT/'launcher'/name,stage/'launcher'/name)
     shutil.copytree(PROJECT/'launcher/assets',stage/'launcher/assets')
     # Frozen local_core.library.__file__ is _MEIPASS/local_core/library.py.

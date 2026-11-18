@@ -41,7 +41,7 @@ internal static class Program
             if(sid is null||!Guid.TryParseExact(sid,"D",out var guid)||guid.ToString("D")!=sid||mode is not ("mic" or "system" or "both"))throw new AudioFailure("INTERNAL");
             // A start right after stop races the previous session's drain (up to ~3.5 s): wait for it
             // instead of reporting a busy device that is not busy.
-            if(session is not null&&!session.Completed&&!session.WaitCompleted(5000)){Emit("error",new(){{"sessionId",sid},{"code","CAPTURE_BUSY"}});return;}
+            if(session is not null&&!session.Completed&&!session.WaitCompleted(5000)){Emit("error",new(){{"sessionId",sid},{"code","STOP_PENDING"}});return;}
             session?.Dispose();session=new NativeSession(sid,root,mode,DeviceId(parameters,"inputId"),DeviceId(parameters,"outputId"),Emit);session.Begin();return;
         }
         if(session is null||sid!=session.Id)return;
