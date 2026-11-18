@@ -45,6 +45,9 @@ def peak_of(file: Path) -> float:
 
 
 def record_peak(service, library, mode, seconds):
+    until = time.monotonic() + 10  # never start over a take that is still finishing
+    while service.status()["state"] in ("stopping", "recording", "requesting", "paused") and time.monotonic() < until:
+        service.tick(); time.sleep(0.02)
     started = service.start({"mode": mode}); record = started["recordId"]
     until = time.monotonic() + seconds
     while time.monotonic() < until:
@@ -113,7 +116,8 @@ def main() -> int:
             while service.status()["state"] not in ("ready", "interrupted", "error") and time.monotonic() < t: service.tick(); time.sleep(0.02)
             again = service.start({"mode": "system" if DENIED else "mic"}); t = time.monotonic() + 3
             while time.monotonic() < t: service.tick(); time.sleep(0.02)
-            status = service.status(); service.stop()
+            status = service.status(); service.stop(); t = time.monotonic() + 10
+            while service.status()["state"] not in ("ready", "interrupted", "error") and time.monotonic() < t: service.tick(); time.sleep(0.02)
             report["restart"] = {"state": status["state"], "errorCode": status.get("errorCode")}
             failed |= status["state"] not in ("recording", "requesting")
         except Exception as error:
