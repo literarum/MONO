@@ -1037,7 +1037,11 @@ async function runSummary(id){
  summaryTasks.set(id,{done:0,total:1});const refreshButton=()=>{const rec=state.records.find(r=>r.id===id);if(rec&&state.editorId===id)renderSummary(rec)};refreshButton();
  try{
   let task=await local.json(`/records/${id}/summary`,{method:'POST',body:{consent:true}});
-  while(task.status==='running'){summaryTasks.set(id,task);refreshButton();await new Promise(r=>setTimeout(r,1500));task=await local.json(`/records/${id}/summary`)}
+  // A short network hiccup or a core restart must not leave the window waiting silently.
+  for(let misses=0;task.status==='running';){summaryTasks.set(id,task);refreshButton();await new Promise(r=>setTimeout(r,1500));
+   try{task=await local.json(`/records/${id}/summary`);misses=0}catch(error){if(++misses>=20)throw error}}
+  if(task.status==='idle'){const rec=await getRecording(id,{transcript:false}).catch(()=>null);if(rec?.summary&&rec.summary.createdAt!==state.records.find(r=>r.id===id)?.summary?.createdAt){state.records=state.records.map(r=>r.id===id?{...r,...rec}:r);notify('Конспект готов');return}
+   throw new Error('составление прервалось — MONO перезапускался. Нажмите «Составить конспект» ещё раз.')}
   if(task.status==='failed')throw new Error(task.error||'Не удалось составить конспект');
   if(task.status==='done'){const rec=await getRecording(id,{transcript:false});state.records=state.records.map(r=>r.id===id?{...r,...rec}:r);notify('Конспект готов');}
  }catch(error){notify('Конспект: '+(error.message||'не удалось составить'),'error')}
