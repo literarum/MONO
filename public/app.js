@@ -882,6 +882,9 @@ function downloadBlob(blob,name){const url=URL.createObjectURL(blob),a=document.
 function renameRecord(rec){
  modal('Название записи',`<label class="field-label" for="rename-input">Новое название</label><input id="rename-input" class="select" maxlength="130" value="${h(rec.title)}">`,
  [{text:'Сохранить',primary:true,run:async()=>{const name=$('#rename-input').value.trim();if(!name){notify('Название не может быть пустым','error');return}await patchRecording(rec.id,{title:name});await refresh()}}]);
+ // Enter saves (the primary action); the old title is pre-selected for typing over it.
+ const input=$('#rename-input');input.focus();input.select();
+ input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();$('#modal-actions .btn-primary')?.click()}});
 }
 function deleteRecord(rec){
  if(storageDetails().local){
