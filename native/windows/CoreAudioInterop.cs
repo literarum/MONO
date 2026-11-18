@@ -128,7 +128,7 @@ public static class CoreAudio
     }
     public static DeviceInventory Enumerate()
     {
-        if(!OperatingSystem.IsWindowsVersionAtLeast(10,0,19045))throw new PlatformNotSupportedException("NOT_SUPPORTED");
+        if(!OperatingSystem.IsWindowsVersionAtLeast(10,0,17763))throw new PlatformNotSupportedException("NOT_SUPPORTED");
         var enumerator=(IDeviceEnumerator)new DeviceEnumeratorCom();
         try{return new DeviceInventory(List(enumerator,DataFlow.Capture),List(enumerator,DataFlow.Render));}finally{ComAudio.Release(enumerator);}
     }

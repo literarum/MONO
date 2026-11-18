@@ -28,7 +28,7 @@ internal sealed class NativeSession : IDisposable
     async Task WaitFor(Func<bool> condition,int timeoutMs)
     {
         long deadline=Environment.TickCount64+timeoutMs;
-        while(!condition()){Cancellation.ThrowIfCancellationRequested();if(Environment.TickCount64>deadline)throw new AudioFailure("DEVICE_BUSY");await Task.Delay(5,Cancellation);}
+        while(!condition()){Cancellation.ThrowIfCancellationRequested();if(Environment.TickCount64>deadline)throw new AudioFailure("START_TIMEOUT");await Task.Delay(5,Cancellation);}
         Cancellation.ThrowIfCancellationRequested();
     }
     async Task Run()
@@ -53,6 +53,7 @@ internal sealed class NativeSession : IDisposable
             if(tracks.Any(t=>!t.ProducerDone.IsSet||!t.WriterDone.IsSet))Environment.Exit(1);
         }
     }
+    public bool WaitCompleted(int timeoutMs){try{return coordinator?.Wait(timeoutMs)??true;}catch(AggregateException){return true;}}
     public void RequestStop(){if(disposed)return;Interlocked.CompareExchange(ref stopNs,NowNs,0);cancellation.Cancel();ResumeGate.Set();StartGate.Set();PublishGate.Set();}
     public void Fail(string code){if(disposed)return;Interlocked.CompareExchange(ref failure,code,null);RequestStop();}
     public void Fail(string code,string stage,int? hresult){lock(stateLock){if(failure is null){diagnosticStage=stage;nativeCode=hresult?.ToString("X8");}}Fail(code);}

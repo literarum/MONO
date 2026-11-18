@@ -28,3 +28,14 @@ test('desktop session and CSRF gates reject foreign reads and mutations at the r
  assert.equal((await fetch(url+'/api/jobs/'+id,{headers:{Cookie:cookie}})).status,404,'Authorized missing job retains404 contract');
  assert.equal((await fetch(url+'/api/metrics',{headers:{Cookie:cookie}})).status,200);
 });
+
+test('concurrent session bootstraps: a page holding a sibling session token is not locked out',async t=>{
+ const url=await start(t);
+ const [a,b]=await Promise.all([fetch(url+'/api/local/session'),fetch(url+'/api/local/session')]);
+ const cookieB=b.headers.get('set-cookie').split(';')[0],tokenA=(await a.json()).csrf;await b.json();
+ // The browser kept the last cookie (B) while the page read token A.
+ const post=await fetch(url+'/api/local/ping',{method:'POST',headers:{Cookie:cookieB,Origin:url,'X-Mono-CSRF':tokenA,'Content-Type':'application/json'},body:'{}'});
+ assert.equal(post.status,200);
+ const forged=await fetch(url+'/api/local/ping',{method:'POST',headers:{Cookie:cookieB,Origin:url,'X-Mono-CSRF':'f'.repeat(64),'Content-Type':'application/json'},body:'{}'});
+ assert.equal(forged.status,403);
+});

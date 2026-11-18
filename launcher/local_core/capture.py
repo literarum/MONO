@@ -5,7 +5,7 @@ from local_core.paths import atomic_json,confined,identifier,publish,reject_link
 from local_core.protocol import CoreError,MAX_LINE
 
 ACTIVE={'requesting','recording','paused','stopping'}
-ERRORS={'ACCESS_DENIED','DEVICE_LOST','DEVICE_BUSY','UNSUPPORTED_FORMAT','NOT_SUPPORTED','IO_ERROR','DISCONTINUITY','SLEEP','INTERNAL'}
+ERRORS={'ACCESS_DENIED','DEVICE_LOST','DEVICE_BUSY','UNSUPPORTED_FORMAT','NOT_SUPPORTED','IO_ERROR','DISCONTINUITY','SLEEP','INTERNAL','START_TIMEOUT','CAPTURE_BUSY'}
 FAILURE_STAGES={'coordinator'}|{f'capture-{track}/{operation}' for track in ['mic','system'] for operation in ['resolve-device','activate','mix-format','initialize','event-handle','stream-latency','buffer-size','capture-service','start','next-packet','packet-buffer']}
 
 def failure_details(event):
