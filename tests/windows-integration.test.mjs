@@ -41,3 +41,17 @@ test('global hotkey: only the launcher token is accepted and the window receives
  let text='';while(!text.includes('event: hotkey')){const {value}=await reader.read();text+=decoder.decode(value)}
  assert.match(text,/toggle-recording/);
 });
+test('storage endpoint reports free space and the worst-case recording rate',async t=>{
+ const server=await localServer(t);const headers=await server.session();
+ await fetch(server.url+'/api/local/library/configure',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({useDefault:true})});
+ const body=await (await fetch(server.url+'/api/local/storage',{headers:{Cookie:headers.Cookie}})).json();
+ assert.ok(body.freeBytes>0);assert.equal(body.bytesPerMinute,48000*2*4*60);
+});
+test('pre-flight write probe and OneDrive detection',async()=>{
+ const {writeProbe,oneDriveRoot}=await import('../backend/local/preflight.mjs');const {mkdtemp}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const path=await import('node:path');
+ assert.equal(await writeProbe(await mkdtemp(path.join(tmpdir(),'mono-probe-'))),'ok');
+ assert.equal(await writeProbe(path.join(tmpdir(),'does-not-exist-'+Date.now())),'unknown');
+ const root=path.resolve(tmpdir(),'OneDrive');
+ assert.equal(oneDriveRoot(path.join(root,'Документы','MONO'),{OneDrive:root}),root.toLowerCase());
+ assert.equal(oneDriveRoot(path.join(tmpdir(),'Other'),{OneDrive:root}),null);
+});

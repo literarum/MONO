@@ -176,3 +176,4 @@ body.content-scrolled .topbar{box-shadow:var(--glass-shadow),0 8px 24px rgba(0,0
 .speaker-others{background:color-mix(in srgb,#bf5af2 18%,transparent);color:#bf5af2}
 /* Light theme: darker label colours keep small badge text at WCAG AA (≥4.5:1). */
 body[data-theme=light] .speaker-me{color:#0058b8}body[data-theme=light] .speaker-others{color:#8a2fb3}
+.connection-banner{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:100;padding:10px 18px;border-radius:999px;background:var(--glass-fill-strong);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);box-shadow:var(--glass-shadow);font-weight:600}

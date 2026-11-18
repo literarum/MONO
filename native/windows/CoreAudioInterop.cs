@@ -95,6 +95,26 @@ internal static class ComAudio
     internal static void Release(object? value){if(value is not null&&Marshal.IsComObject(value))Marshal.ReleaseComObject(value);}
     [DllImport("ole32.dll")]internal static extern int PropVariantClear(ref PropVariant value);
 }
+/// Scheduling for glitch-free capture under load.
+/// MMCSS "Pro Audio" for capture threads (as GStreamer's WASAPI source does) and opting the
+/// process out of EcoQoS / Efficiency mode while recording. Constants verified against the
+/// windows-sys metadata: ProcessPowerThrottling=4, CURRENT_VERSION=1, EXECUTION_SPEED=1.
+internal static class Realtime
+{
+    [DllImport("avrt.dll",CharSet=CharSet.Unicode,SetLastError=true)]static extern IntPtr AvSetMmThreadCharacteristicsW(string task,ref uint index);
+    [DllImport("avrt.dll",SetLastError=true)][return:MarshalAs(UnmanagedType.Bool)]static extern bool AvRevertMmThreadCharacteristics(IntPtr handle);
+    [StructLayout(LayoutKind.Sequential)]struct PowerThrottlingState{public uint Version;public uint ControlMask;public uint StateMask;}
+    [DllImport("kernel32.dll",SetLastError=true)][return:MarshalAs(UnmanagedType.Bool)]static extern bool SetProcessInformation(IntPtr process,int informationClass,ref PowerThrottlingState information,uint size);
+    [DllImport("kernel32.dll")]static extern IntPtr GetCurrentProcess();
+    public static IntPtr EnterProAudio(){try{uint index=0;return AvSetMmThreadCharacteristicsW("Pro Audio",ref index);}catch(Exception error) when(error is DllNotFoundException or EntryPointNotFoundException){return IntPtr.Zero;}}
+    public static void Leave(IntPtr handle){if(handle==IntPtr.Zero)return;try{AvRevertMmThreadCharacteristics(handle);}catch(Exception error) when(error is DllNotFoundException or EntryPointNotFoundException){}}
+    /// ControlMask=EXECUTION_SPEED with StateMask=0: "never throttle execution speed" (high QoS).
+    public static bool KeepFullSpeed(bool recording)
+    {
+        try{var state=new PowerThrottlingState{Version=1,ControlMask=recording?1u:0u,StateMask=0};return SetProcessInformation(GetCurrentProcess(),4,ref state,(uint)Marshal.SizeOf<PowerThrottlingState>());}
+        catch(EntryPointNotFoundException){return false;}
+    }
+}
 public sealed record AudioDevice(string Id,string Name,bool Default);
 public sealed record DeviceInventory(IReadOnlyList<AudioDevice> Inputs,IReadOnlyList<AudioDevice> Outputs);
 /// Capture endpoint health as Windows reports it. State: 1 active, 2 disabled (Sound control panel),

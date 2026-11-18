@@ -114,6 +114,9 @@ export class BrowserMicrophoneClient{
    stage='acquire';const value=await this.call('start',{sampleRate:context.sampleRate,inputId:options.inputId||null,test});runtime.sessionId=value.sessionId;this.runtime=runtime;
    for(const track of stream.getTracks())track.addEventListener('ended',()=>{if(!runtime.stopPromise&&!runtime.cleaned)void this.fail(runtime,new LibraryError('DEVICE_LOST','Микрофон отключён.'))},{once:true});
    stage='graph';source.connect(node);node.connect(gain);gain.connect(context.destination);stage='resume';await waitFor(context.resume(),intent);intent.throwIfAborted();
+   // Windows sleep/wake or an audio-device change can suspend or interrupt the context
+   // outside the page's control; while this take is running, bring it back immediately.
+   context.addEventListener?.('statechange',()=>{if(this.runtime===runtime&&!runtime.cleaned&&!runtime.paused&&['suspended','interrupted'].includes(context.state))void context.resume().catch(()=>{})});
    runtime.heartbeat=setInterval(()=>{
     if(runtime.pinging||runtime.cleaned)return;
     runtime.pinging=true;void this.call('heartbeat',{sessionId:runtime.sessionId}).then(state=>{runtime.heartbeatAt=performance.now();if(!active(state))return this.release(runtime);if(state.state==='stopping'&&!runtime.stopPromise)void this.stop().catch(()=>{})}).catch(error=>{

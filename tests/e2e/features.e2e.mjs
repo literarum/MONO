@@ -80,3 +80,13 @@ test('autopilot: when the system module cannot open the microphone, the take con
  await page.waitForFunction(async()=>{const {items}=await (await fetch('/api/local/records?limit=5&q=&trash=false')).json();return items.some(r=>r.status==='saved'&&r.duration>0)},null,{timeout:20000,polling:300});
  assert.deepEqual(page.errors,[]);
 });
+
+test('the window survives a core restart: banner, then automatic reconnect with a working session',{skip:!playwright&&'playwright is not installed'},async t=>{
+ const server=await localServer(t);const page=await open(t,server,'mic');
+ await server.restart();
+ await page.waitForSelector('.connection-banner',{timeout:15000}).catch(()=>{}); // may be brief
+ await page.waitForFunction(()=>!document.querySelector('.connection-banner'),null,{timeout:30000});
+ await page.waitForFunction(()=>document.readyState==='complete'&&document.querySelector('#nav-count'));
+ const status=await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();return (await fetch('/api/local/ping',{method:'POST',headers:{'Content-Type':'application/json','X-Mono-CSRF':csrf},body:'{}'})).status});
+ assert.equal(status,200);assert.deepEqual(page.errors,[]);
+});

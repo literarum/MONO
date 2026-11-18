@@ -13,7 +13,7 @@ import {mountGuidance,mountHelp} from './help.js';
 import {MediaInterlock} from './media-interlock.js';
 import {AudioReview} from './audio-review.js';
 import {captureSelection,selectionKey} from './transcription-selection.js';
-import {Preflight,mountPreflight} from './preflight.js';
+import {Preflight,mountPreflight,remember} from './preflight.js';
 import {LevelPreview,addBookmark,SaveClock,BatteryWatch} from './studio-extras.js';
 import {speakerFor,SPEAKER_NAMES} from './speakers.js';
 import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
@@ -106,6 +106,7 @@ function onNativeState(value){
  // Never a dead control: without a connection, pressing Start reconnects and explains.
  $('#start-record').hidden=active;$('#start-record').disabled=false;
  $('#pause-record').hidden=!active;$('#stop-record').hidden=!active;$('#mark-record').hidden=!active;$('.studio-buttons').classList.toggle('is-recording',active);
+ watchDisk(active);
  if(active){saveClock.observe(value.sessionId||value.recordId,value.duration);if(!battery.active){battery.active=true;battery.reset()}void battery.check();levelPreview.stop()}else battery.active=false;
  $('#pause-record').disabled=!value.connected||Boolean(value.pendingAction)||!['recording','paused'].includes(value.state);
  $('#stop-record').disabled=value.state==='stopping';$('#pause-record').innerHTML=icon(value.state==='paused'?'play':'pause')+(value.state==='paused'?' Продолжить':' Пауза');
@@ -218,6 +219,32 @@ function applyTheme(){
   $('#theme-toggle').innerHTML=icon(dark?'sun':'moon');
   document.querySelector('meta[name="theme-color"]').content=dark?'#08090b':'#f1f1ef';
 }
+/** During a take, once a minute: will the disk hold the rest of it? (warn at ~30 and ~5 min) */
+const diskWatch={timer:0,warned:new Set()};
+function watchDisk(active){
+ if(!active){clearInterval(diskWatch.timer);diskWatch.timer=0;diskWatch.warned.clear();return}
+ if(diskWatch.timer)return;
+ diskWatch.timer=setInterval(async()=>{
+  try{const local=await localLibraryClient();const {freeBytes,bytesPerMinute}=await local.json('/storage',{signal:AbortSignal.timeout(5000)});const minutes=freeBytes/bytesPerMinute;
+   for(const limit of [5,30])if(minutes<limit&&!diskWatch.warned.has(limit)){diskWatch.warned.add(limit);diskWatch.warned.add(30);notify(`На диске осталось места на ~${Math.max(0,Math.floor(minutes))} мин записи. Освободите место — запись продолжается.`,'error');break}
+  }catch{}
+ },60000);
+}
+/** The core restarts by itself (launcher supervisor); the window notices and reconnects. */
+function watchConnection(){
+ if(!storageDetails().local)return;
+ let failures=0,banner=null;
+ const tick=async()=>{
+  if(document.hidden)return;
+  let ok=false;try{ok=(await fetch('/api/health',{cache:'no-store',signal:AbortSignal.timeout(3000)})).ok}catch{}
+  if(!ok){if(++failures>=2&&!banner){banner=document.createElement('div');banner.className='connection-banner';banner.setAttribute('role','status');banner.textContent='Связь с ядром MONO прервалась — восстанавливаем…';document.body.append(banner)}return}
+  if(banner){banner.remove();banner=null;
+   // A new core: fresh session and state. Never reload under a take in this window.
+   if(!state.capture&&!captureActive(nativeController?.snapshot))location.reload();else void nativeController?.connect().catch(()=>{})}
+  failures=0;
+ };
+ setInterval(tick,4000);
+}
 /** Ctrl+Alt+R anywhere in Windows (registered by the launcher) starts or stops recording. */
 function listenForLauncherEvents(){
  if(!storageDetails().local||typeof EventSource!=='function')return;
@@ -243,6 +270,7 @@ function applyAccent(accent){
  document.body.style.setProperty('--tint',accent);document.body.style.setProperty('--tint-strong',accent);
 }
 function notify(message,type='info',action=null){
+  if(type==='error'&&typeof remember==='function')remember('notice',message); // the black box never breaks a notice
   const active=notify.active??=new Map(),key=JSON.stringify([type,message]);
   let entry=active.get(key);
   if(entry&&!entry.el.isConnected){clearTimeout(entry.timer);active.delete(key);entry=null}
@@ -263,6 +291,7 @@ function fixFor(code){
  if(['ACCESS_DENIED','ACCESS_TIMEOUT','DEVICE_LOST','DEVICE_BUSY','START_TIMEOUT','NO_AUDIO_CAPTURED','UNSUPPORTED_FORMAT','NOT_SUPPORTED','BROWSER_AUDIO_ERROR'].includes(code))return {text:'Проверить звук',run:()=>showSetup('sound')};
  if(['LIBRARY_MISSING','LIBRARY_NOT_CONFIGURED','DISK_FULL'].includes(code))return {text:'Выбрать папку',run:()=>{go('settings');showLibrarySetup()}};
  if(['CAPTURE_HELPER_UNAVAILABLE','CAPTURE_HELPER_TIMEOUT','CAPTURE_CONNECTION_LOST','CAPTURE_NOT_READY','STOP_PENDING'].includes(code))return {text:'Переподключить',run:async()=>{await nativeController?.connect();await preflight?.run({force:true}).catch(()=>{});notify('Модуль записи подключён.')}};
+ if(['SLEEP','DISCONTINUITY'].includes(code))return {text:'Продолжить запись',run:()=>{go('record');return beginRecord()}};
  if(code==='GROQ_NOT_CONFIGURED'||code==='INVALID_API_KEY')return {text:'Подключить Groq',run:()=>connectGroq(()=>{})};
  return null;
 }
@@ -1060,7 +1089,7 @@ async function init(){
   const text=document.createElement('span');text.textContent=storage.transferRecoveryError?'Не удалось прочитать журнал копирования. Исходный архив сохранён.':'Копирование не завершено. Его можно продолжить в настройках.';
   const button=document.createElement('button');button.className='btn btn-outline btn-small';button.textContent='Открыть настройки';button.onclick=()=>{go('settings');$('#transfer-recovery')?.scrollIntoView({block:'center'});notice.remove()};notice.append(text,button);$('#toast-area').append(notice);
  }
- listenForLauncherEvents();
+ listenForLauncherEvents();watchConnection();
  void pollJobs();setInterval(()=>{if(!document.hidden)void pollJobs()},3500);document.addEventListener('visibilitychange',()=>{if(!document.hidden)void pollJobs()});
  if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{})}
 }

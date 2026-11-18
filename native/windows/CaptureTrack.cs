@@ -28,6 +28,7 @@ internal sealed class CaptureTrack : IDisposable
     void Capture()
     {
         IDeviceEnumerator? enumerator=null;IDevice? device=null;IAudioClient? client=null;IAudioCaptureClient? input=null;IntPtr mix=IntPtr.Zero;bool started=false;string operation="resolve-device";
+        var mmcss=Realtime.EnterProAudio();
         try{
             enumerator=(IDeviceEnumerator)new DeviceEnumeratorCom();var flow=loopback?DataFlow.Render:DataFlow.Capture;
             ComAudio.Check(requestedId is null?enumerator.GetDefaultAudioEndpoint(flow,DeviceRole.Console,out device):enumerator.GetDevice(requestedId,out device));
@@ -82,7 +83,7 @@ internal sealed class CaptureTrack : IDisposable
         finally{
             if(started&&client is not null){try{ComAudio.Check(client.Stop());}catch(AudioFailure error){session.Fail(error.Code);}}
             if(mix!=IntPtr.Zero)Marshal.FreeCoTaskMem(mix);
-            ComAudio.Release(input);ComAudio.Release(client);ComAudio.Release(device);ComAudio.Release(enumerator);packets.CompleteAdding();ProducerDone.Set();Initialized.Set();Started.Set();ResumeCompleted.Set();
+            Realtime.Leave(mmcss);ComAudio.Release(input);ComAudio.Release(client);ComAudio.Release(device);ComAudio.Release(enumerator);packets.CompleteAdding();ProducerDone.Set();Initialized.Set();Started.Set();ResumeCompleted.Set();
         }
     }
     void Write()

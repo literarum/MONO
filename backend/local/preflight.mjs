@@ -1,7 +1,7 @@
 // Pre-flight check: one read-only snapshot of every system recording depends on.
 // Levels follow crew-alerting practice (EICAS): warning = action required before
 // recording, caution = degraded capability, advisory = informational, ok = normal.
-import {statfs,access} from 'node:fs/promises';import {constants} from 'node:fs';import {microphonePrivacy} from './privacy.mjs';
+import {statfs,access,writeFile,unlink} from 'node:fs/promises';import path from 'node:path';import {randomUUID} from 'node:crypto';import {constants} from 'node:fs';import {microphonePrivacy} from './privacy.mjs';
 
 // Worst case on disk: native float32 stereo at 48 kHz (browser capture is ~4× smaller).
 export const BYTES_PER_HOUR=48000*2*4*3600;
@@ -20,6 +20,18 @@ export function microphoneChecks(report){
 }
 async function timed(promise,ms){let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(new Error('TIMEOUT'),{code:'TIMEOUT'})),ms)})])}finally{clearTimeout(timer)}}
 
+/** Real write + delete in the archive folder: 'ok' | 'blocked' | 'unknown'. */
+export async function writeProbe(folder){
+ const file=path.join(folder,`.mono-write-check-${randomUUID()}.tmp`);
+ try{await writeFile(file,'ok',{flag:'wx'});await unlink(file).catch(()=>{});return 'ok'}
+ catch(error){return ['EPERM','EACCES','EROFS'].includes(error.code)?'blocked':'unknown'}
+}
+/** Archive inside a OneDrive folder: Files On-Demand may move recordings online-only. */
+export function oneDriveRoot(libraryPath,env=process.env){
+ const roots=[env.OneDrive,env.OneDriveConsumer,env.OneDriveCommercial].filter(Boolean).map(root=>path.resolve(root).toLowerCase());
+ const target=path.resolve(libraryPath||'').toLowerCase();
+ return roots.find(root=>target===root||target.startsWith(root+path.sep))||null;
+}
 export async function preflight({worker,runtime,keyManager,now=()=>performance.now(),privacy=microphonePrivacy}){
  const checks=[];
  const tools=await runtime();
@@ -34,8 +46,13 @@ export async function preflight({worker,runtime,keyManager,now=()=>performance.n
   else if(!status.libraryAvailable)checks.push(check('library','warning','Папка архива недоступна',status.libraryPath||'','Подключите диск с архивом или выберите папку снова.'));
   else{
    let writable=true;try{await access(status.libraryPath,constants.W_OK)}catch{writable=false}
+   // access() reads permissions only. Windows "Controlled folder access" (ransomware protection)
+   // and some antivirus products block the write itself, so make a real one.
+   const probe=writable?await writeProbe(status.libraryPath):'ok';
    if(!writable)checks.push(check('library','warning','Нет прав записи в папку архива',status.libraryPath,'Выберите другую папку или выдайте права записи.'));
+   else if(probe==='blocked')checks.push(check('library','warning','Windows не даёт сохранять записи в эту папку',status.libraryPath,'Похоже на «Контролируемый доступ к папкам» (Безопасность Windows → Защита от программ-шантажистов): разрешите MONO или выберите папку вне «Документов».'));
    else checks.push(check('library','ok','Папка архива',status.libraryPath));
+   if(oneDriveRoot(status.libraryPath))checks.push(check('onedrive','advisory','Архив в папке OneDrive','При нехватке места OneDrive может оставить записи только в облаке — без интернета они не откроются.','Щёлкните папку архива правой кнопкой → «Всегда сохранять на этом устройстве».'));
    try{const space=await statfs(status.libraryPath),free=Number(space.bavail)*Number(space.bsize),hours=free/BYTES_PER_HOUR;
     const detail=`Свободно ${(free/1024**3).toFixed(1)} ГБ — не меньше ${hours>=10?Math.floor(hours):hours.toFixed(1)} ч записи.`;
     checks.push(hours<.25?check('disk','warning','Почти нет места на диске',detail,'Освободите место или перенесите архив.'):hours<2?check('disk','caution','Мало места на диске',detail,'Длинная встреча может не поместиться.'):check('disk','ok','Свободное место',detail));

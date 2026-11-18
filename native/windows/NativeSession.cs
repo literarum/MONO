@@ -22,7 +22,7 @@ internal sealed class NativeSession : IDisposable
     void State(string value,long stamp)=>emit("state",new(){{"sessionId",Id},{"state",value},{"monotonicNs",stamp},{"originMonotonicNs",OriginNs},{"inputId",tracks.FirstOrDefault(t=>t.Track=="mic")?.Id},{"outputId",tracks.FirstOrDefault(t=>t.Track=="system")?.Id}});
     public void Begin()
     {
-        State("requesting",NowNs);heartbeat=new Timer(_=>{if(!Completed)foreach(var track in tracks)emit("level",new(){{"sessionId",Id},{"track",track.Track},{"peak",track.Peak},{"rms",track.Rms},{"clippedFrames",track.ClippedFrames},{"monotonicNs",NowNs}});},null,0,250);
+        Realtime.KeepFullSpeed(true);State("requesting",NowNs);heartbeat=new Timer(_=>{if(!Completed)foreach(var track in tracks)emit("level",new(){{"sessionId",Id},{"track",track.Track},{"peak",track.Peak},{"rms",track.Rms},{"clippedFrames",track.ClippedFrames},{"monotonicNs",NowNs}});},null,0,250);
         coordinator=Task.Run(Run);
     }
     async Task WaitFor(Func<bool> condition,int timeoutMs)
@@ -49,7 +49,7 @@ internal sealed class NativeSession : IDisposable
             if(failure is null){long ackDeadline=Environment.TickCount64+1000;while(receipts.PendingCount>0&&Environment.TickCount64<ackDeadline)await Task.Delay(10);if(receipts.PendingCount>0)failure="IO_ERROR";}
             monitor?.Dispose();heartbeat?.Dispose();
             if(failure is not null)emit("error",new(){{"sessionId",Id},{"code",failure},{"stage",diagnosticStage},{"nativeCode",nativeCode}});else State("idle",StopNs);
-            lock(stateLock)state="closed";
+            lock(stateLock)state="closed";Realtime.KeepFullSpeed(false);
             if(tracks.Any(t=>!t.ProducerDone.IsSet||!t.WriterDone.IsSet))Environment.Exit(1);
         }
     }
