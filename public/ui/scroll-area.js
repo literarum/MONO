@@ -32,7 +32,7 @@ export function mountScrollArea(viewport,{axes='y'}={}){
  const refresh=()=>{cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>rails.forEach(r=>r.update()))};
  viewport.addEventListener('scroll',refresh,{passive:true,signal});viewport.addEventListener('input',refresh,{signal});window.addEventListener('resize',refresh,{signal});window.addEventListener('pointerup',stopHold,{signal});window.addEventListener('pointercancel',stopHold,{signal});window.addEventListener('blur',stopHold,{signal});
  const resize=new ResizeObserver(refresh);resize.observe(viewport);if(viewport.firstElementChild)resize.observe(viewport.firstElementChild);
- const mutation=new MutationObserver(refresh);mutation.observe(viewport,{childList:true,subtree:true,characterData:true});
+ const mutation=new MutationObserver(records=>{if(records.some(r=>[...r.addedNodes,...r.removedNodes].some(n=>n.nodeType===1)))refresh()});mutation.observe(viewport,{childList:true,subtree:true}); // text changes never alter scroll extent enough to matter; ResizeObserver covers growth
  const api={refresh,destroy(){abort.abort();stopHold();resize.disconnect();mutation.disconnect();cancelAnimationFrame(raf);viewport.classList.remove('scroll-viewport');shell.before(viewport);shell.remove();mounted.delete(viewport)}};
  mounted.set(viewport,api);refresh();return api;
 }

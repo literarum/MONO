@@ -43,8 +43,9 @@ h1,h2,.studio-timer{font-family:var(--font-display)}
    not for content itself. Cards are a dense material with no backdrop sampling:
    measured, backdrop-filter on every card inside the scroller caused 20–66 frames
    over 50 ms per scroll gesture and the flicker reported on Windows. */
+/* Never touches position: the same .glass class marks fixed/sticky layers (popups, toolbar). */
 .glass,.settings-card,.side-card,.record-card,.job-card,.studio-panel,.hero,.metric,.preflight{
- position:relative;background:var(--card-fill)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;
+ background:var(--card-fill)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;
  border:1px solid var(--glass-rim-soft)!important;border-radius:var(--radius-card)!important;box-shadow:var(--card-shadow),inset 0 1px 0 var(--glass-shine)!important}
 .glass::after,.settings-card::after,.studio-panel::after,.hero::after,.record-card::after{content:none!important}
 .studio-panel,.studio-panel-foot{z-index:0}
@@ -61,7 +62,7 @@ h1,h2,.studio-timer{font-family:var(--font-display)}
 .metric-card:hover{transform:none!important}
 
 /* The floating layer — the only Liquid Glass: sidebar, toolbar, tab bar, sheets. */
-.sidebar,.topbar,.setup-panel,.modal-panel{-webkit-backdrop-filter:var(--glass-blur)!important;backdrop-filter:var(--glass-blur)!important}
+.sidebar,.topbar{-webkit-backdrop-filter:var(--glass-blur)!important;backdrop-filter:var(--glass-blur)!important}
 .sidebar,.topbar{background:var(--glass-fill)!important;border:1px solid var(--glass-rim-soft)!important;box-shadow:var(--glass-shadow),inset 0 1px 0 var(--glass-shine)!important}
 :focus-visible{outline:3px solid color-mix(in srgb,var(--tint) 70%,transparent)!important;outline-offset:2px}
 
@@ -122,10 +123,12 @@ h1,h2,.studio-timer{font-family:var(--font-display)}
 @media (prefers-reduced-motion:reduce){.btn:active{transform:none}}
 
 /* Sheets and dialogs: thicker material so the text behind never competes (HIG legibility). */
-.setup-panel,.modal-panel{background:var(--glass-fill-strong)!important;-webkit-backdrop-filter:blur(40px) saturate(160%);backdrop-filter:blur(40px) saturate(160%)}
+/* Sheets are 95 % opaque: a backdrop blur under them is invisible but costs a full-screen GPU pass
+   on every frame, and a backdrop-filter would also capture fixed popups (Filter Effects 2). */
+.setup-panel,.modal-panel{background:var(--glass-fill-strong)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
 body[data-theme=light] .setup-panel,body[data-theme=light] .modal-panel{background:rgba(250,250,252,.95)!important}
 body:not([data-theme=light]) .setup-panel,body:not([data-theme=light]) .modal-panel{background:rgba(28,30,38,.95)!important}
-.setup-backdrop,.modal-backdrop{background:rgba(0,0,0,.28)!important;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.setup-backdrop,.modal-backdrop{background:rgba(0,0,0,.42)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
 
 /* Compact overview: the record action and recent takes first, no marketing banner. */
 @media screen{#view-dashboard.active{display:flex!important;flex-direction:column}}
@@ -133,7 +136,7 @@ body:not([data-theme=light]) .setup-panel,body:not([data-theme=light]) .modal-pa
 #view-dashboard .hero-art,#view-dashboard .hero-bottom,#view-dashboard .hero-grid{display:none!important}
 #view-dashboard .hero-content{width:100%!important;padding:28px 28px 26px!important}
 #view-dashboard .hero h1{font-size:clamp(30px,3.4vw,44px)!important;letter-spacing:-.03em!important;margin:0 0 8px!important;line-height:1.05!important}
-#view-dashboard .hero h1 br{display:none}#view-dashboard .hero h1 span{margin-left:.25em}
+#view-dashboard .hero h1 br{display:none}#view-dashboard .hero h1 span:not(.hero-period){margin-left:.25em}
 #view-dashboard .hero-description{margin:0 0 18px;max-width:60ch}
 #view-dashboard .recent-header{order:1}#view-dashboard #recent-list{order:2}
 #view-dashboard .section-title-line:not(.recent-header){order:3}#view-dashboard .metrics-grid{order:4}
@@ -177,3 +180,38 @@ body.content-scrolled .topbar{box-shadow:var(--glass-shadow),0 8px 24px rgba(0,0
 /* Light theme: darker label colours keep small badge text at WCAG AA (≥4.5:1). */
 body[data-theme=light] .speaker-me{color:#0058b8}body[data-theme=light] .speaker-others{color:#8a2fb3}
 .connection-banner{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:100;padding:10px 18px;border-radius:999px;background:var(--glass-fill-strong);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);box-shadow:var(--glass-shadow);font-weight:600}
+/* Level meter moves by transform only (compositor), the figure never shifts layout. */
+#level-fill{width:100%!important;transform:scaleX(0);transform-origin:left center;will-change:transform}
+#level-num{font-variant-numeric:tabular-nums;min-width:5.5ch;text-align:right}
+
+/* Quality governor (ui/index.js): measured slow frames on this computer → solid materials. */
+.lite-glass *,.lite-glass *::before,.lite-glass *::after{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+.lite-glass .sidebar,.lite-glass .topbar,.lite-glass .select-popup,.lite-glass #view-editor .audio-player{background:var(--surface,#16181d)!important}
+.lite-glass body::before{display:none}
+
+/* ── Field system (one shape for every input) ───────────────────────────────────
+   Buttons are capsules; fields are rounded rectangles (HIG: text fields are not pills).
+   --radius-control is the capsule radius for buttons only — fields use --radius-field. */
+:root{--radius-field:12px;--field-height:44px;--field-fill:rgba(255,255,255,.055);--field-fill-hover:rgba(255,255,255,.085);--field-border:rgba(255,255,255,.12);--field-border-hover:rgba(255,255,255,.22)}
+body[data-theme=light]{--field-fill:rgba(0,0,0,.035);--field-fill-hover:rgba(0,0,0,.055);--field-border:rgba(0,0,0,.12);--field-border-hover:rgba(0,0,0,.24)}
+.select-control,.search-control,input[type=text],input[type=password],input[type=search],input[type=number],input[type=email],input[type=url],textarea,.select:not(.select-wrap .select){
+ border-radius:var(--radius-field)!important;border:1px solid var(--field-border)!important;background:var(--field-fill)!important;box-shadow:none!important;color:var(--text)}
+.select-control,.search-control,input[type=text],input[type=password],input[type=search],input[type=number],input[type=email],input[type=url]{min-height:var(--field-height);height:var(--field-height)}
+.select-control{font-family:var(--font)!important;font-size:14px!important;font-weight:500;padding-left:14px!important}
+.select-control:hover:not(:disabled),.search-control:hover,input:hover:not(:disabled):not([type=range]):not([type=checkbox]),textarea:hover{border-color:var(--field-border-hover)!important;background:var(--field-fill-hover)!important}
+.select-control[aria-expanded=true],.select-control:focus-visible,.search-control:focus-within,input:focus-visible:not([type=range]):not([type=checkbox]),textarea:focus-visible{border-color:var(--tint)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--tint) 28%,transparent)!important;outline:none!important}
+.search-control input{border:0!important;background:transparent!important;box-shadow:none!important;height:auto!important;min-height:0!important;font-size:14px!important}
+.search-control input:focus-visible{box-shadow:none!important}
+textarea{border-radius:14px!important;padding:12px 14px!important;line-height:1.55}
+.select-popup{border-radius:14px!important;border:1px solid var(--field-border)!important;padding:4px!important;box-shadow:0 12px 32px rgba(0,0,0,.35)!important;background:var(--surface,#1c1e24)!important}
+.select-option{border-radius:9px!important;min-height:36px;display:flex;align-items:center;padding:0 12px!important}
+.field-label{font-size:13px;font-weight:600;margin:14px 0 6px;display:block}
+
+/* Pre-flight inside a settings card: one surface, not a card in a card. */
+.settings-card .preflight{background:none!important;border:0!important;box-shadow:none!important;padding:0!important;border-radius:0!important}
+.studio-side .preflight{padding:18px!important}
+
+/* Figures: proportional display face with tabular digits (no monospace mix). */
+.metric-card strong{font-family:var(--font-display)!important;font-variant-numeric:tabular-nums;letter-spacing:-.02em!important;font-weight:600!important}
+.metric-card strong small{font-size:.55em;font-weight:500;margin:0 .15em;color:var(--dim)}
+.hero-period,.heading-period{margin-left:0!important;padding-left:0!important}

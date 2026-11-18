@@ -1,7 +1,7 @@
 // Pre-flight check: one read-only snapshot of every system recording depends on.
 // Levels follow crew-alerting practice (EICAS): warning = action required before
 // recording, caution = degraded capability, advisory = informational, ok = normal.
-import {statfs,access,writeFile,unlink} from 'node:fs/promises';import path from 'node:path';import {randomUUID} from 'node:crypto';import {constants} from 'node:fs';import {microphonePrivacy} from './privacy.mjs';
+import {statfs,access,writeFile,unlink} from 'node:fs/promises';import path from 'node:path';import {randomUUID} from 'node:crypto';import {constants} from 'node:fs';import {microphonePrivacy,microphoneUsers} from './privacy.mjs';
 
 // Worst case on disk: native float32 stereo at 48 kHz (browser capture is ~4× smaller).
 export const BYTES_PER_HOUR=48000*2*4*3600;
@@ -32,7 +32,7 @@ export function oneDriveRoot(libraryPath,env=process.env){
  const target=path.resolve(libraryPath||'').toLowerCase();
  return roots.find(root=>target===root||target.startsWith(root+path.sep))||null;
 }
-export async function preflight({worker,runtime,keyManager,now=()=>performance.now(),privacy=microphonePrivacy}){
+export async function preflight({worker,runtime,keyManager,now=()=>performance.now(),privacy=microphonePrivacy,users=microphoneUsers}){
  const checks=[];
  const tools=await runtime();
  checks.push(tools.ffmpeg&&tools.ffprobe?check('audio-tools','ok','FFmpeg','Обработка и прослушивание звука доступны.')
@@ -68,6 +68,7 @@ export async function preflight({worker,runtime,keyManager,now=()=>performance.n
   else checks.push(check('capture','advisory','Системный модуль записи не установлен','Микрофон записывается через окно браузера. Звук компьютера недоступен.'));
  }catch{checks.push(check('capture','advisory','Системный модуль записи не ответил','Микрофон записывается через окно браузера.'))}
  try{checks.push(...microphoneChecks(await timed(worker.call('capture.diagnose'),7000)))}catch{}
+ try{const apps=await timed(users(),5000);if(apps?.length)checks.push(check('mic-users','advisory','Микрофон сейчас может использовать другое приложение',apps.slice(0,3).join(', ')+'.','Если запись не начнётся — закройте его или выключите в нём микрофон.'))}catch{}
  try{const mic=await timed(privacy(),4000);
   if(mic?.blocked)checks.push(check('mic-privacy','caution',mic.scope==='desktop'?'Windows запрещает классическим приложениям доступ к микрофону':'Доступ к микрофону выключен в Windows','Микрофон не запишется ни через модуль записи, ни через окно браузера. Звук компьютера записывать можно.','Параметры → Конфиденциальность и защита → Микрофон: включите доступ и «Разрешить классическим приложениям».'));
  }catch{}

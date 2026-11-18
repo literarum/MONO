@@ -55,3 +55,13 @@ test('pre-flight write probe and OneDrive detection',async()=>{
  assert.equal(oneDriveRoot(path.join(root,'Документы','MONO'),{OneDrive:root}),root.toLowerCase());
  assert.equal(oneDriveRoot(path.join(tmpdir(),'Other'),{OneDrive:root}),null);
 });
+test('microphone users: an open session (Stop = 0) is reported, finished ones and MONO\'s own engines are not',async()=>{
+ const {parseMicrophoneUsers,microphoneUsers}=await import('../backend/local/privacy.mjs');
+ const key='HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone';
+ const out=[key,'    Value    REG_SZ    Allow','',key+'\\NonPackaged','',key+'\\NonPackaged\\C:#Users#a#Discord#Discord.exe','    LastUsedTimeStart    REG_QWORD    0x1db3f1a2b3c4d5e','    LastUsedTimeStop    REG_QWORD    0x0','',
+  key+'\\NonPackaged\\C:#Program Files#Google#Chrome#Application#chrome.exe','    LastUsedTimeStart    REG_QWORD    0x1db3f1a2b3c4d5e','    LastUsedTimeStop    REG_QWORD    0x0','',
+  key+'\\NonPackaged\\C:#Zoom#Zoom.exe','    LastUsedTimeStart    REG_QWORD    0x1db3f1a2b3c4d5e','    LastUsedTimeStop    REG_QWORD    0x1db3f1a2b3c4d6f','',
+  key+'\\Microsoft.WindowsSoundRecorder_8wekyb3d8bbwe','    LastUsedTimeStart    REG_QWORD    0x1db3f1a2b3c4d5e','    LastUsedTimeStop    REG_QWORD    0x0'].join('\r\n');
+ assert.deepEqual(parseMicrophoneUsers(out),['Discord','WindowsSoundRecorder']);
+ assert.deepEqual(await microphoneUsers({platform:'linux'}),[]);
+});
