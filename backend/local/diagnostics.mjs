@@ -19,7 +19,7 @@ export class Journal{
  }
  note(level,message){
   let text=typeof message==='string'?message:JSON.stringify(message);
-  try{const v=JSON.parse(text);if(v&&typeof v==='object')text=[v.event,v.code,v.phase,v.message,v.operation,v.stage,v.errorName].filter(Boolean).join(' · ')}catch{}
+  try{const v=JSON.parse(text);if(v?.event==='startup_phase')return;if(v&&typeof v==='object')text=[v.event,v.code,v.phase,v.message,v.operation,v.stage,v.errorName].filter(Boolean).join(' · ')}catch{}
   this.rows.push({at:this.now(),level,message:scrub(text)});if(this.rows.length>this.limit)this.rows.splice(0,this.rows.length-this.limit);this.persist();
  }
  persist(){

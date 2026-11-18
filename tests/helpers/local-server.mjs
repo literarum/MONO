@@ -12,7 +12,7 @@ export async function localServer(t,extraEnv={}){
   try{await new Promise((resolve,reject)=>{let data='';const timer=setTimeout(()=>reject(new Error('Server startup timeout')),10000);child.stdout.on('data',b=>{data+=b;if(data.includes('"event":"listening"')){clearTimeout(timer);resolve()}});child.on('error',reject);child.on('exit',()=>{clearTimeout(timer);reject(new Error('Server exited before ready'))})})}
   catch(error){
    const elapsedMs=Math.round(performance.now()-started),cleanupStarted=performance.now();
-   const allowed=new Set(['imports.ready','runtime.ffmpeg.begin','runtime.ffmpeg.end','runtime.ffprobe.begin','runtime.ffprobe.end','directories.begin','directories.end','vault.begin','vault.end','recovery.begin','recovery.end','listening']);
+   const allowed=new Set(['worker.begin','worker.end','imports.ready','runtime.ffmpeg.begin','runtime.ffmpeg.end','runtime.ffprobe.begin','runtime.ffprobe.end','directories.begin','directories.end','vault.begin','vault.end','recovery.begin','recovery.end','listening']);
    const phasesAtFailure=logs.split('\n').filter(line=>line.startsWith('{"event":"startup_phase",')).flatMap(line=>{try{const row=JSON.parse(line);return allowed.has(row.phase)&&Number.isSafeInteger(row.ms)&&row.ms>=0?[{phase:row.phase,ms:row.ms}]:[]}catch{return []}}).slice(-20);
    // Stop this private child before collecting its final diagnostic trace.
    // Success deadline, ready packet and teardown deadline stay unchanged.

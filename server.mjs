@@ -569,7 +569,7 @@ async function main(){
   startupPhase('directories.begin');
   for(const folder of Object.values(folders))await mkdir(folder,{recursive:true});
   startupPhase('directories.end');
-  if(DEPLOY_MODE==='local'){startupPhase('vault.begin');await keyManager.status();startupPhase('vault.end')}
+  if(DEPLOY_MODE==='local'){startupPhase('worker.begin');await localWorker.start().catch(()=>{});startupPhase('worker.end');startupPhase('vault.begin');await keyManager.status();startupPhase('vault.end')}
   startupPhase('recovery.begin');
   for(const file of await readdir(folders.jobs)){
     if(!file.endsWith('.json')||file.endsWith('.result.json'))continue;
