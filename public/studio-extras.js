@@ -67,3 +67,18 @@ export class BatteryWatch{
   return null;
  }
 }
+
+/** A record still carrying its automatic name («Запись 18.11.2026 14:05»). */
+export const DEFAULT_TITLE=/^Запись \d\d\.\d\d\.\d{4} \d\d:\d\d( · продолжение)?$/;
+const FILLER=/^(?:(?:ну|так|вот|итак|э+|а+|м+|алло|короче|в общем|значит|слушай(?:те)?|окей|ок|да|ага|угу)[\s,.!?…-]+)+/i;
+/** Title from the first meaningful words of a transcript: fillers dropped, cut at a sentence
+ * end or a word boundary (≤ 60 chars), first letter capitalised. null when nothing usable. */
+export function suggestTitle(segments,limit=60){
+ let text='';
+ for(const s of segments||[]){text+=' '+String(s?.text||'');if(text.trim().length>=limit*1.5)break}
+ text=text.replace(/\s+/g,' ').trim().replace(FILLER,'').trim();
+ if(text.replace(/[^\p{L}\p{N}]/gu,'').length<8)return null;
+ const sentence=/^(.{12,}?[.!?…])(\s|$)/u.exec(text);let title=sentence&&sentence[1].length<=limit?sentence[1].replace(/[.!?…]+$/,''):text;
+ if(title.length>limit){title=title.slice(0,limit);const cut=title.lastIndexOf(' ');if(cut>limit*.5)title=title.slice(0,cut);title=title.replace(/[,;:\-–—]+$/,'')+'…'}
+ return title.charAt(0).toUpperCase()+title.slice(1);
+}

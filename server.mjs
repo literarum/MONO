@@ -7,7 +7,7 @@ import {spawn} from 'node:child_process';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID, timingSafeEqual,createHash} from 'node:crypto';
-import {planSegments,normalizeSegments,estimateCostSeconds} from './core.mjs';
+import {planSegments,normalizeSegments,estimateCostSeconds,alignToSilence,parseSilences,contextPrompt,isHallucination,rateLimitWait} from './core.mjs';
 import {localRoute,localWorker,authorizeLocalRequest} from './backend/local/routes.mjs';
 import {systemAccent} from './backend/local/appearance.mjs';
 import {checkUpdate} from './backend/local/updates.mjs';
@@ -27,6 +27,9 @@ const folders={jobs:path.join(storage,'jobs'),audio:path.join(storage,'audio'),s
 const DEPLOY_MODE=process.env.MONO_DEPLOY_MODE||'local';
 const HOST=process.env.MONO_HOST||(DEPLOY_MODE==='proxy'?'0.0.0.0':'127.0.0.1');
 const PORT=Number(process.env.PORT||4173);
+// A stray rejected promise (a closed socket, an aborted probe) is logged, never fatal: one
+// background hiccup must not take recording and the archive down with it.
+process.on('unhandledRejection',error=>{console.error(JSON.stringify({event:'unhandled_rejection',message:String(error?.code||error?.message||error).slice(0,200)}))});
 const MAX_BYTES=Number(process.env.MONO_MAX_UPLOAD_BYTES||1024*1024*1024);
 const MIN_FREE_BYTES=256*1024*1024;
 const JOB_TTL_HOURS=Number(process.env.MONO_JOB_TTL_HOURS||168);
@@ -124,7 +127,7 @@ let stopping=false;
 const startedAt=Date.now();
 function publicHealth(){
   const pending=[...jobs.values()].filter(j=>j.status==='queued').length;
-  return {...config,accent,update:availableUpdate,toolsChecking:Boolean(toolsChecking),version:'0.4.0',mode:DEPLOY_MODE,maxUploadBytes:MAX_BYTES,
+  return {...config,accent,update:availableUpdate,uptimeSeconds:Math.round(process.uptime()),toolsChecking:Boolean(toolsChecking),version:'0.4.0',mode:DEPLOY_MODE,maxUploadBytes:MAX_BYTES,
     retentionHours:JOB_TTL_HOURS,instanceId:process.env.MONO_LAUNCHER_INSTANCE_ID||null,queue:pending,processing:[...jobs.values()].filter(j=>j.status==='processing').length,
     uploadsInFlight,uptimeSeconds:Math.floor((Date.now()-startedAt)/1000),stopping};
 }
@@ -181,6 +184,8 @@ async function encodeSegment(job,plan) {
   return output;
 }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+/** Last confident words of a segment response: context for the next request (never a hallucination). */
+function tailOf(data){const kept=(data?.segments||[]).filter(s=>!isHallucination(s)).map(s=>String(s.text||'')).join(' ').trim();return kept.slice(-300)}
 // A window whose loudest sample stays below this cannot contain usable speech.
 // Sending it costs the 10 s billing minimum and invites Whisper's silence
 // hallucinations, so it is transcribed locally as empty.
@@ -195,6 +200,18 @@ async function peakDecibels(job,plan){
     // Any measurement failure means "not proven silent": the segment is sent.
     child.on('error',()=>done(null));
     child.on('close',code=>{const match=/max_volume:\s*(-?inf|-?[\d.]+)\s*dB/.exec(err);done(code===0&&match?(match[1].endsWith('inf')?-Infinity:Number(match[1])):null)});
+  });
+}
+/** Pauses of ≥0.4 s below −35 dBFS across the whole file, for cutting segments in silence.
+ * Any failure means "no map" and the fixed plan is used. */
+async function silenceMap(job,duration){
+  return await new Promise(resolve=>{
+    const child=spawn('ffmpeg',['-hide_banner','-nostats','-i',job.audioPath,'-map','0:a:0','-af','silencedetect=noise=-35dB:d=0.4','-f','null','-'],{stdio:['ignore','ignore','pipe'],windowsHide:true});
+    if(job.id)activeChildren.set(job.id,child);
+    let err='';const timer=setTimeout(()=>child.kill('SIGKILL'),Math.max(60000,Math.min(900000,duration*1000)));
+    child.stderr.on('data',b=>{err+=b.toString();if(err.length>4_000_000)err=err.slice(-4_000_000)});
+    const done=value=>{clearTimeout(timer);if(activeChildren.get(job.id)===child)activeChildren.delete(job.id);resolve(value)};
+    child.on('error',()=>done([]));child.on('close',code=>done(code===0?parseSilences(err):[]));
   });
 }
 function retryDelay(header,attempt){
@@ -212,7 +229,7 @@ async function transcribe(segmentFile,job) {
   form.append('response_format','verbose_json');
   form.append('temperature','0');
   form.append('timestamp_granularities[]','segment');
-  if(job.prompt)form.append('prompt',job.prompt);
+  const prompt=contextPrompt(job.prompt,job.contextTail);if(prompt)form.append('prompt',prompt);
   const controller=new AbortController();activeControllers.set(job.id,controller);
   try{
     const response=await fetch(GROQ_ENDPOINT,{
@@ -226,6 +243,7 @@ async function transcribe(segmentFile,job) {
     }
     const data=await response.json();
     if(typeof data.text!=='string')throw new Error('Groq вернул ответ без текста');
+    job.rateWait=rateLimitWait(response.headers);
     return data;
   }finally{activeControllers.delete(job.id)}
 }
@@ -274,23 +292,29 @@ async function doWork(job){
       if(digest.digest('hex')!==job.audioSha256)throw Object.assign(new Error('AUDIO_DAMAGED'),{code:'AUDIO_DAMAGED'});
     }
     const duration=await probe(job.audioPath);
-    const plans=planSegments(duration,job.segmentSeconds||240);
+    // Cut in pauses, not mid-word; the plan is stored so a resumed job reuses its cached segments.
+    let plans=Array.isArray(job.plans)&&job.plans.length&&Math.abs(job.plans.at(-1).end-duration)<0.01?job.plans:null;
+    if(!plans){const fixed=planSegments(duration,job.segmentSeconds||240);plans=fixed.length>1?alignToSilence(fixed,await silenceMap(job,duration)):fixed;await update(job,{plans})}
     await update(job,{duration,total:plans.length,stage:'Подготовка и распознавание'});
     const done=[];
+    // Keep the computer awake while this job runs (lease renewed each segment, 3 min).
+    const holdAwake=()=>localWorker.call('power.busy',{seconds:180}).catch(()=>{});
+    if(DEPLOY_MODE==='local')void holdAwake();
     for(const plan of plans){
+      if(DEPLOY_MODE==='local')void holdAwake();
       if(job.cancelRequested||stopping){await update(job,{status:stopping?'queued':'cancelled',stage:stopping?'Ожидает перезапуска':'Отменено пользователем'});return}
       const cached=path.join(folders.segments,`${job.id}-${plan.index}.json`);
       if(existsSync(cached)){
         try{
           const data=JSON.parse(await readFile(cached,'utf-8'));
           if(typeof data.text!=='string')throw new Error('Invalid cached segment');
-          done.push({plan,data});await update(job,{completed:done.length});continue;
+          done.push({plan,data});job.contextTail=tailOf(data);await update(job,{completed:done.length});continue;
         }catch{await unlink(cached).catch(()=>{})}
       }
       await update(job,{stage:`Подготовка сегмента ${plan.index+1}/${plans.length}`});
       const peak=await peakDecibels(job,plan);
       if(peak!==null&&peak<=SILENCE_PEAK_DB){
-        const silent={text:'',segments:[],skipped:'silence'};
+        const silent={text:'',segments:[],skipped:'silence'};job.contextTail='';
         await writeAtomic(cached,JSON.stringify(silent));done.push({plan,data:silent});
         await update(job,{completed:done.length,skippedSilent:(job.skippedSilent||0)+1});continue;
       }
@@ -302,6 +326,7 @@ async function doWork(job){
         await update(job,{stage:`Groq · сегмент ${plan.index+1}/${plans.length}`,
           attempts:(job.attempts||0)+1,
           estimatedUSD:(job.estimatedUSD||0)+estimateCostSeconds(plan.mediaEnd-plan.mediaStart)});
+        if(job.rateWait){await update(job,{stage:'Пауза по лимиту Groq'});await sleep(job.rateWait);job.rateWait=0}
         try{data=await transcribe(audioFile,job);break}
         catch(e){
           if(job.cancelRequested||stopping||(!(e.retryable??['TimeoutError','TypeError','AbortError'].includes(e.name)))||attempt===3)throw e;
@@ -311,7 +336,7 @@ async function doWork(job){
       }
       if(job.cancelRequested||stopping){await update(job,{status:stopping?'queued':'cancelled',stage:stopping?'Ожидает перезапуска':'Отменено пользователем'});return}
       await writeAtomic(cached,JSON.stringify(data));
-      done.push({plan,data});
+      done.push({plan,data});job.contextTail=tailOf(data);
       await update(job,{completed:done.length});
       await unlink(audioFile).catch(()=>{});
     }
@@ -489,7 +514,7 @@ async function route(req,res){
         await purge(job);json(res,200,{status:'deleted'});return;
       }
       if(req.method==='GET'&&!match[2]){
-        const {audioPath,clientKey,prompt,...safe}=job;json(res,200,safe);return;
+        const {audioPath,clientKey,prompt,contextTail,rateWait,plans,...safe}=job;json(res,200,safe);return;
       }
       if(req.method==='POST'&&match[2]==='/ack'){
         if(job.status!=='completed'){fail(res,409,'Нельзя подтвердить незавершённое задание');return}

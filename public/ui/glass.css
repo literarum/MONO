@@ -242,3 +242,17 @@ body[data-theme=light] .topbar{background:rgba(250,250,252,.95)!important}
 .toast{display:block!important}
 .toast.error::before{display:inline-block;vertical-align:.08em;margin-right:9px}
 .toast .toast-action{display:flex!important;margin:10px 0 0 auto!important}
+
+/* Long lists render only what is on screen (content-visibility); sizes reserved to avoid jumps. */
+.record-card,.job-card{content-visibility:auto;contain-intrinsic-size:auto 240px}
+.transcript-paragraph{content-visibility:auto;contain-intrinsic-size:auto 96px}
+/* Playback follow in the editor */
+.transcript-paragraph.is-playing{background:color-mix(in srgb,var(--tint) 10%,transparent);border-radius:14px;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tint) 28%,transparent)}
+/* Shortcut sheet */
+.shortcut-list{display:grid;grid-template-columns:auto 1fr;gap:10px 18px;margin:4px 0;align-items:baseline}
+.shortcut-list dd{margin:0;color:var(--muted,inherit)}
+kbd{font:600 12px/1 var(--font);padding:5px 8px;border-radius:7px;border:1px solid var(--field-border);background:var(--field-fill);white-space:nowrap}
+/* Reduce Motion: views appear instantly, no capsule animation, no smooth scroll. */
+@media (prefers-reduced-motion:reduce){.view{animation:none!important}html{scroll-behavior:auto!important}*{transition-duration:.01ms!important}}
+.toast{cursor:default}
+.record-source{min-height:1.3em;margin-top:6px;font-size:13px;color:var(--muted,inherit);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

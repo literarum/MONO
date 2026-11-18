@@ -8,6 +8,7 @@ from local_core.config import LocalConfig
 from local_core.migration import Migration
 config=None
 
+POWER={'until':0.0}
 def configuration():
     global config
     if config is None:config=LocalConfig()
@@ -28,6 +29,11 @@ def dispatch(method,params):
         # This RPC is on the private trusted supervisor pipe only. There is no
         # corresponding HTTP read operation, including in credentials routes.
         if method=='credentials.read':return {'key':vault.read()}
+    if method=='power.busy':
+        # A long transcription keeps the computer awake for a bounded lease (renewed by the server).
+        seconds=params.get('seconds',120)
+        if type(seconds) not in [int,float] or not 0<=seconds<=600:raise CoreError('INVALID_REQUEST','Некорректный запрос')
+        POWER['until']=time.monotonic()+seconds;return {'until':seconds}
     if method=='status':return configuration().status()
     if (method in ['records.create','records.patch','records.transcript.commit','records.transcript.edit','records.trash','records.restore','records.segment','records.import','stage.allocate'] or method.startswith('migration.')) and configuration().transfers.active:
         raise CoreError('LIBRARY_BUSY','Дождитесь завершения копирования архива')
@@ -116,7 +122,8 @@ def main():
         if config is not None and config._capture is not None:
             config._capture.tick()
             # Same thread every time: Windows execution-state assertions are per thread.
-            awake.set(config._capture.active)
+            awake.set(config._capture.active or time.monotonic()<POWER['until'])
+        elif time.monotonic()<POWER['until'] or awake.active:awake.set(time.monotonic()<POWER['until'])
         try:line=requests.get(timeout=.05)
         except queue.Empty:continue
         if line is None:break
