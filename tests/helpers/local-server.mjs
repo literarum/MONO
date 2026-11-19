@@ -22,7 +22,7 @@ export async function localServer(t,extraEnv={}){
   }
  };
  const session=async()=>{const r=await fetch(url+'/api/local/session');const d=await r.json();return {Cookie:r.headers.get('set-cookie').split(';')[0],Origin:url,'X-Mono-CSRF':d.csrf}};
- t.after(async()=>{await stop();await rm(root,{recursive:true,force:true,maxRetries:10,retryDelay:50})});await start();return {root,url,session,logs:()=>logs,restart:async()=>{await stop();await start()}};
+ t.after(async()=>{await stop();await rm(root,{recursive:true,force:true,maxRetries:10,retryDelay:50})});await start();return {root,url,session,logs:()=>logs,restart:async()=>{await stop();await start()},stop,start};
 }
 export function wavFixture(){
  const b=Buffer.alloc(44+1600*2);b.write('RIFF');b.writeUInt32LE(b.length-8,4);b.write('WAVE',8);b.write('fmt ',12);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(16000,24);b.writeUInt32LE(32000,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(3200,40);for(let i=0;i<1600;i++)b.writeInt16LE(Math.round(1000*Math.sin(2*Math.PI*440*i/16000)),44+i*2);return b;

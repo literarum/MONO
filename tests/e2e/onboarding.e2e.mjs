@@ -39,8 +39,9 @@ test('reconnecting a missing archive closes setup instead of leaving an empty pa
   await fetch('/api/local/library/configure',{method:'POST',headers,body:JSON.stringify({useDefault:true})});
   await fetch('/api/local/preferences',{method:'PATCH',headers,body:JSON.stringify({onboarding:{completed:true,keySkipped:true,soundTested:true}})});
   return (await (await fetch('/api/local/status')).json()).libraryPath});
- rmSync(libraryPath,{recursive:true,force:true}); // the archive folder disappeared (deleted, disk unplugged)
- await server.restart();
+ // The archive folder disappeared while MONO was closed (deleted, disk unplugged). Windows keeps a
+ // running core's lock file undeletable, so the core is stopped first.
+ await server.stop();rmSync(libraryPath,{recursive:true,force:true});await server.start();
  await page.goto(server.url+'/');
  await page.waitForSelector('.setup-panel :text("Подключите ваш архив")',{timeout:20000});
  await page.click('.setup-panel button:has-text("Выбрать папку")');
