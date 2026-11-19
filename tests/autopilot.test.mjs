@@ -10,6 +10,10 @@ test('recovery ladder: chosen devices → defaults → browser channel; at most 
  assert.deepEqual(recoverySteps({mode:'mic',inputId:null,outputId:null},true),[{mode:'browser',inputId:null,outputId:null}]);
  assert.deepEqual(recoverySteps({mode:'both',inputId:null,outputId:null},true),[{mode:'both',inputId:null,outputId:null}],'system audio is never silently dropped');
  assert.deepEqual(recoverySteps({mode:'system',inputId:null,outputId:'hdmi'},true),[{mode:'system',inputId:null,outputId:null}]);
+ // Browser channel refused the microphone (NotReadableError): the system module is the dissimilar path.
+ assert.deepEqual(recoverySteps({mode:'browser',inputId:null,outputId:null},true,true),[{mode:'mic',inputId:null,outputId:null}]);
+ assert.deepEqual(recoverySteps({mode:'browser',inputId:'cam',outputId:null},true,true),[{mode:'browser',inputId:null,outputId:null},{mode:'mic',inputId:null,outputId:null}]);
+ assert.deepEqual(recoverySteps({mode:'browser',inputId:null,outputId:null},true,false),[{mode:'browser',inputId:null,outputId:null}],'without the module nothing else to try');
  assert.equal(RETRYABLE.has('ACCESS_DENIED'),false,'a privacy decision is never retried around');
  assert.equal(RETRYABLE.has('DISK_FULL'),false);assert.equal(RETRYABLE.has('START_TIMEOUT'),true);
 });

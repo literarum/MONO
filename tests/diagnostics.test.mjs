@@ -43,7 +43,7 @@ test('window side: signal, frames and plain-language microphone findings',()=>{
  const s=signalStats(Float32Array.from([0,.5,-1,.25]));assert.equal(s.peakDb,0);assert.equal(s.clippedShare,.25);
  assert.equal(signalStats(new Float32Array(10)).peakDb,-120);
  const fr=frameStats([16.7,16.7,16.6,16.8,50,16.7]);assert.equal(fr.fps,60);assert.ok(fr.slowShare>0);
- assert.equal(windowFindings({},{ok:false,error:'NotReadableError'})[0].title,'Микрофон занят или драйвер не отдаёт звук');
+ assert.match(windowFindings({},{ok:false,error:'NotReadableError'})[0].title,/занят или захвачен в монопольном режиме/);
  assert.match(windowFindings({},{ok:true,peakDb:-120,rmsDb:-120,clippedShare:0,openMs:100,label:'USB'})[0].title,/полную тишину/);
  assert.equal(windowFindings({gpu:{software:true,renderer:'SwiftShader'}},{ok:true,peakDb:-20,clippedShare:0,openMs:100})[0].title,'Графика работает без видеокарты');
  const text=formatReport({generatedAt:'t',findings:sortFindings([{level:'advisory',title:'Б'},{level:'warning',title:'А',action:'сделать'}]),server:{app:{version:'0.4.0'}},window:{}});

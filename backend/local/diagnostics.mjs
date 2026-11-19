@@ -96,6 +96,7 @@ export async function collect({worker,runtime,keyManager,journal,health=()=>({})
   }
  }
  const caps=await settle(()=>worker.call('capture.capabilities'),9000);
+ const prefs=await settle(()=>worker.call('preferences.get'),4000);report.capture.source=prefs.ok?prefs.value?.capture?.mode||null:null;
  report.capture.module=caps.ok?{ready:Boolean(caps.value.ready),supported:caps.value.supported,reason:caps.value.reason||null,modes:caps.value.modes||[],state:caps.value.state||null,inputs:(caps.value.inputDevices||[]).length,outputs:(caps.value.outputDevices||[]).length}:{error:caps.code};
  const diag=await settle(()=>worker.call('capture.diagnose'),8000);
  report.capture.inputs=diag.ok&&Array.isArray(diag.value?.inputs)?diag.value.inputs.map(d=>({name:scrub(d.name),state:d.state,default:Boolean(d.default),muted:d.muted??null,volume:typeof d.volume==='number'?Math.round(d.volume*100):null})):null;
@@ -134,6 +135,8 @@ export function findings(r){
  if(c.inputs&&!active.length)out.push(F('warning','Windows не видит рабочего микрофона',inputs.length?`Устройства есть, но они ${[...new Set(inputs.map(d=>d.state))].join(', ')}.`:'Ни одного входа звука.','Подключите микрофон или включите его: Параметры → Система → Звук.'));
  if(main?.muted)out.push(F('caution','Микрофон выключен в Windows',`«${main.name}».`,'MONO включит его при записи или нажмите «Исправить» в предполётной проверке.'));
  else if(main&&typeof main.volume==='number'&&main.volume<10)out.push(F('caution','Громкость микрофона почти 0',`«${main.name}»: ${main.volume} %.`,'MONO поднимет её при записи.'));
+ if(c.source==='browser'&&c.module?.ready&&(c.module.modes||[]).includes('mic'))out.push(F('caution','Источник записи — окно браузера, хотя системный модуль готов','Системный модуль надёжнее: он открывает микрофон в общем режиме Windows с повтором через встроенный конвертер.','Студия → «Что записывать» → «Микрофон (системный модуль)». Если окно не откроет микрофон, MONO переключится сам.'));
+ if(inputs.some(d=>/voicemeeter/i.test(d.name||''))&&c.heldBy!==null)out.push(F('advisory','Установлен Voicemeeter','Если ваш микрофон выбран в Voicemeeter аппаратным входом, он может забирать его у остальных программ.','При ошибке «микрофон занят» уберите микрофон из Voicemeeter на время записи.'));
  if(c.heldBy?.length)out.push(F('advisory','Микрофон может держать другое приложение',c.heldBy.join(', ')+'.','Если запись не начинается — закройте его.'));
  if(c.module?.error)out.push(F('caution','Системный модуль записи не ответил',`Код: ${c.module.error}.`,'Микрофон пишется через окно; звук компьютера недоступен.'));
  else if(c.module&&!c.module.ready&&['HELPER_UNAVAILABLE','HELPER_MISSING'].includes(c.module.reason))out.push(F('advisory','Системный модуль записи не установлен','Микрофон пишется через окно; звук компьютера недоступен.','Переустановите MONO, если нужен звук компьютера.'));

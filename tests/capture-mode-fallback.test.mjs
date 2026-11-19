@@ -16,8 +16,9 @@ test('a saved native mode falls back to the browser microphone when no native he
  const library=memoryLibrary();
  const client={capabilities:async()=>({supported:true,ready:true,nativeReady:false,modes:['browser'],inputDevices:[],browserInputDevices:[]})};
  const model=new CaptureSources(client,library);await model.load();
- assert.equal(model.value.mode,'browser','unavailable mode is replaced and persisted');
- assert.equal(library.patches.at(-1).capture.mode,'browser');
+ // Effective only: a module that is briefly unavailable must not pin the person to the browser forever.
+ assert.equal(model.value.mode,'mic','the saved choice is kept');
+ assert.equal(library.patches.length,0,'nothing is persisted');
  assert.deepEqual(await model.selection(),{mode:'browser',inputId:null,outputId:null});
 });
 

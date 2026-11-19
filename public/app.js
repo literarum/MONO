@@ -131,7 +131,7 @@ function onNativeState(value){
   document.querySelectorAll('.toast').forEach(t=>{if(/^Переподключаем звук/.test(t.textContent))t.remove()})}
  mediaInterlock?.observe(value);
  audioReview?.captureState(value);
- void followSafety(value,wasActive);if(!active&&wasActive)releaseDeferred();
+ void followSafety(value,wasActive);if(!active&&wasActive){releaseDeferred();applyPendingSourceSwitch()}
  if(active){
   if(!state.capture?.native)state.capture={native:true,peaks:[]};
   Object.assign(state.capture,{id:value.recordId,paused:value.state==='paused',stopping:value.state==='stopping',snapshot:value});state.recordingId=value.recordId;pauseAudition();
@@ -171,7 +171,12 @@ async function autopilotBeforeStart(selection){
 /** Start failures that a different path can fix: same mode on the default devices, then the
  * browser channel for a microphone-only take. Two attempts per press, then an honest message. */
 const autopilot={selection:null,steps:[],mode:null};
-function arm(selection){autopilot.selection=selection;autopilot.mode=selection.mode;autopilot.inputId=selection.inputId;autopilot.steps=recoverySteps(selection,(captureSources?.capability?.modes||[]).includes('browser'))}
+function arm(selection){autopilot.selection=selection;autopilot.mode=selection.mode;autopilot.inputId=selection.inputId;autopilot.steps=recoverySteps(selection,(captureSources?.capability?.modes||[]).includes('browser'),Boolean(captureSources?.capability?.nativeReady)&&(captureSources?.capability?.modes||[]).includes('mic'))}
+/** The browser channel could not open the microphone but the system module did: keep using it. */
+function rememberPathSwitch(from,to){if(from==='browser'&&to==='mic'){notify('Окно не смогло открыть микрофон — MONO записывает через системный модуль и будет использовать его дальше.');healthEvent('BROWSER_FALLBACK');pendingSourceSwitch='mic'}}
+// Settings cannot change during a take (the core answers CAPTURE_BUSY): the switch is saved when it ends.
+let pendingSourceSwitch=null;
+function applyPendingSourceSwitch(){if(!pendingSourceSwitch||!captureSources)return;const mode=pendingSourceSwitch;pendingSourceSwitch=null;void captureSources.update({mode,inputId:null},{quiet:true}).catch(()=>{pendingSourceSwitch=mode})}
 function autopilotNext(){return autopilot.selection?autopilot.steps.shift()||null:null}
 let startInFlight=null;
 async function startWithAutopilot(selection){
@@ -181,14 +186,14 @@ async function startWithAutopilot(selection){
 async function startWithAutopilotOnce(selection){
  arm(selection);
  for(;;){
-  try{captureMode=selection.mode;return await nativeController.start(selection)}
+  try{captureMode=selection.mode;const started=await nativeController.start(selection);rememberPathSwitch(autopilot.mode,selection.mode);return started}
   catch(error){const next=AUTOPILOT_RETRY.has(error?.code)?autopilotNext():null;if(!next)throw error;notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));if(next.mode==='browser'&&selection.mode!=='browser')notify('Записываем через запасной канал — окно MONO.');selection=next}
  }
 }
 async function autopilotRetry(code){
  const next=autopilotNext();if(!next)return false;
  notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));
- try{if(next.mode==='browser'&&autopilot.mode!=='browser'){notify('Записываем через запасной канал — окно MONO.');healthEvent('BROWSER_FALLBACK')}captureMode=next.mode;await nativeController.start(next);return true}
+ try{if(next.mode==='browser'&&autopilot.mode!=='browser'){notify('Записываем через запасной канал — окно MONO.');healthEvent('BROWSER_FALLBACK')}captureMode=next.mode;await nativeController.start(next);rememberPathSwitch(autopilot.mode,next.mode);return true}
  catch(error){if(AUTOPILOT_RETRY.has(error?.code)&&await autopilotRetry(error.code))return true;void notifyCaptureError(captureErrors[error?.code]||error.message||'Не удалось начать запись.',error?.code||code);return true}
 }
 /** A headset unplugged mid-meeting: the confirmed part is kept and recording continues
@@ -380,7 +385,19 @@ async function notifyCaptureError(message,code){
  if(['DEVICE_BUSY','START_TIMEOUT','BROWSER_AUDIO_ERROR'].includes(code)&&storageDetails().local){
   try{const local=await localLibraryClient();const {apps}=await local.json('/microphone-users',{signal:AbortSignal.timeout(5000)});if(apps?.length)extra=` Сейчас микрофон, похоже, использует: ${apps.slice(0,3).join(', ')} — закройте его или выключите в нём микрофон.`}catch{}
  }
- notify(message+extra,'error',fixFor(code));
+ notify(message+extra,'error',code==='DEVICE_BUSY'&&/Windows/i.test(navigator.userAgent)?{text:'Как освободить микрофон',run:showMicrophoneBusyHelp}:fixFor(code));
+}
+/** Device busy on both paths: something holds the microphone, often in exclusive mode. */
+async function showMicrophoneBusyHelp(){
+ let apps=[],virtual=false;
+ try{const local=await localLibraryClient();apps=(await local.json('/microphone-users',{signal:AbortSignal.timeout(5000)})).apps||[];const report=await local.json('/capture/diagnose',{signal:AbortSignal.timeout(7000)});virtual=(report?.inputs||[]).some(d=>/voicemeeter|vb-audio|virtual cable/i.test(d.name||''))}catch{}
+ const steps=[
+  apps.length?`<li><strong>Закройте ${h(apps.slice(0,3).join(', '))}</strong> или выключите в нём микрофон — Windows сейчас отдаёт микрофон ему.</li>`:'<li><strong>Закройте программы, которые могут держать микрофон</strong>: Discord, Zoom, Teams, OBS, другой браузер.</li>',
+  virtual?'<li><strong>Voicemeeter</strong>: если ваш микрофон выбран в нём как аппаратный вход (Hardware Input), Voicemeeter может забирать его целиком. Уберите микрофон из Voicemeeter на время записи или закройте Voicemeeter.</li>':'',
+  '<li><strong>Монопольный режим</strong>: «Панель управления» → «Звук» → вкладка «Запись» → ваш микрофон → «Свойства» → «Дополнительно» → снимите обе галочки в разделе «Монопольный режим» → «ОК». Тогда одна программа больше не сможет забрать микрофон у остальных.</li>',
+  '<li>Нажмите «Начать запись» ещё раз — MONO сам попробует оба пути: системный модуль и окно.</li>'].filter(Boolean).join('');
+ modal('Микрофон занят другой программой',`<ol class="busy-steps">${steps}</ol><p class="field-hint">Причина видна из ошибки Windows: устройство открыто, но звук отдать нельзя (NotReadableError / AUDCLNT_E_DEVICE_IN_USE).</p>`,
+  [{text:'Открыть параметры звука',primary:true,run:()=>{window.open('ms-settings:sound','_blank')}}]);
 }
 /** The one action that resolves a capture/archive failure code. */
 function fixFor(code){
