@@ -533,13 +533,23 @@ async function runDeepDiagnostics(){
   const report={generatedAt:new Date().toISOString(),findings,server:server&&!server.error?{...server,findings:undefined}:server,window:windowInfo,microphone,recentWindowErrors:recentErrors()};
   const text=formatReport(report);
   if($('#modal').hidden){notify('Диагностика готова','info',{text:'Показать',run:()=>showDeepReport(findings,text)});return}
-  showDeepReport(findings,text);
+  showDeepReport(findings,text,report);
  }catch(error){notify('Диагностика не завершилась: '+error.message,'error')}
  finally{deepRunning=false;syncLevelPreview()}
 }
-function showDeepReport(findings,text){
+/** What was actually tested and worked — a check list, not only a fault list. */
+function passedLine(report){
+ const s=report.server||{},ok=[];
+ if(s.core?.responds)ok.push('ядро');if(s.archive?.available&&s.archive.writeProbe==='ok')ok.push('запись в архив');
+ if(typeof s.archive?.hoursLeft==='number'&&s.archive.hoursLeft>=2)ok.push('место на диске');
+ if(s.capture?.probe?.opened&&s.capture.probe.peakDb>-90)ok.push('микрофон через системный модуль');
+ if(report.microphone?.raw?.ok||report.microphone?.processed?.ok)ok.push('микрофон в окне');
+ if(s.groq?.http===200)ok.push('связь с Groq');if((s.disks||[]).length&&s.disks.every(d=>d.health==='Healthy'))ok.push('здоровье диска');
+ return ok.length?`<p class="deep-passed">✓ Работает: ${ok.join(', ')}.</p>`:'';
+}
+function showDeepReport(findings,text,report={}){
  const mark={warning:'✖',caution:'▲',advisory:'●'};
- const body=(findings.length?`<p>${findings.some(f=>f.level==='warning')?'Есть проблемы, которые мешают работе:':'Найдено:'}</p><ul class="deep-findings">${findings.map(f=>`<li data-level="${f.level}"><span class="deep-mark" aria-hidden="true">${mark[f.level]||'•'}</span><div><strong>${h(f.title)}</strong>${f.detail?`<span>${h(f.detail)}</span>`:''}${f.action?`<em>${h(f.action)}</em>`:''}</div></li>`).join('')}</ul>`:'<p><strong>Проблем не найдено.</strong> Ядро, архив, звук, Groq и окно в порядке.</p>')+
+ const body=(findings.length?`<p>${findings.some(f=>f.level==='warning')?'Есть проблемы, которые мешают работе:':'Найдено:'}</p>${passedLine(report)}<ul class="deep-findings">${findings.map(f=>`<li data-level="${f.level}"><span class="deep-mark" aria-hidden="true">${mark[f.level]||'•'}</span><div><strong>${h(f.title)}</strong>${f.detail?`<span>${h(f.detail)}</span>`:''}${f.action?`<em>${h(f.action)}</em>`:''}</div></li>`).join('')}</ul>`:'<p><strong>Проблем не найдено.</strong></p>')+passedLine(report)+
   '<p class="field-hint">В отчёте нет названий записей, текста, ключей и путей к файлам. Названия звуковых устройств остаются — по ним видно, какой микрофон проверялся.</p><div class="inline-actions"><button type="button" class="btn btn-primary btn-small" id="deep-copy">Скопировать отчёт</button><button type="button" class="btn btn-outline btn-small" id="deep-save">Сохранить файл</button></div>';
  modal('Глубокая диагностика',body);const close=$('#modal-actions .btn-outline');if(close)close.textContent='Закрыть';
  $('#deep-copy').onclick=async()=>{try{await navigator.clipboard.writeText(text);$('#deep-copy').textContent='Скопировано'}catch(e){notify('Не удалось скопировать: '+e.message,'error')}};
@@ -787,14 +797,25 @@ async function beginRecord(){
    state.recordBusy=false;notify('Не удалось начать запись: '+e.message,'error');
  }
 }
+/** The timer runs like a clock (smooth seconds) between archive confirmations, which arrive in
+ * ~2 s chunks; it never runs more than 3 s ahead of what is confirmed and freezes on pause. */
+const recordClock={session:null,base:0,at:0,shown:0};
+function smoothSeconds(value){
+ const now=performance.now(),confirmed=Number(value.duration)||0,session=value.sessionId||value.recordId;
+ if(recordClock.session!==session){Object.assign(recordClock,{session,base:confirmed,at:now,shown:confirmed})}
+ if(confirmed>recordClock.base){recordClock.base=confirmed;recordClock.at=now}
+ if(value.state!=='recording'){recordClock.at=now;recordClock.base=Math.max(recordClock.base,recordClock.shown);return recordClock.shown}
+ recordClock.shown=Math.max(recordClock.shown,Math.min(recordClock.base+(now-recordClock.at)/1000,confirmed+3));
+ return recordClock.shown;
+}
 function currentRecordingSeconds(){
  const r=state.capture;if(!r)return 0;
- if(r.native)return r.snapshot.duration||0;
+ if(r.native)return smoothSeconds(r.snapshot);
  return Math.max(0,((r.paused?r.pauseStart:performance.now())-r.start-r.pauseMs)/1000);
 }
 function updateRecordUI(){
  const r=state.capture;
- if(r?.native){const value=r.snapshot,labels={requesting:'Подключаем звук',recording:'Идёт запись',paused:'Пауза',stopping:'Сохраняем'};$('#record-state').classList.toggle('recording',value.state==='recording'&&value.connected);setText('#record-state',value.connected?labels[value.state]:'Нет связи');setText('#record-caption',value.state==='paused'?'ПАУЗА СОХРАНЯЕТСЯ НА ШКАЛЕ ВРЕМЕНИ':value.state==='recording'?'ПОДТВЕРЖДЕНО В АРХИВЕ':'ОЖИДАЕМ ПОДТВЕРЖДЕНИЕ');setText('#record-timer',durationText(value.duration));return}
+ if(r?.native){const value=r.snapshot,labels={requesting:'Подключаем звук',recording:'Идёт запись',paused:'Пауза',stopping:'Сохраняем'};$('#record-state').classList.toggle('recording',value.state==='recording'&&value.connected);setText('#record-state',value.connected?labels[value.state]:'Нет связи');setText('#record-caption',value.state==='paused'?'ПАУЗА СОХРАНЯЕТСЯ НА ШКАЛЕ ВРЕМЕНИ':value.state==='recording'?'ОКНО МОЖНО СВЕРНУТЬ — ЗАПИСЬ ПРОДОЛЖИТСЯ':'ОЖИДАЕМ ПОДТВЕРЖДЕНИЕ');setText('#record-timer',durationText(smoothSeconds(value)));return}
  $('#record-state').classList.toggle('recording',Boolean(r&&!r.paused));
  $('#record-state').innerHTML=r?(r.paused?'Пауза':`<span class="tiny-dot"></span> Идёт запись`):`<span class="tiny-dot"></span> Ожидание`;
  $('#record-caption').textContent=r?(r.paused?'ЗАПИСЬ ПРИОСТАНОВЛЕНА':'ЗАПИСЬ В ПРОЦЕССЕ'):levelPreview.active?'МИКРОФОН ПРОСЛУШИВАЕТСЯ · НЕ ЗАПИСЫВАЕТСЯ':'ГОТОВО К ЗАПИСИ';
@@ -857,6 +878,7 @@ function setMeter(rms,now){
 function drawWave(now=performance.now()){
  nativeFrame=0;
  const r=state.capture,keepGoing=Boolean(state.capture)||levelPreview.active&&state.view==='record';
+ if(r?.native&&now-(recordClock.paintedAt||0)>250){recordClock.paintedAt=now;setText('#record-timer',durationText(smoothSeconds(r.snapshot)))}
  if(now-waveDrawnAt<(batterySaver.on?66:32)){if(keepGoing)nativeFrame=requestAnimationFrame(drawWave);return}
  const step=Math.min(4,Math.max(1,Math.round((now-waveDrawnAt)/33)));waveDrawnAt=now;
  const canvas=$('#record-wave'),c=canvas.getContext('2d');

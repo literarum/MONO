@@ -330,3 +330,4 @@ body:has(#view-editor.active) .toast-area{bottom:96px}
  body:has(#view-editor.active) .toast-area{bottom:160px}
  .input-level{flex-wrap:wrap}
 }
+.deep-passed{color:var(--muted);font-size:12px;margin:4px 0 10px}
