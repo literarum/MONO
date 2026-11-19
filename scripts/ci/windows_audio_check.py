@@ -142,6 +142,17 @@ def main() -> int:
         doctor["exception"] = f"{type(error).__name__}: {error}"
         failed |= not DENIED
     report["doctor"] = doctor
+    # Built-in test (probe): open → 0.5 s → close on the real driver, with each step's HRESULT.
+    try:
+        probe = {"available": False, "reason": "STARTING"}; t = time.monotonic() + 15
+        while probe.get("reason") == "STARTING" and time.monotonic() < t:
+            probe = service.probe(); service.tick(); time.sleep(0.2)
+        report["probe"] = probe
+        if DENIED: ok = probe.get("available") and probe.get("opened") is False and probe.get("hresult") == "80070005"
+        else: ok = probe.get("available") and probe.get("opened") is True and (probe.get("frames") or 0) > 0 and isinstance(probe.get("mixFormat"), dict)
+        report["probe"]["ok"] = bool(ok); failed |= not ok
+    except Exception as error:
+        report["probe"] = {"exception": f"{type(error).__name__}: {error}"}; failed = True
     service.close()
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if failed else 0

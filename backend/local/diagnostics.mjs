@@ -1,7 +1,7 @@
 // Deep diagnostics: actively tests every system MONO depends on and explains what it found.
 // Privacy: never titles, transcripts, keys or file paths. Device names stay (needed to tell
 // "which microphone"); everything else is codes, numbers and states.
-import os from 'node:os';import {execFile} from 'node:child_process';import path from 'node:path';import {readFileSync} from 'node:fs';import {writeFile,rename,statfs} from 'node:fs/promises';
+import os from 'node:os';import {execFile} from 'node:child_process';import path from 'node:path';import {readFileSync,writeFileSync,renameSync,mkdirSync} from 'node:fs';import {statfs} from 'node:fs/promises';
 import {writeProbe,oneDriveRoot,BYTES_PER_HOUR} from './preflight.mjs';import {microphonePrivacy,microphoneUsers} from './privacy.mjs';
 
 /** Paths, keys and e-mail-like strings removed from any text that may end up in a report. */
@@ -22,9 +22,11 @@ export class Journal{
   try{const v=JSON.parse(text);if(v?.event==='startup_phase')return;if(v&&typeof v==='object')text=[v.event,v.code,v.phase,v.message,v.operation,v.stage,v.errorName].filter(Boolean).join(' · ')}catch{}
   this.rows.push({at:this.now(),level,message:scrub(text)});if(this.rows.length>this.limit)this.rows.splice(0,this.rows.length-this.limit);this.persist();
  }
+ /** Written at once, like a flight recorder: a deferred write was lost when the core exited
+  * (or crashed) within 500 ms — exactly the moments the journal exists for. ≤80 short rows. */
  persist(){
-  if(!this.file||this.timer)return;
-  this.timer=setTimeout(async()=>{this.timer=null;const tmp=this.file+'.tmp';try{await writeFile(tmp,JSON.stringify(this.rows));await rename(tmp,this.file)}catch{}},500);this.timer.unref?.();
+  if(!this.file)return;const tmp=this.file+'.tmp';
+  try{mkdirSync(path.dirname(this.file),{recursive:true});writeFileSync(tmp,JSON.stringify(this.rows));renameSync(tmp,this.file)}catch{}
  }
  /** Mirror console.warn/error into the journal (all existing server events land here). */
  capture(target=console){for(const level of ['warn','error']){const original=target[level].bind(target);target[level]=(...args)=>{try{this.note(level,args.map(a=>a instanceof Error?a.message:typeof a==='string'?a:JSON.stringify(a)).join(' '))}catch{}original(...args)}}}
@@ -103,6 +105,10 @@ export async function collect({worker,runtime,keyManager,journal,health=()=>({})
  const diag=await settle(()=>worker.call('capture.diagnose'),8000);
  report.capture.inputs=diag.ok&&Array.isArray(diag.value?.inputs)?diag.value.inputs.map(d=>({name:scrub(d.name),state:d.state,default:Boolean(d.default),muted:d.muted??null,volume:typeof d.volume==='number'?Math.round(d.volume*100):null})):null;
  if(!diag.ok)report.capture.diagnoseError=diag.code;
+ // Built-in test of the real capture path (open → 0.5 s → close), never during a take.
+ // A starting module answers at once with STARTING (it never blocks the core): ask again for up to ~10 s.
+ let probe=null;for(let i=0;i<8;i++){probe=await settle(()=>worker.call('capture.probe',{},{timeoutMs:15000}),16000);if(!(probe.ok&&probe.value?.reason==='STARTING'))break;await new Promise(r=>setTimeout(r,1250))}
+ report.capture.probe=probe.ok?probe.value:{available:false,reason:probe.code};
  const mic=await settle(privacy,4000);report.capture.privacy=mic.ok?{blocked:Boolean(mic.value?.blocked),scope:mic.value?.scope||null}:null;
  const holders=await settle(users,5000);report.capture.heldBy=holders.ok?(holders.value||[]).slice(0,5).map(scrub):null;
  report.groq=await probeGroq({keyManager,base:groqBase,fetch});
@@ -139,7 +145,7 @@ export function findings(r){
  else if(main&&typeof main.volume==='number'&&main.volume<10)out.push(F('caution','Громкость микрофона почти 0',`«${main.name}»: ${main.volume} %.`,'MONO поднимет её при записи.'));
  if(c.source==='browser'&&c.module?.ready&&(c.module.modes||[]).includes('mic'))out.push(F('caution','Источник записи — окно браузера, хотя системный модуль готов','Системный модуль надёжнее: он открывает микрофон в общем режиме Windows с повтором через встроенный конвертер.','Студия → «Что записывать» → «Микрофон (системный модуль)». Если окно не откроет микрофон, MONO переключится сам.'));
  if(inputs.some(d=>/voicemeeter/i.test(d.name||''))&&c.heldBy!==null)out.push(F('advisory','Установлен Voicemeeter','Если ваш микрофон выбран в Voicemeeter аппаратным входом, он может забирать его у остальных программ.','При ошибке «микрофон занят» уберите микрофон из Voicemeeter на время записи.'));
- if(c.heldBy?.length)out.push(F('advisory','Микрофон может держать другое приложение',c.heldBy.join(', ')+'.','Если запись не начинается — закройте его.'));
+ if(c.heldBy?.length&&!c.probe?.opened)out.push(F('advisory','Микрофон может держать другое приложение',c.heldBy.join(', ')+'.','Если запись не начинается — закройте его.'));
  if(c.module?.error)out.push(F('caution','Системный модуль записи не ответил',`Код: ${c.module.error}.`,'Микрофон пишется через окно; звук компьютера недоступен.'));
  else if(c.module&&!c.module.ready&&['HELPER_UNAVAILABLE','HELPER_MISSING'].includes(c.module.reason))out.push(F('advisory','Системный модуль записи не установлен','Микрофон пишется через окно; звук компьютера недоступен.','Переустановите MONO, если нужен звук компьютера.'));
  else if(c.module&&!c.module.ready&&c.module.reason==='NOT_SUPPORTED')out.push(F('caution','Windows не сообщает звуковых устройств','Модуль записи работает, но не видит ни входов, ни выходов.','Подключите микрофон или наушники.'));

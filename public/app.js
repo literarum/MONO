@@ -14,7 +14,7 @@ import {MediaInterlock} from './media-interlock.js';
 import {AudioReview} from './audio-review.js';
 import {captureSelection,selectionKey} from './transcription-selection.js';
 import {Preflight,mountPreflight,remember,recentErrors} from './preflight.js';
-import {windowProbe,microphoneProbe,windowFindings,formatReport,consolidate} from './diagnostics.js';
+import {windowProbe,microphonePaths,windowFindings,microphoneFindings,formatReport,consolidate} from './diagnostics.js';
 import {SafetyTrack} from './safety-track.js';
 import {LevelPreview,addBookmark,SaveClock,BatteryWatch,DEFAULT_TITLE,suggestTitle} from './studio-extras.js';
 import {speakerFor,SPEAKER_NAMES} from './speakers.js';
@@ -172,6 +172,14 @@ async function autopilotBeforeStart(selection){
  * browser channel for a microphone-only take. Two attempts per press, then an honest message. */
 const autopilot={selection:null,steps:[],mode:null};
 function arm(selection){autopilot.selection=selection;autopilot.mode=selection.mode;autopilot.inputId=selection.inputId;autopilot.steps=recoverySteps(selection,(captureSources?.capability?.modes||[]).includes('browser'),Boolean(captureSources?.capability?.nativeReady)&&(captureSources?.capability?.modes||[]).includes('mic'))}
+/** Once: a source pinned to the browser channel by an earlier fault (the reported laptop) moves to the
+ * system module when it is ready. On Windows the browser path is the weaker one: Chromium ≥152 opens
+ * raw-capable microphones in raw mode with no retry, and it cannot record the computer's sound. */
+function migrateBrowserSource(){
+ try{if(localStorage.getItem('mono-source-migrated-1')==='1')return}catch{return}
+ const capability=captureSources?.capability;if(captureSources?.value?.mode!=='browser'||!capability?.nativeReady||!(capability.modes||[]).includes('mic')||captureActive(nativeController?.snapshot))return;
+ void captureSources.update({mode:'mic',inputId:null},{quiet:true}).then(()=>{try{localStorage.setItem('mono-source-migrated-1','1')}catch{}notify('Источник записи — системный модуль: он открывает микрофон надёжнее окна браузера. Вернуть окно можно в студии.')}).catch(()=>{});
+}
 /** The browser channel could not open the microphone but the system module did: keep using it. */
 function rememberPathSwitch(from,to){if(from==='browser'&&to==='mic'){notify('Окно не смогло открыть микрофон — MONO записывает через системный модуль и будет использовать его дальше.');healthEvent('BROWSER_FALLBACK');pendingSourceSwitch='mic'}}
 // Settings cannot change during a take (the core answers CAPTURE_BUSY): the switch is saved when it ends.
@@ -237,6 +245,7 @@ async function initializeNative(local){
  }
  await nativeController.connect();
  await captureSources.load();
+ migrateBrowserSource();
  return {controller:nativeController,sources:captureSources};
  })().catch(error=>{nativeInitializing=null;throw error});return nativeInitializing;
 }
@@ -308,6 +317,8 @@ async function backgroundAudioCare(reason='timer'){
   if(reason==='device')await captureSources?.load().catch(()=>{});
   // 2. Windows' view of the microphone: unmute / restore a near-zero level.
   const report=await local.json('/capture/diagnose',{signal:AbortSignal.timeout(7000)}).catch(()=>null);
+  // Module still starting (first launch): look again shortly instead of waiting three minutes.
+  if(report?.reason==='STARTING'&&!audioCare.retryStarting){audioCare.retryStarting=true;setTimeout(()=>{audioCare.retryStarting=false;void backgroundAudioCare('reconnect')},3000)}
   if(report?.available){
    const {target,disabledOnly}=pickInput(report,captureSources?.value?.inputId||null);
    if(needsRepair(target)){const after=await local.json('/capture/repair',{method:'POST',body:REPAIR(target)}).catch(()=>null);if(after&&!after.repairError)notify(`Микрофон «${target.name}» был выключен в Windows — MONO включил его.`)}
@@ -380,12 +391,12 @@ function notify(message,type='info',action=null){
 }
 /** «Busy» microphone: name the app Windows says is using it, instead of a generic guess. */
 async function notifyCaptureError(message,code){
- healthEvent(code==='DEVICE_LOST'?'DEVICE_LOST':['DEVICE_BUSY','START_TIMEOUT','ACCESS_DENIED','CAPTURE_NOT_READY','OPEN_FAILED','BROWSER_AUDIO_ERROR'].includes(code)?'START_FAILED':'CAPTURE_ERROR',inputName());
+ healthEvent(code==='DEVICE_LOST'?'DEVICE_LOST':['DEVICE_BUSY','BROWSER_OPEN_FAILED','START_TIMEOUT','ACCESS_DENIED','CAPTURE_NOT_READY','OPEN_FAILED','BROWSER_AUDIO_ERROR'].includes(code)?'START_FAILED':'CAPTURE_ERROR',inputName());
  let extra='';
  if(['DEVICE_BUSY','START_TIMEOUT','BROWSER_AUDIO_ERROR'].includes(code)&&storageDetails().local){
   try{const local=await localLibraryClient();const {apps}=await local.json('/microphone-users',{signal:AbortSignal.timeout(5000)});if(apps?.length)extra=` Сейчас микрофон, похоже, использует: ${apps.slice(0,3).join(', ')} — закройте его или выключите в нём микрофон.`}catch{}
  }
- notify(message+extra,'error',code==='DEVICE_BUSY'&&/Windows/i.test(navigator.userAgent)?{text:'Как освободить микрофон',run:showMicrophoneBusyHelp}:fixFor(code));
+ notify(message+extra,'error',code==='DEVICE_BUSY'&&/Windows/i.test(navigator.userAgent)?{text:'Как освободить микрофон',run:showMicrophoneBusyHelp}:code==='BROWSER_OPEN_FAILED'?{text:'Диагностика',run:()=>void runDeepDiagnostics()}:fixFor(code));
 }
 /** Device busy on both paths: something holds the microphone, often in exclusive mode. */
 async function showMicrophoneBusyHelp(){
@@ -512,8 +523,8 @@ async function runDeepDiagnostics(){
   const [server,windowInfo,microphone]=await Promise.all([
    local?local.json('/diagnostics',{signal:AbortSignal.timeout(45000)}).catch(error=>({error:error.code||error.message})):Promise.resolve(null),
    windowProbe().catch(()=>null),
-   recording?Promise.resolve({skipped:'recording'}):microphoneProbe().catch(()=>null)]);
-  const findings=consolidate([...(server?.findings||[]),...(server?.error?[{level:'warning',title:'Ядро не ответило на диагностику',detail:String(server.error),action:'Перезапустите MONO.'}]:[]),...windowFindings(windowInfo,microphone)]);
+   recording?Promise.resolve({raw:{skipped:'recording'}}):microphonePaths().catch(()=>null)]);
+  const findings=consolidate([...(server?.findings||[]),...(server?.error?[{level:'warning',title:'Ядро не ответило на диагностику',detail:String(server.error),action:'Перезапустите MONO.'}]:[]),...windowFindings(windowInfo,null),...microphoneFindings(microphone,server?.capture?.probe)]);
   const report={generatedAt:new Date().toISOString(),findings,server:server&&!server.error?{...server,findings:undefined}:server,window:windowInfo,microphone,recentWindowErrors:recentErrors()};
   const text=formatReport(report);
   if($('#modal').hidden){notify('Диагностика готова','info',{text:'Показать',run:()=>showDeepReport(findings,text)});return}

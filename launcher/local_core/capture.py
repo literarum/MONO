@@ -171,10 +171,12 @@ class CaptureService:
         """Windows view of every microphone: present, disabled, muted, input level.
         repair={'inputId','mute','minimumVolume'} changes one endpoint first (on user intent)."""
         if not self._launch():return {'available':False,'reason':'HELPER_UNAVAILABLE'}
-        until=time.monotonic()+8
-        while not self.ready and self.error!='NOT_SUPPORTED' and self.child is not None and self.child.poll() is None and time.monotonic()<until:
-            self.tick();time.sleep(.02)
+        # Never wait for a starting helper here: the core serves one request at a time, and an
+        # 8 s wait (first launch of the single-file helper under an antivirus scan) froze every
+        # other request of the window — status polls, the archive, the setup wizard.
+        self.tick()
         if self.child is None or self.child.poll() is not None:return {'available':False,'reason':'HELPER_UNAVAILABLE'}
+        if not self.ready:return {'available':False,'reason':'STARTING' if self.error!='NOT_SUPPORTED' else 'NOT_SUPPORTED'}
         before=getattr(self,'diagnosis_seq',0)
         params={}
         if repair:
@@ -188,6 +190,25 @@ class CaptureService:
             self.tick();time.sleep(.02)
         if getattr(self,'diagnosis_seq',0)==before:return {'available':False,'reason':'TIMEOUT'}
         return {'available':True,**self.diagnosis}
+    def probe(self,input_id=None):
+        """Built-in test of the real capture path: the helper opens the microphone for ~0.5 s,
+        reports each step's HRESULT, the mix format and raw-mode support. Nothing is saved."""
+        if input_id is not None and not isinstance(input_id,str):fail('INVALID_CAPTURE')
+        if self.active:return {'available':False,'reason':'CAPTURE_ACTIVE'}
+        if not self._launch():return {'available':False,'reason':'HELPER_UNAVAILABLE'}
+        # Never wait for a starting helper here: the core serves one request at a time, and an
+        # 8 s wait (first launch of the single-file helper under an antivirus scan) froze every
+        # other request of the window — status polls, the archive, the setup wizard.
+        self.tick()
+        if self.child is None or self.child.poll() is not None:return {'available':False,'reason':'HELPER_UNAVAILABLE'}
+        if not self.ready:return {'available':False,'reason':'STARTING' if self.error!='NOT_SUPPORTED' else 'NOT_SUPPORTED'}
+        before=getattr(self,'probe_seq',0)
+        self._send('probe',{'inputId':input_id} if input_id else {'sessionId':self.session_id})
+        until=time.monotonic()+10
+        while getattr(self,'probe_seq',0)==before and time.monotonic()<until:
+            self.tick();time.sleep(.02)
+        if getattr(self,'probe_seq',0)==before:return {'available':False,'reason':'TIMEOUT'}
+        return {'available':True,**self.probe_result}
     def pause(self):
         if self.selected_engine=='browser':fail('BROWSER_CAPTURE_OWNER')
         if self.state!='recording' or self.pending:fail('INVALID_CAPTURE_STATE')
@@ -258,6 +279,12 @@ class CaptureService:
                 self.capability.update({'supported':event['supported'],'modes':event['modes']});self.ready=event['supported']
                 if not self.ready:self.error='NOT_SUPPORTED'
                 if not self.active:self.state='ready' if self.ready else 'error'
+            return
+        if kind=='probe':
+            result=event.get('result')
+            if not isinstance(result,dict) or len(json.dumps(result))>4000:fail('INVALID_CAPTURE_PROTOCOL')
+            allowed={'opened','step','code','hresult','id','rawSupported','mixFormat','browserFormat','initPlain','initAutoconvert','frames','peakDb','silentFlag'}
+            self.probe_result={k:v for k,v in result.items() if k in allowed and k!='id'};self.probe_seq=getattr(self,'probe_seq',0)+1
             return
         if kind=='diagnosis':
             inputs=event.get('inputs')

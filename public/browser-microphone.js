@@ -21,8 +21,8 @@ function waitFor(promise,signal,onLate=()=>{},timeoutMs=10000){
 }
 function microphoneError(error,stage){
  if(error instanceof LibraryError||error.name==='AbortError')return error;
- const code={NotAllowedError:'ACCESS_DENIED',SecurityError:'ACCESS_DENIED',NotFoundError:'DEVICE_LOST',OverconstrainedError:'DEVICE_LOST',NotReadableError:'DEVICE_BUSY'}[error.name]||'BROWSER_AUDIO_ERROR';
- const message={ACCESS_DENIED:'Разрешите микрофон в запросе браузера.',DEVICE_LOST:'Выбранный микрофон недоступен этому окну. Обновите список и выберите его снова.',DEVICE_BUSY:'Система не смогла открыть микрофон. Он может быть занят другим приложением; выберите другой вход или освободите его.'}[code];
+ const code={NotAllowedError:'ACCESS_DENIED',SecurityError:'ACCESS_DENIED',NotFoundError:'DEVICE_LOST',OverconstrainedError:'DEVICE_LOST',NotReadableError:'BROWSER_OPEN_FAILED'}[error.name]||'BROWSER_AUDIO_ERROR';
+ const message={ACCESS_DENIED:'Разрешите микрофон в запросе браузера.',DEVICE_LOST:'Выбранный микрофон недоступен этому окну. Обновите список и выберите его снова.',BROWSER_OPEN_FAILED:'Окно браузера не смогло открыть микрофон: Windows отклонила запуск потока. Это не обязательно значит, что микрофон занят — MONO попробует системный модуль записи.'}[code];
  return new LibraryError(code,message||(stage==='worklet'?'Не удалось подготовить запись в этом окне. Обновите окно MONO и повторите.':'Не удалось подготовить запись. Перезапустите MONO и повторите.'));
 }
 /** Chrome/Edge list the system default as 'default' ("По умолчанию - X") and, on
@@ -32,13 +32,17 @@ export function listDevices(devices,kind,fallback){
 }
 /** "По умолчанию - Микрофон (Realtek)" → "Микрофон (Realtek)". */
 export function deviceName(device){return device?String(device.name).replace(/^(?:default|по умолчанию|standard|défaut)\s*[-–—:]\s*/i,''):''}
-/** Constraint ladder for getUserMedia (production WebRTC SDKs do the same): exact device with raw
- * processing → system default with raw processing → plain audio:true. NotReadableError gets one
- * short delayed retry (a device just released by another stream often reopens). A denial never
- * climbs the ladder: it is the person's or Windows' decision, not a device fault. */
+/** Constraint ladder for getUserMedia: exact device without processing → default without
+ * processing → default with browser processing → plain audio:true.
+ * Chromium ≥152 opens a microphone whose driver claims raw support with AUDCLNT_STREAMOPTIONS_RAW
+ * and does not retry IAudioClient::Initialize without it; every such failure reaches the page as
+ * NotReadableError. A processed request is a different path through the same code, so it is a
+ * separate rung (whether it avoids raw mode on a given driver is not documented — measured by
+ * «Глубокая диагностика»). NotReadableError gets short delayed retries. A denial never climbs. */
 export const CONSTRAINT_LADDER=inputId=>[
  ...(inputId?[{channelCount:{ideal:1},echoCancellation:false,noiseSuppression:false,autoGainControl:false,deviceId:{exact:inputId}}]:[]),
  {channelCount:{ideal:1},echoCancellation:false,noiseSuppression:false,autoGainControl:false},
+ {echoCancellation:true,noiseSuppression:true,autoGainControl:true},
  true];
 const RETRYABLE=new Set(['NotReadableError','OverconstrainedError','NotFoundError','AbortError','TrackStartError']);
 /** Explicit browser mode, under the same durable server owner as native capture. */

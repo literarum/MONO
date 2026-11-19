@@ -37,8 +37,10 @@ test('pre-flight turns the Windows microphone view into checks; fixable ones car
  assert.equal(microphoneChecks(report([mic('Headset (Hands-Free AG Audio)',{default:true})]))[0].id,'mic-handsfree');
  assert.deepEqual(microphoneChecks(report([mic('ok',{default:true})])),[]);assert.deepEqual(microphoneChecks({available:false}),[]);
 });
-test('getUserMedia ladder: exact device → default → plain; NotReadable retried twice per rung; a denial is final',async()=>{
- assert.equal(CONSTRAINT_LADDER('x').length,3);assert.equal(CONSTRAINT_LADDER(null).length,2);
+test('getUserMedia ladder: exact device → default → processed → plain; NotReadable retried twice per rung; a denial is final',async()=>{
+ assert.equal(CONSTRAINT_LADDER('x').length,4);assert.equal(CONSTRAINT_LADDER(null).length,3);
+ // Chromium ≥152 uses raw mode without processing; a processed request is a separate rung.
+ assert.deepEqual(CONSTRAINT_LADDER(null)[1],{echoCancellation:true,noiseSuppression:true,autoGainControl:true});
  const attempt=async script=>{const calls=[];const client=Object.create(BrowserMicrophoneClient.prototype);
   client.devices={getUserMedia:async c=>{calls.push(c.audio);const next=script.shift();if(next instanceof Error)throw next;return {getTracks:()=>[]}}};
   try{await client.acquire('usb',null,5000);return {ok:true,calls}}catch(error){return {ok:false,error:error.name,calls}}};
