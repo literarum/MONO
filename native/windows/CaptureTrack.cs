@@ -10,7 +10,7 @@ internal sealed class CaptureTrack : IDisposable
     readonly NativeSession session;readonly string? requestedId;readonly bool loopback;readonly BlockingCollection<AudioPacket> packets=new(128);
     readonly Thread captureThread,writerThread;readonly AutoResetEvent sampleEvent=new(false);long queuedBytes;const long QueueLimit=8*1024*1024;
     public readonly ManualResetEventSlim Initialized=new(false),Started=new(false),PauseCompleted=new(false),ResumeCompleted=new(false),ProducerDone=new(false),WriterDone=new(false);
-    public string Id{get;private set;}="";public string Track=>loopback?"system":"mic";public AudioFormat? Format{get;private set;}
+    public string Variant{get;private set;}="";public string Id{get;private set;}="";public string Track=>loopback?"system":"mic";public AudioFormat? Format{get;private set;}
     public bool UsesDefault=>requestedId is null;public double Peak{get;private set;}public double Rms{get;private set;}public long ClippedFrames{get;private set;}
     long safetyNs=250_000_000;bool producerPaused;
     public CaptureTrack(NativeSession session,bool loopback,string? requestedId)
@@ -27,7 +27,7 @@ internal sealed class CaptureTrack : IDisposable
     }
     void Capture()
     {
-        IDeviceEnumerator? enumerator=null;IDevice? device=null;IAudioClient? client=null;IAudioCaptureClient? input=null;IntPtr mix=IntPtr.Zero;bool started=false;string operation="resolve-device";
+        bool eventDriven=true;IDeviceEnumerator? enumerator=null;IDevice? device=null;IAudioClient? client=null;IAudioCaptureClient? input=null;IntPtr mix=IntPtr.Zero;bool started=false;string operation="resolve-device";
         var mmcss=Realtime.EnterProAudio();
         try{
             enumerator=(IDeviceEnumerator)new DeviceEnumeratorCom();var flow=loopback?DataFlow.Render:DataFlow.Capture;
@@ -35,22 +35,16 @@ internal sealed class CaptureTrack : IDisposable
             ComAudio.Check(device.GetState(out var state));if(state!=1)throw new AudioFailure("DEVICE_LOST");ComAudio.Check(device.GetId(out var id));Id=id;
             operation="activate";var iid=typeof(IAudioClient).GUID;ComAudio.Check(device.Activate(ref iid,23,IntPtr.Zero,out var active));client=(IAudioClient)active;
             operation="mix-format";ComAudio.Check(client.GetMixFormat(out mix));int extra=(ushort)Marshal.ReadInt16(mix,16);if(extra>4096-18)throw new AudioFailure("UNSUPPORTED_FORMAT");
-            var bytes=new byte[18+extra];Marshal.Copy(mix,bytes,0,bytes.Length);try{Format=new AudioFormat(bytes);}catch(ArgumentException){throw new AudioFailure("UNSUPPORTED_FORMAT");}
-            // Shared event-driven streams require zero buffer duration/periodicity.
-            operation="initialize";var audioSession=Guid.NewGuid();int hr=client.Initialize(0,0x40000u|(loopback?0x20000u:0),0,0,mix,ref audioSession);
-            // Some USB/Bluetooth microphone drivers reject the plain shared request (format or
-            // buffer); Windows' own converter (AUTOCONVERTPCM|SRC_DEFAULT_QUALITY) with a 200 ms
-            // buffer is accepted by them. A failed IAudioClient cannot be re-initialised, so a
-            // fresh one is activated. Privacy denial, exclusive use and a vanished device are
-            // final answers and are not retried.
-            uint code=unchecked((uint)hr);
-            if(hr<0&&!loopback&&code is not (0x80070005u or 0x8889000Au or 0x88890004u)){
-                operation="initialize-autoconvert";ComAudio.Release(client);client=null;
-                ComAudio.Check(device.Activate(ref iid,23,IntPtr.Zero,out var retry));client=(IAudioClient)retry;audioSession=Guid.NewGuid();
-                hr=client.Initialize(0,0x40000u|0x80000000u|0x08000000u,2_000_000,0,mix,ref audioSession);
-            }
-            ComAudio.Check(hr);
-            operation="event-handle";ComAudio.Check(client.SetEventHandle(sampleEvent.SafeWaitHandle.DangerousGetHandle()));operation="stream-latency";ComAudio.Check(client.GetStreamLatency(out long latency));
+            ComAudio.Release(client);client=null;
+            // Dissimilar ways to open the stream (see StreamOpener): plain event-driven first, then
+            // Windows' converter, polling, IAudioClient3, the communications category and 16-bit PCM.
+            operation="initialize";var attempts=new List<KeyValuePair<string,string>>();
+            var opened=StreamOpener.Open(device,mix,loopback,attempts);
+            Variant=string.Join(",",attempts.Select(a=>a.Key+"="+a.Value));
+            if(opened is null){int last=attempts.Count>0&&int.TryParse(attempts[^1].Value,System.Globalization.NumberStyles.HexNumber,null,out var h)?h:unchecked((int)0x80004005);ComAudio.Check(last);throw new AudioFailure("INTERNAL",last);}
+            client=opened.Client;eventDriven=opened.EventDriven;
+            try{Format=new AudioFormat(opened.Format);}catch(ArgumentException){throw new AudioFailure("UNSUPPORTED_FORMAT");}
+            operation="event-handle";if(eventDriven)ComAudio.Check(client.SetEventHandle(sampleEvent.SafeWaitHandle.DangerousGetHandle()));operation="stream-latency";ComAudio.Check(client.GetStreamLatency(out long latency));
             operation="buffer-size";ComAudio.Check(client.GetBufferSize(out uint bufferFrames));safetyNs=Math.Max(250_000_000,checked(latency*100+ClockMath.FramesToNs(bufferFrames,Format.Rate)+50_000_000));
             operation="capture-service";iid=typeof(IAudioCaptureClient).GUID;ComAudio.Check(client.GetService(ref iid,out var capture));input=(IAudioCaptureClient)capture;
             Initialized.Set();session.StartGate.Wait(session.Cancellation);operation="start";ComAudio.Check(client.Start());started=true;Started.Set();long lastPacket=NativeSession.NowNs;

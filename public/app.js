@@ -148,6 +148,7 @@ function onNativeState(value){
  updateRecordUI();
  if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId));syncLevelPreview();
   if(wasActive&&value.state==='interrupted')markRecoveredSeen(value.recordId);
+  if(wasActive&&value.errorCode)healthEvent('CAPTURE_ERROR',[value.errorCode,value.failureDetails?.stage,value.failureDetails?.nativeCode].filter(Boolean).join(' ')); // the journal sees module failures too
   // A start that never captured audio leaves an empty «Прервано · 0 с» record: it is noise, not a meeting.
   if(wasActive&&value.state==='interrupted'&&!(Number(value.savedBytes)>0)&&!(Number(value.savedFrames)>0)&&!(Number(value.duration)>0)){const empty=value.recordId;setTimeout(()=>{void getRecording(empty,{transcript:false}).then(r=>r&&!(r.size>0)&&!(r.duration>0)?removeRecording(empty).then(()=>refresh()):null).catch(()=>{})},1500)}
   if(wasActive&&value.state==='interrupted'&&!(Number(value.savedBytes)>0)&&AUTOPILOT_RETRY.has(value.errorCode)&&autopilot.selection&&autopilot.steps.length){void autopilotRetry(value.errorCode).then(handled=>{if(!handled)void notifyCaptureError(captureFailureMessage(value),value.errorCode)});void refresh().catch(()=>{});return}

@@ -20,45 +20,62 @@ public static class MicProbe
     }
     public static Dictionary<string,object?> Run(string? id)
     {
+        // The real capture thread is STA (Microsoft: the first use of IAudioClient should be on an
+        // STA thread); the probe runs the same way, then repeats the plain request on MTA for contrast.
+        var report=OnThread(ApartmentState.STA,()=>Probe(id));
+        var mta=OnThread(ApartmentState.MTA,()=>PlainOnly(id));
+        report["mtaEvent"]=mta.TryGetValue("hresult",out var value)?value:null;
+        return report;
+    }
+    static Dictionary<string,object?> OnThread(ApartmentState apartment,Func<Dictionary<string,object?>> work)
+    {
         Dictionary<string,object?>? result=null;Exception? problem=null;
-        var thread=new Thread(()=>{try{result=Probe(id);}catch(Exception error){problem=error;}});
-        thread.SetApartmentState(ApartmentState.MTA);thread.Start();if(!thread.Join(8000))return new(){{"opened",false},{"step","timeout"}};
+        var thread=new Thread(()=>{try{result=work();}catch(Exception error){problem=error;}});
+        thread.SetApartmentState(apartment);thread.Start();if(!thread.Join(10000))return new(){{"opened",false},{"step","timeout"}};
         if(problem is not null)return new(){{"opened",false},{"step","exception"},{"code",problem is AudioFailure f?f.Code:problem.GetType().Name},{"hresult",problem is AudioFailure g&&g.NativeCode is int n?Hex(n):problem is COMException c?Hex(c.HResult):null}};
         return result!;
+    }
+    static Dictionary<string,object?> PlainOnly(string? id)
+    {
+        var enumerator=(IDeviceEnumerator)new DeviceEnumeratorCom();IDevice? device=null;IAudioClient? client=null;IntPtr mix=IntPtr.Zero;
+        try{
+            int hr=id is null?enumerator.GetDefaultAudioEndpoint(DataFlow.Capture,DeviceRole.Console,out device):enumerator.GetDevice(id,out device);if(hr<0)return new(){{"hresult",Hex(hr)}};
+            var iid=typeof(IAudioClient).GUID;hr=device.Activate(ref iid,23,IntPtr.Zero,out var value);if(hr<0)return new(){{"hresult",Hex(hr)}};client=(IAudioClient)value;
+            hr=client.GetMixFormat(out mix);if(hr<0)return new(){{"hresult",Hex(hr)}};
+            var session=Guid.NewGuid();hr=client.Initialize(0,0x40000u,0,0,mix,ref session);return new(){{"hresult",Hex(hr)}};
+        }finally{if(mix!=IntPtr.Zero)Marshal.FreeCoTaskMem(mix);ComAudio.Release(client);ComAudio.Release(device);ComAudio.Release(enumerator);}
     }
     static Dictionary<string,object?> Probe(string? id)
     {
         var report=new Dictionary<string,object?>{{"opened",false}};
-        var enumerator=(IDeviceEnumerator)new DeviceEnumeratorCom();IDevice? device=null;IAudioClient? client=null;IAudioCaptureClient? input=null;IntPtr mix=IntPtr.Zero;
+        var enumerator=(IDeviceEnumerator)new DeviceEnumeratorCom();IDevice? device=null;IAudioClient? client=null;IAudioCaptureClient? input=null;IntPtr mix=IntPtr.Zero;OpenedStream? opened=null;AutoResetEvent? signal=null;
         try{
             int hr=id is null?enumerator.GetDefaultAudioEndpoint(DataFlow.Capture,DeviceRole.Console,out device):enumerator.GetDevice(id,out device);
             if(hr<0){report["step"]="resolve-device";report["hresult"]=Hex(hr);return report;}
-            if(device.GetId(out var actual)==0)report["id"]=actual;
             report["rawSupported"]=Raw(device);
             var iid=typeof(IAudioClient).GUID;hr=device.Activate(ref iid,23,IntPtr.Zero,out var activated);
             if(hr<0){report["step"]="activate";report["hresult"]=Hex(hr);return report;}
             client=(IAudioClient)activated;
             hr=client.GetMixFormat(out mix);if(hr<0){report["step"]="mix-format";report["hresult"]=Hex(hr);return report;}
             report["mixFormat"]=new Dictionary<string,object?>{{"tag",(ushort)Marshal.ReadInt16(mix,0)},{"channels",(ushort)Marshal.ReadInt16(mix,2)},{"rate",Marshal.ReadInt32(mix,4)},{"bits",(ushort)Marshal.ReadInt16(mix,14)}};
-            // What Chromium asks for by default: 48 kHz, stereo, 16-bit PCM.
             var request=Marshal.AllocCoTaskMem(18);
             try{
                 Marshal.WriteInt16(request,0,1);Marshal.WriteInt16(request,2,2);Marshal.WriteInt32(request,4,48000);Marshal.WriteInt32(request,8,48000*4);Marshal.WriteInt16(request,12,4);Marshal.WriteInt16(request,14,16);Marshal.WriteInt16(request,16,0);
                 int supported=client.IsFormatSupported(0,request,out var closest);if(closest!=IntPtr.Zero)Marshal.FreeCoTaskMem(closest);
                 report["browserFormat"]=supported==0?"supported":supported==1?"closest-match":Hex(supported);
             }finally{Marshal.FreeCoTaskMem(request);}
-            var session=Guid.NewGuid();hr=client.Initialize(0,0,2_000_000,0,mix,ref session);report["initPlain"]=Hex(hr);
-            if(hr<0){
-                ComAudio.Release(client);client=null;
-                hr=device.Activate(ref iid,23,IntPtr.Zero,out var retry);if(hr<0){report["step"]="activate-retry";report["hresult"]=Hex(hr);return report;}
-                client=(IAudioClient)retry;session=Guid.NewGuid();hr=client.Initialize(0,0x80000000u|0x08000000u,2_000_000,0,mix,ref session);report["initAutoconvert"]=Hex(hr);
-                if(hr<0){report["step"]="initialize";report["hresult"]=Hex(hr);return report;}
-            }
+            ComAudio.Release(client);client=null;
+            var attempts=new List<KeyValuePair<string,string>>();opened=StreamOpener.Open(device,mix,false,attempts);
+            report["attempts"]=attempts.ToDictionary(a=>a.Key,a=>(object?)a.Value);
+            if(attempts.Count>0)report["initPlain"]=attempts[0].Value;if(attempts.Count>1)report["initAutoconvert"]=attempts[1].Value;
+            if(opened is null){report["step"]="initialize";report["hresult"]=attempts.Count>0?attempts[^1].Value:null;return report;}
+            report["variant"]=opened.Variant;client=opened.Client;
             iid=typeof(IAudioCaptureClient).GUID;hr=client.GetService(ref iid,out var service);if(hr<0){report["step"]="capture-service";report["hresult"]=Hex(hr);return report;}
             input=(IAudioCaptureClient)service;
+            if(opened.EventDriven){signal=new AutoResetEvent(false);client.SetEventHandle(signal.SafeWaitHandle.DangerousGetHandle());}
             hr=client.Start();if(hr<0){report["step"]="start";report["hresult"]=Hex(hr);return report;}
-            int channels=(ushort)Marshal.ReadInt16(mix,2),bits=(ushort)Marshal.ReadInt16(mix,14),tag=(ushort)Marshal.ReadInt16(mix,0);
-            if(tag==0xFFFE&&(ushort)Marshal.ReadInt16(mix,16)>=22){var sub=new byte[16];Marshal.Copy(mix+24,sub,0,16);tag=BitConverter.ToUInt16(sub,0);}
+            var format=opened.Format;int channels=BitConverter.ToUInt16(format,2),bits=BitConverter.ToUInt16(format,14),tag=BitConverter.ToUInt16(format,0);
+            if(tag==0xFFFE&&format.Length>=40)tag=BitConverter.ToUInt16(format,24);
             long frames=0;double peak=0;bool silentFlag=false;var until=Environment.TickCount64+600;
             while(Environment.TickCount64<until){
                 Thread.Sleep(20);
@@ -75,6 +92,6 @@ public static class MicProbe
             client.Stop();
             report["opened"]=true;report["frames"]=frames;report["peakDb"]=peak>0?Math.Round(20*Math.Log10(peak),1):-120.0;report["silentFlag"]=silentFlag;
             return report;
-        }finally{if(mix!=IntPtr.Zero)Marshal.FreeCoTaskMem(mix);ComAudio.Release(input);ComAudio.Release(client);ComAudio.Release(device);ComAudio.Release(enumerator);}
+        }finally{if(mix!=IntPtr.Zero)Marshal.FreeCoTaskMem(mix);ComAudio.Release(input);ComAudio.Release(client);ComAudio.Release(device);ComAudio.Release(enumerator);signal?.Dispose();}
     }
 }

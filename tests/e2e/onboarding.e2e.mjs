@@ -26,3 +26,26 @@ for(const [name,env] of [['without the system capture module',{}],['with the sys
   assert.deepEqual(errors,[]);
  });
 }
+
+test('reconnecting a missing archive closes setup instead of leaving an empty panel',{skip:!playwright&&'playwright is not installed'},async t=>{
+ const {rmSync}=await import('node:fs');
+ const server=await localServer(t,{MONO_CORE_SCRIPT:FOLDER_WORKER});
+ const target=path.join(server.root,'Новое место');
+ writeFileSync(path.join(server.root,'test-picker.json'),JSON.stringify({create:target,open:target}));
+ const browser=await playwright.chromium.launch();t.after(()=>browser.close());
+ const page=await (await browser.newContext()).newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(server.url+'/');
+ const libraryPath=await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();const headers={'Content-Type':'application/json','X-Mono-CSRF':csrf};
+  await fetch('/api/local/library/configure',{method:'POST',headers,body:JSON.stringify({useDefault:true})});
+  await fetch('/api/local/preferences',{method:'PATCH',headers,body:JSON.stringify({onboarding:{completed:true,keySkipped:true,soundTested:true}})});
+  return (await (await fetch('/api/local/status')).json()).libraryPath});
+ rmSync(libraryPath,{recursive:true,force:true}); // the archive folder disappeared (deleted, disk unplugged)
+ await server.restart();
+ await page.goto(server.url+'/');
+ await page.waitForSelector('.setup-panel :text("Подключите ваш архив")',{timeout:20000});
+ await page.click('.setup-panel button:has-text("Выбрать папку")');
+ await page.waitForFunction(()=>!document.querySelector('.setup-panel'),null,{timeout:20000});
+ const status=await page.evaluate(async()=>(await fetch('/api/local/status')).json());
+ assert.equal(status.libraryAvailable,true);assert.match(status.libraryPath,/Новое место$/);
+ assert.deepEqual(errors,[]);
+});

@@ -23,6 +23,9 @@ export async function openOnboarding({library,storage,configure,choose,ensureNat
  // (its first launch on Windows can take many seconds) and is awaited only by the sound step.
  const archiveReady=async()=>{await onArchive();if(closed)return;void ensureNative().catch(()=>{});await next()};
  async function render(){
+  // Nothing left to set up (e.g. the archive was reconnected and setup is already complete): close,
+  // never leave an empty panel with the previous step's title.
+  if(!step){layer.close('complete');return}
   cleanup();body.replaceChildren();actions.replaceChildren();message.textContent='';root.querySelector('.setup-step').textContent={folder:'1 из 3 · МЕСТО ДЛЯ ЗАПИСЕЙ',reconnect:'ПОДКЛЮЧЕНИЕ АРХИВА',key:'2 из 3 · РАСШИФРОВКА',sound:'3 из 3 · ВАШ ЗВУК'}[step]||'';
   if(step==='folder'||step==='reconnect'){
    title.textContent=step==='folder'?'Добро пожаловать в MONO':'Подключите ваш архив';intro.textContent=step==='folder'?'Записывайте встречи и превращайте разговоры в текст. Для начала выберите, где хранить аудио и расшифровки.':'Папка с записями сейчас недоступна. Подключите диск или выберите прежнюю папку.';

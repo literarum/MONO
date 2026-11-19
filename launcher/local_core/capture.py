@@ -283,7 +283,7 @@ class CaptureService:
         if kind=='probe':
             result=event.get('result')
             if not isinstance(result,dict) or len(json.dumps(result))>4000:fail('INVALID_CAPTURE_PROTOCOL')
-            allowed={'opened','step','code','hresult','id','rawSupported','mixFormat','browserFormat','initPlain','initAutoconvert','frames','peakDb','silentFlag'}
+            allowed={'opened','step','code','hresult','id','rawSupported','mixFormat','browserFormat','initPlain','initAutoconvert','frames','peakDb','silentFlag','attempts','variant','mtaEvent'}
             self.probe_result={k:v for k,v in result.items() if k in allowed and k!='id'};self.probe_seq=getattr(self,'probe_seq',0)+1
             return
         if kind=='diagnosis':
