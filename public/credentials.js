@@ -15,7 +15,10 @@ export function mountCredentials(host,{client,onChange=()=>{}}){
  form.addEventListener('submit',async event=>{
   event.preventDefault();if(controller)return;
   // A pasted key often carries spaces, a line break or quotes from a chat or a note.
-  let key=input.value.trim().replace(/^["'«“]+|["'»”]+$/g,'').replace(/\s+/g,'');input.value='';message.textContent='Проверяем ключ. Аудио не отправляется.';controller=new AbortController();busy(true);
+  let key=input.value.trim().replace(/^["'«“]+|["'»”]+$/g,'').replace(/\s+/g,'');
+  // Groq keys start with gsk_: a pasted wrong value is caught here, without a network round-trip.
+  if(!/^gsk_[A-Za-z0-9]{20,}$/.test(key)){message.textContent=key?'Это не похоже на ключ Groq: он начинается с «gsk_». Скопируйте ключ целиком на console.groq.com → API Keys.':'Вставьте ключ Groq.';input.focus();return}
+  input.value='';message.textContent='Проверяем ключ. Аудио не отправляется.';controller=new AbortController();busy(true);
   try{const value=await client.configure(key,{signal:controller.signal});if(!destroyed){render(value);message.textContent='Ключ проверен и сохранён в системном хранилище.';onChange(value)}}
   catch(error){if(!destroyed){message.textContent=error.name==='AbortError'?'Проверка отменена.':error.message;await refresh()}}
   finally{key=null;input.value='';controller=null;if(!destroyed)busy(false)}

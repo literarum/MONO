@@ -36,7 +36,7 @@ export async function openOnboarding({library,storage,configure,choose,ensureNat
    const continueButton=button('Продолжить',next,true);continueButton.hidden=!key.configured;
    button('Подключить позже',async()=>{await save({keySkipped:true});await next()});
   }else if(step==='sound'){
-   title.textContent='Проверим звук';intro.textContent='Выберите источник и запишите пять секунд. Для встречи подойдёт «Микрофон и компьютер».';
+   title.textContent='Проверим звук';intro.textContent='Выберите источник и запишите пять секунд.';
    message.textContent='Запускаем модуль записи…';let native=null,failure=null;
    // First launch on Windows can take a while (self-extracting helper, antivirus scan): be patient, retry quietly.
    for(let attempt=0;attempt<6&&!closed;attempt++){try{native=await ensureNative();break}catch(error){failure=error;await new Promise(r=>setTimeout(r,2500))}}
@@ -56,7 +56,7 @@ export async function openOnboarding({library,storage,configure,choose,ensureNat
     if(!testId||value.recordId!==testId||active||preparingAudio)return;
     if(value.state!=='ready'){message.textContent='Проверка не завершена. Проверьте источник и повторите попытку.';return}
     if(audio.src)return;preparingAudio=true;message.textContent='Готовим запись для прослушивания…';
-    try{const record=await library.get(testId);if(record.status!=='saved'||!record.size)throw new Error('В проверке нет сохранённого звука. Повторите запись.');const response=await library.request('/records/'+testId+'/audio',{method:'HEAD'});if(!response.ok)throw new Error('Проверка пока недоступна.');if(closed)return;audio.src=library.audioURL(testId);audition.hidden=false;confirm.hidden=false;message.textContent='Прослушайте запись. Если слышно всё нужное, можно начинать.'}catch(error){message.textContent=error.message}finally{preparingAudio=false}
+    try{const record=await library.get(testId);if(record.status!=='saved'||!record.size)throw new Error('В проверке нет сохранённого звука. Повторите запись.');const response=await library.request('/records/'+testId+'/audio',{method:'HEAD'});if(!response.ok)throw new Error('Проверка пока недоступна.');if(closed)return;audio.src=library.audioURL(testId);audition.hidden=false;confirm.hidden=false;testButton.className='btn btn-outline';testButton.textContent='Записать ещё раз';message.textContent='Прослушайте запись. Если слышно всё нужное, можно начинать.'}catch(error){message.textContent=error.message}finally{preparingAudio=false}
    });
   }
   if(!closed)title.focus({preventScroll:true});
