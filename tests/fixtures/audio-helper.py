@@ -15,6 +15,7 @@ def segment(track,index,start):
     with wave.open(str(file),'wb') as output:output.setnchannels(1);output.setsampwidth(2);output.setframerate(16000);output.writeframes(data)
     with file.open('r+b') as output:os.fsync(output.fileno())
     emit('segment',sessionId=session,track=track,index=index,relativeFile=file.name,format='pcm_s16le',sampleRate=16000,channels=1,startMonotonicNs=start,endMonotonicNs=start+2_000_000_000+(200000 if args.behavior=='clock-drift' else 0),frames=32000,sha256=hashlib.sha256(file.read_bytes()).hexdigest())
+if args.behavior=='slow-boot':time.sleep(12) # first launch on Windows: self-extracting single-file app + antivirus scan
 emit('ready',protocol=1,platform='fixture',supported=True,modes=['mic','system','both'],inputDevices=[{'id':'mic-fixture','name':'Fixture microphone','default':True}],outputDevices=[{'id':'system-fixture','name':'Fixture output','default':True}])
 def heartbeat():
     while not closed.wait(.25):
@@ -59,6 +60,9 @@ for line in sys.stdin:
     elif method in ['diagnose','repair']:
         if method=='repair' and 'mute' in params:fixture_muted=params['mute']
         emit('diagnosis',inputs=[{'id':'mic-fixture','name':'Fixture microphone','default':True,'state':1,'muted':fixture_muted,'volume':.8},{'id':'mic-off','name':'Disabled microphone','default':False,'state':2,'muted':None,'volume':None}],repairError=None)
+    elif method=='probe':
+        ok=args.behavior not in ['open-failure','open-failure-unsafe']
+        emit('probe',result={'opened':ok,'rawSupported':True,'mixFormat':{'tag':65534,'channels':2,'rate':48000,'bits':32},'browserFormat':'closest-match','initPlain':'00000000' if ok else '88890008',**({} if ok else {'initAutoconvert':'88890008','step':'initialize','hresult':'88890008'}),'frames':24000 if ok else 0,'peakDb':-12.0 if ok else -120.0,'silentFlag':False})
     elif method=='enumerate':emit('devices',inputDevices=[{'id':'mic-fixture','name':'Fixture microphone','default':True}],outputDevices=[{'id':'system-fixture','name':'Fixture output','default':True}])
 closed.set()
 if heart.is_alive():heart.join(timeout=1)

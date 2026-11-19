@@ -37,8 +37,10 @@ test('pre-flight turns the Windows microphone view into checks; fixable ones car
  assert.equal(microphoneChecks(report([mic('Headset (Hands-Free AG Audio)',{default:true})]))[0].id,'mic-handsfree');
  assert.deepEqual(microphoneChecks(report([mic('ok',{default:true})])),[]);assert.deepEqual(microphoneChecks({available:false}),[]);
 });
-test('getUserMedia ladder: exact device → default → plain; NotReadable retried twice per rung; a denial is final',async()=>{
- assert.equal(CONSTRAINT_LADDER('x').length,3);assert.equal(CONSTRAINT_LADDER(null).length,2);
+test('getUserMedia ladder: exact device → default → processed → plain; NotReadable retried twice on the first rung only; a denial is final',async()=>{
+ assert.equal(CONSTRAINT_LADDER('x').length,4);assert.equal(CONSTRAINT_LADDER(null).length,3);
+ // Chromium ≥152 uses raw mode without processing; a processed request is a separate rung.
+ assert.deepEqual(CONSTRAINT_LADDER(null)[1],{echoCancellation:true,noiseSuppression:true,autoGainControl:true});
  const attempt=async script=>{const calls=[];const client=Object.create(BrowserMicrophoneClient.prototype);
   client.devices={getUserMedia:async c=>{calls.push(c.audio);const next=script.shift();if(next instanceof Error)throw next;return {getTracks:()=>[]}}};
   try{await client.acquire('usb',null,5000);return {ok:true,calls}}catch(error){return {ok:false,error:error.name,calls}}};
@@ -47,5 +49,6 @@ test('getUserMedia ladder: exact device → default → plain; NotReadable retri
  assert.equal(busy.ok,true);assert.equal(busy.calls.length,4);assert.equal(busy.calls[2].deviceId.exact,'usb');assert.equal(busy.calls[3].deviceId,undefined,'fell back to the default device');
  const recovered=await attempt([err('NotReadableError'),'ok']);assert.equal(recovered.calls.length,2);assert.equal(recovered.calls[1].deviceId.exact,'usb','a short retry keeps the chosen device');
  const denied=await attempt([err('NotAllowedError')]);assert.equal(denied.ok,false);assert.equal(denied.error,'NotAllowedError');assert.equal(denied.calls.length,1);
+ const later=await attempt([err('NotReadableError'),err('NotReadableError'),err('NotReadableError'),err('NotReadableError'),'ok']);assert.equal(later.calls.length,5,'later rungs are tried once each');
  const gone=await attempt([err('OverconstrainedError'),'ok']);assert.equal(gone.ok,true);assert.equal(gone.calls.length,2);
 });

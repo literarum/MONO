@@ -4,7 +4,7 @@
 
 /** Start failures another path can fix. ACCESS_DENIED, library and disk errors are not here:
  * retrying them would hide a decision or a problem that only the person can resolve. */
-export const RETRYABLE=new Set(['START_TIMEOUT','STOP_PENDING','DEVICE_BUSY','DEVICE_LOST','UNSUPPORTED_FORMAT','CAPTURE_HELPER_UNAVAILABLE','CAPTURE_HELPER_TIMEOUT','CAPTURE_NOT_READY','ACCESS_TIMEOUT','INTERNAL','INVALID_CAPTURE_PROTOCOL']);
+export const RETRYABLE=new Set(['START_TIMEOUT','STOP_PENDING','DEVICE_BUSY','BROWSER_OPEN_FAILED','DEVICE_LOST','UNSUPPORTED_FORMAT','CAPTURE_HELPER_UNAVAILABLE','CAPTURE_HELPER_TIMEOUT','CAPTURE_NOT_READY','ACCESS_TIMEOUT','INTERNAL','INVALID_CAPTURE_PROTOCOL']);
 
 /** Recovery ladder for one press of Record: chosen devices → system defaults → the other,
  * dissimilar microphone path (system module ⇄ browser channel). At most two steps, never the

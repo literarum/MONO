@@ -131,9 +131,9 @@ h1,h2,.studio-timer{font-family:var(--font-display)}
 /* Sheets are 95 % opaque: a backdrop blur under them is invisible but costs a full-screen GPU pass
    on every frame, and a backdrop-filter would also capture fixed popups (Filter Effects 2). */
 .setup-panel,.modal-panel{background:var(--glass-fill-strong)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
-body[data-theme=light] .setup-panel,body[data-theme=light] .modal-panel{background:rgba(250,250,252,.95)!important}
-body:not([data-theme=light]) .setup-panel,body:not([data-theme=light]) .modal-panel{background:rgba(28,30,38,.95)!important}
-.setup-backdrop,.modal-backdrop{background:rgba(0,0,0,.42)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+body[data-theme=light] .setup-panel,body[data-theme=light] .modal-panel{background:#fafafc!important}
+body:not([data-theme=light]) .setup-panel,body:not([data-theme=light]) .modal-panel{background:#1c1e26!important}
+.setup-backdrop,.modal-backdrop{background:rgba(0,0,0,.58)!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
 
 /* Compact overview: the record action and recent takes first, no marketing banner. */
 @media screen{#view-dashboard.active{display:flex!important;flex-direction:column}}
@@ -296,3 +296,57 @@ kbd{font:600 12px/1 var(--font);padding:5px 8px;border-radius:7px;border:1px sol
 .modal-content .inline-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .busy-steps{margin:4px 0 10px;padding-left:20px;display:flex;flex-direction:column;gap:10px;white-space:normal;text-align:left}
 .busy-steps li{line-height:1.55}
+
+/* ---- Critic round 1 ---- */
+/* Library: status pill keeps its own height instead of stretching to the icon. */
+.record-card-head{align-items:flex-start}
+.record-status{align-self:flex-start;display:inline-flex;align-items:center;line-height:1.25;height:auto}
+/* Studio: long device names never push the panel off-screen. */
+.studio-panel,.studio-display,.studio-panel-head{min-width:0}
+.record-source{max-width:100%}
+.level-check{margin-right:6px;white-space:nowrap;letter-spacing:0;font-family:var(--font)}
+.level-check:hover{color:var(--text);border-color:var(--borderstrong)}
+/* Editor: the transcript reads as a document; the title appears once. */
+#editor-name{display:none}
+.segment-edit{resize:none!important}
+.transcript-content{padding-bottom:12px}
+.editor-workspace{padding-bottom:120px!important}
+.audio-tools{margin-top:28px;border-top:1px solid var(--border);padding-top:14px}
+.audio-tools>summary{cursor:pointer;font-size:12px;font-weight:700;color:var(--muted);list-style:none;display:flex;align-items:center;gap:8px;padding:8px 0}
+.audio-tools>summary::-webkit-details-marker{display:none}
+.audio-tools>summary::before{content:"›";display:inline-block;transition:transform .15s;font-size:15px}
+.audio-tools[open]>summary::before{transform:rotate(90deg)}
+.audio-tools>summary:hover{color:var(--text)}
+/* Toasts never cover the editor player. */
+body:has(#view-editor.active) .toast-area{bottom:96px}
+/* Phone width */
+@media(max-width:650px){
+ .studio-panel-head{flex-wrap:wrap;gap:8px}
+ .editor-top{flex-wrap:wrap}
+ .editor-top-actions{flex-wrap:wrap;justify-content:flex-end;gap:6px}
+ #view-editor .audio-player{position:fixed!important;left:12px;right:12px;margin:0!important;bottom:calc(84px + env(safe-area-inset-bottom))!important;z-index:30}
+ .speed-select{min-width:56px}
+ .editor-workspace{padding-bottom:170px!important}
+ body:has(#view-editor.active) .toast-area{bottom:160px}
+ .input-level{flex-wrap:wrap}
+}
+.deep-passed{color:var(--muted);font-size:12px;margin:4px 0 10px}
+
+/* ---- Critic round 2 ---- */
+@media(max-width:650px){.editor-layout{display:flex!important;flex-direction:column}.editor-workspace{order:-1}.editor-sidebar{position:static!important}.speed-select{min-width:64px;padding:5px 6px}}
+/* Transcript reads as text, not as form fields */
+.segment-edit{background:transparent!important;border-color:transparent!important;box-shadow:none!important;min-height:0!important;padding:2px 6px!important;border-radius:8px!important}
+.segment-edit:hover{background:color-mix(in srgb,var(--text) 4%,transparent)!important}
+.segment-edit:focus{background:var(--glass-soft)!important;border-color:var(--borderstrong)!important}
+.editor-layout{align-items:start}.editor-sidebar{margin-top:0!important}
+/* Status heading: dot on the first line */
+.preflight-head{align-items:flex-start}.preflight-light{margin-top:5px}
+/* Level check: standard small button, only when idle */
+
+
+/* ---- Critic round 3 ---- */
+#player-speed{min-width:64px!important;flex:0 0 auto}
+#view-editor .audio-player .seek{min-width:0;flex:1 1 auto}
+.editor-layout>.editor-sidebar,.editor-layout>.editor-workspace{margin-top:0!important;align-self:start}
+.transcript-paragraph{padding:4px 0!important}
+.segment-edit{min-height:0!important;line-height:1.7!important}

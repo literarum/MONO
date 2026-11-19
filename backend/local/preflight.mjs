@@ -39,7 +39,7 @@ export async function preflight({worker,runtime,keyManager,now=()=>performance.n
   :check('audio-tools','caution','FFmpeg не найден','Запись работает, но прослушивание, подготовка и расшифровка недоступны.','Переустановите MONO или установите FFmpeg.'));
  let status=null;const started=now();
  try{status=await timed(worker.call('status'),4000);const ms=Math.round(now()-started);
-  checks.push(ms>1500?check('core','caution','Ядро архива отвечает медленно',`Ответ за ${ms} мс. Диск или антивирус могут задерживать запись.`):check('core','ok','Ядро архива',`Отвечает за ${ms} мс.`));
+  checks.push(ms>1500?check('core','caution','Ядро архива отвечает медленно',`Ответ за ${ms} мс. Диск или антивирус могут задерживать запись.`):check('core','ok','Архив','Работает.'));
  }catch{checks.push(check('core','warning','Ядро архива не отвечает','Запись и библиотека недоступны.','Перезапустите MONO.'))}
  if(status){
   if(!status.libraryConfigured)checks.push(check('library','warning','Папка архива не выбрана','Записи некуда сохранять.','Выберите папку в настройках.'));

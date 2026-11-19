@@ -98,7 +98,7 @@
  <div class="page-heading"><div><h1 id="record-heading">Студия записи<span class="heading-period">.</span></h1><p>Здесь начинается каждая история. Убедитесь, что источник звука подключён.</p></div></div>
  <div class="studio-layout">
   <div class="studio-panel glass"><div class="studio-panel-head"><span class="small-label">МОНИТОР ЗАПИСИ</span><span id="record-state" class="state-pill"><span class="tiny-dot"></span> Ожидание</span></div>
-   <div class="studio-display"><div class="display-overline" id="record-caption">ГОТОВО К ЗАПИСИ</div><div class="record-source" id="record-source" aria-live="polite"></div><div class="studio-timer" id="record-timer">00:00:00</div><div class="studio-wave"><canvas id="record-wave" width="960" height="168" aria-label="Визуализация уровня звука"></canvas><div class="wave-baseline"></div></div><div class="input-level"><span>ВХОДЯЩИЙ СИГНАЛ</span><div class="level-track"><div id="level-fill"></div></div><span id="level-num">−∞ dB</span></div></div>
+   <div class="studio-display"><div class="display-overline" id="record-caption">ГОТОВО К ЗАПИСИ</div><div class="record-source" id="record-source" aria-live="polite"></div><div class="studio-timer" id="record-timer">00:00:00</div><div class="studio-wave"><canvas id="record-wave" width="960" height="168" aria-label="Визуализация уровня звука"></canvas><div class="wave-baseline"></div></div><div class="input-level"><button type="button" class="btn btn-subtle btn-small level-check" id="level-check" title="Микрофон откроется на 45 секунд только для шкалы — без записи">Проверить уровень</button><span>ВХОДЯЩИЙ СИГНАЛ</span><div class="level-track"><div id="level-fill"></div></div><span id="level-num">−∞ dB</span></div></div>
    <div class="studio-buttons"><button id="start-record" class="btn btn-primary btn-large"><svg><use href="#i-mic"/></svg> Начать запись</button><button id="pause-record" class="btn btn-outline" hidden><svg><use href="#i-pause"/></svg> Пауза</button><button id="mark-record" class="btn btn-outline" hidden title="Отметить важный момент (B)" aria-keyshortcuts="B">★ Важно</button><button id="stop-record" class="btn btn-outline" hidden><svg><use href="#i-stop"/></svg> Завершить</button></div>
    <div class="studio-panel-foot"><div><svg><use href="#i-harddrive"/></svg><span id="record-saved">Данные сохраняются на этом устройстве</span></div><div><svg><use href="#i-shield"/></svg><span>Без скрытой записи</span></div></div>
   </div>
@@ -117,7 +117,7 @@
 </section>
 
 <section class="view" id="view-jobs" aria-labelledby="jobs-heading">
- <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> TRANSCRIPTION / PIPELINE</div><h1 id="jobs-heading">Расшифровка<span class="heading-period">.</span></h1><p>Следите за реальным состоянием обработки. Прогресс не имитируется.</p></div><span class="page-counter">03 / 04</span></div>
+ <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> ОЧЕРЕДЬ ЗАДАНИЙ</div><h1 id="jobs-heading">Расшифровка<span class="heading-period">.</span></h1><p>Задания распознавания и их ход. Здесь видно, сколько частей уже обработано.</p></div></div>
  <h2 class="sr-only">Задания расшифровки</h2><div id="jobs-list" class="jobs-list"></div>
 </section>
 
@@ -140,7 +140,7 @@
  </div>
  <div class="archive-storage-actions"><button id="request-persistence" class="btn btn-outline btn-small">Запросить надёжное хранение</button><button id="move-library" class="btn btn-outline btn-small" hidden>Перенести архив</button><button id="migrate-library" class="btn btn-outline btn-small" hidden>Перенести записи из браузера</button><span id="storage-persistence" class="field-hint"></span></div></article>
  <article class="glass settings-card"><div class="settings-card-icon"><svg><use href="#i-clock"/></svg></div><h2>Расходы</h2><p>Расчётные значения, не счёт Groq.</p><label class="field-label" for="setting-rate">Курс USD → RUB</label><input type="number" min="1" max="1000" step="0.01" id="setting-rate" class="select"><p class="field-hint">Тариф распознавания: $0,04 за час отправленного аудио.</p></article>
- <article class="glass settings-card"><div class="settings-card-icon"><svg><use href="#i-harddrive"/></svg></div><h2>Состояние системы</h2><p id="settings-health">Проверка сервера…</p><button class="btn btn-outline btn-small" id="refresh-health"><svg><use href="#i-refresh"/></svg> Проверить снова</button><p class="field-hint">Для транскрибации нужны Groq и FFmpeg на сервере. При удалённом развёртывании данные отправляются на сервер и в Groq; браузерная библиотека остаётся на текущем устройстве.</p></article>
+ <article class="glass settings-card" id="system-health-card"><div class="settings-card-icon"><svg><use href="#i-harddrive"/></svg></div><h2>Состояние системы</h2><p id="settings-health">Проверка сервера…</p><button class="btn btn-outline btn-small" id="refresh-health"><svg><use href="#i-refresh"/></svg> Проверить снова</button><p class="field-hint">Для расшифровки нужны Groq и FFmpeg. Аудио хранится на этом компьютере и уходит в Groq только после вашего подтверждения.</p></article>
  </div>
 </section>
 </main>

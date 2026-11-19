@@ -55,6 +55,7 @@ def dispatch(method,params):
         if operation=='status':service.tick();return service.status()
         if operation=='check_access':return service.check_access()
         if operation=='diagnose':return service.diagnose()
+        if operation=='probe':return service.probe(params.get('inputId'))
         if operation=='repair':return service.diagnose(repair=params or {})
         if operation=='test':return service.test(params)
         if operation=='discard_test':return service.discard_test(params['recordId'])

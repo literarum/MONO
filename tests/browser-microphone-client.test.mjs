@@ -26,8 +26,8 @@ test('selected-device refresh requests that exact input rather than opening a br
 
 test('device-open failure is actionable and reports only bounded standardized local diagnostics',async t=>{
  const f=await fixture(t);f.devices.getUserMedia=async()=>{throw Object.assign(new Error('PRIVATE_DEVICE_PATH_OR_MESSAGE'),{name:'NotReadableError'})};
- await assert.rejects(f.client.start({mode:'browser',inputId:'PRIVATE_DEVICE_ID'}),e=>e.code==='DEVICE_BUSY'&&/занят|Windows/.test(e.message));
- assert.deepEqual(f.diagnostics,[{operation:'start',stage:'access',code:'DEVICE_BUSY',errorName:'NotReadableError'}]);assert.equal(f.starts(),0);assert.deepEqual((await f.library.list()).items,[]);
+ await assert.rejects(f.client.start({mode:'browser',inputId:'PRIVATE_DEVICE_ID'}),e=>e.code==='BROWSER_OPEN_FAILED'&&/не обязательно значит, что микрофон занят/.test(e.message));
+ assert.deepEqual(f.diagnostics,[{operation:'start',stage:'access',code:'BROWSER_OPEN_FAILED',errorName:'NotReadableError'}]);assert.equal(f.starts(),0);assert.deepEqual((await f.library.list()).items,[]);
 });
 
 test('worklet-load failure retains its distinct stage and always releases the acquired microphone',async t=>{

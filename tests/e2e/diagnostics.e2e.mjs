@@ -26,7 +26,7 @@ test('deep diagnostics: live microphone, server checks, private report, journal 
  const text=await page.evaluate(()=>navigator.clipboard.readText());
  assert.match(text,/^MONO — глубокая диагностика/);
  const data=JSON.parse(text.slice(text.indexOf('{')));
- assert.equal(data.microphone.ok,true,'the fake microphone was opened and measured');assert.ok(data.microphone.peakDb>-90,'fake device produces a tone');
+ assert.equal(data.microphone.raw.ok,true,'the fake microphone was opened and measured');assert.ok(data.microphone.raw.peakDb>-90,'fake device produces a tone');assert.equal(data.microphone.processed.ok,true,'the processed browser path is measured too');
  assert.equal(data.server.groq.error,'ECONNREFUSED');assert.equal(data.server.core.responds,true);
  assert.ok(data.server.journal.filter(r=>r.level==='start').length>=2,'starts are kept across restarts');
  assert.ok(!text.includes(server.root),'no archive or data paths');assert.ok(!text.includes('gsk_secret'),'no key');

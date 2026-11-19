@@ -12,7 +12,19 @@ def configuration():
         if not path.is_relative_to(root):raise worker.CoreError('INVALID_CHOICE','Fixture path escaped test root')
         path.mkdir(parents=True,exist_ok=True);token=str(uuid.uuid4());config.choices[token]={'path':path,'purpose':purpose,'expires':time.monotonic()+600}
         return {'choiceId':token,'displayPath':str(path)}
-    config.choose=choose
+    if os.environ.get('MONO_FIXTURE_PICKER_DELAY'):
+        # Realistic picker: the real LocalConfig.choose/poll_choice code with a dialog that
+        # stays open for a while (the person is choosing), exactly like the Tk process.
+        import local_core.config as config_module
+        delay=float(os.environ['MONO_FIXTURE_PICKER_DELAY'])
+        class SlowPicker:
+            def __init__(self,purpose):self.purpose=purpose;self.until=time.monotonic()+delay
+            def poll(self):
+                if time.monotonic()<self.until:return None
+                path=Path(json.loads((root/'test-picker.json').read_text(encoding='utf-8'))[self.purpose]).resolve();path.mkdir(parents=True,exist_ok=True);return path
+            def close(self):pass
+        config_module.choose_folder=SlowPicker
+    else:config.choose=choose
     return config
 worker.configuration=configuration
 raise SystemExit(worker.main())

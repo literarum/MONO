@@ -35,6 +35,7 @@ internal static class Program
         if(!recent.Add(requestId))throw new AudioFailure("INTERNAL");order.Enqueue(requestId);if(order.Count>4096)recent.Remove(order.Dequeue());
         var parameters=request.GetProperty("params");if(parameters.ValueKind!=JsonValueKind.Object)throw new AudioFailure("INTERNAL");
         if(method=="enumerate"){Devices(false);return;}
+        if(method=="probe"){Emit("probe",new(){{"result",MicProbe.Run(DeviceId(parameters,"inputId"))}});return;}
         if(method=="diagnose"||method=="repair"){
             string? failure=null;
             if(method=="repair"){

@@ -13,12 +13,20 @@ export function signalStats(samples){
 }
 
 /** Opens the microphone for `ms` and measures it. Never prompts: runs only when access was already granted. */
-export async function microphoneProbe({deviceId=null,ms=1500,nav=globalThis.navigator,contextFactory=()=>new AudioContext()}={}){
+/** Two browser paths: without processing (Chromium ≥152 then asks the driver for raw mode) and
+ * with the browser's processing. Which one opens tells where a NotReadableError comes from. */
+export async function microphonePaths(options={}){
+ const raw=await microphoneProbe({...options,processing:false});
+ if(raw.skipped)return {raw};
+ const processed=await microphoneProbe({...options,processing:true,ms:600});
+ return {raw,processed};
+}
+export async function microphoneProbe({deviceId=null,ms=1500,processing=false,nav=globalThis.navigator,contextFactory=()=>new AudioContext()}={}){
  let state=null;try{state=(await nav.permissions?.query({name:'microphone'}))?.state}catch{}
  if(state!=='granted')return {skipped:state==='denied'?'denied':'not-granted'};
  const started=performance.now();let stream,context;
  try{
-  stream=await nav.mediaDevices.getUserMedia({audio:{...(deviceId?{deviceId:{exact:deviceId}}:{}),echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
+  stream=await nav.mediaDevices.getUserMedia({audio:{...(deviceId?{deviceId:{exact:deviceId}}:{}),echoCancellation:processing,noiseSuppression:processing,autoGainControl:processing},video:false});
   const openMs=Math.round(performance.now()-started),track=stream.getAudioTracks()[0],settings=track?.getSettings?.()||{};
   context=contextFactory();if(context.state==='suspended')await context.resume().catch(()=>{});
   const analyser=context.createAnalyser();analyser.fftSize=2048;context.createMediaStreamSource(stream).connect(analyser);
@@ -64,7 +72,7 @@ export function windowFindings(w,mic){
  }else if(mic?.ok){
   if(mic.peakDb<=-90)out.push(F('warning','Микрофон открылся, но передаёт полную тишину',`«${mic.label||'по умолчанию'}»: пик ${mic.peakDb} dBFS.`,'Часто это выключенный аппаратный переключатель, неправильный вход по умолчанию или звук, выключенный в Windows.'));
   else if(mic.peakDb<-50)out.push(F('caution','Очень тихий сигнал микрофона',`Пик ${mic.peakDb} dBFS за 1,5 с (если вы молчали — это нормально).`,'Скажите что-нибудь во время проверки или поднимите громкость входа.'));
-  if(mic.clippedShare>.01)out.push(F('caution','Микрофон перегружен',`${(mic.clippedShare*100).toFixed(1)} % отсчётов на пределе.`,'Уменьшите громкость входа в Windows.'));
+  if(mic.clippedShare>.01)out.push(F('caution','Микрофон перегружен',`${(mic.clippedShare*100).toFixed(1)} % отсчётов на пределе.`,'Уменьшите громкость входа в настройках звука системы.'));
   if(mic.openMs>2500)out.push(F('advisory','Микрофон открывается медленно',`${mic.openMs} мс.`,'Bluetooth-гарнитуры переключают профиль; первая секунда записи может пропасть.'));
   if(mic.muted)out.push(F('caution','Система приглушила дорожку микрофона','track.muted = true.','Проверьте аппаратную кнопку выключения микрофона.'));
  }else if(mic?.skipped==='denied')out.push(F('caution','Окну запрещён доступ к микрофону','Живую проверку сигнала провести нельзя.','Меню окна → Сведения о сайте → Микрофон: «Разрешить».'));
@@ -107,5 +115,38 @@ export function consolidate(list){
   out=out.filter(f=>!folded.includes(f));
   const index=out.indexOf(root);out[index]={...root,detail:[root.detail,`Следствия этой причины (${folded.length}): ${folded.map(f=>f.title.toLowerCase()).join('; ')}.`].filter(Boolean).join(' ')};
  }
+ return out;
+}
+
+/** HRESULTs a capture stream can fail with (audioclient.h / winerror.h). */
+const HRESULTS={'8889000A':'AUDCLNT_E_DEVICE_IN_USE','80070005':'E_ACCESSDENIED','88890008':'AUDCLNT_E_UNSUPPORTED_FORMAT','80070057':'E_INVALIDARG','8889000F':'AUDCLNT_E_ENDPOINT_CREATE_FAILED','88890004':'AUDCLNT_E_DEVICE_INVALIDATED','88890010':'AUDCLNT_E_SERVICE_NOT_RUNNING','80070490':'ERROR_NOT_FOUND'};
+const hrName=hr=>hr?`${HRESULTS[hr]||'код'} (0x${hr})`:'';
+/** One verdict from three dissimilar tests of the same microphone: the browser without
+ * processing, the browser with processing, and the system module (plain shared WASAPI). */
+export function microphoneFindings(paths,probe){
+ const out=[],raw=paths?.raw,processed=paths?.processed,native=probe?.available?probe:null;
+ if(!raw||raw.skipped==='not-granted')return out;
+ if(raw.skipped==='denied'){out.push(F('caution','Окну запрещён доступ к микрофону','Живую проверку сигнала в окне провести нельзя.','Меню окна → Сведения о сайте → Микрофон: «Разрешить».'));return out}
+ const level=r=>r?.ok?r.peakDb:null;
+ if(raw.ok){
+  if(level(raw)<=-90)out.push(F('warning','Микрофон открылся, но передаёт полную тишину',`«${raw.label||'по умолчанию'}»: пик ${raw.peakDb} dBFS.`,'Проверьте аппаратный выключатель микрофона (клавиша с перечёркнутым микрофоном, шторка) и вход по умолчанию в Windows.'));
+  else if(raw.clippedShare>.01)out.push(F('caution','Микрофон перегружен',`${(raw.clippedShare*100).toFixed(1)} % отсчётов на пределе.`,'Уменьшите громкость входа в настройках звука системы.'));
+  return out;
+ }
+ const rawNote=native?.rawSupported===true?' Драйвер заявляет поддержку режима RAW: Chrome 152+ открывает такие микрофоны именно в нём и при отказе драйвера не пробует иначе.':'';
+ if(processed?.ok){out.push(F('advisory','Окно открывает микрофон только с обработкой звука',`Без обработки — ${raw.error}, с обработкой — работает.${rawNote}`,'MONO сам использует этот способ. Для лучшего качества записывайте через системный модуль.'));return out}
+ if(native?.opened){
+  out.push(F(native.peakDb<=-90?'warning':'caution','Браузер не может открыть микрофон, системный модуль — может',`Окно: ${raw.error} без обработки и с обработкой. Системный модуль открыл тот же микрофон (${native.initPlain==='00000000'?'обычный режим':'через конвертер Windows'}, пик ${native.peakDb} dBFS).${rawNote}`,native.peakDb<=-90?'Модуль получает тишину: проверьте аппаратный выключатель микрофона.':'Записывайте через «Микрофон (системный модуль)» — MONO переключается на него сам, когда окно не может открыть микрофон.'));
+  return out;
+ }
+ if(native&&!native.opened){
+  const hr=native.hresult||native.initAutoconvert||native.initPlain,name=HRESULTS[hr];
+  if(name==='AUDCLNT_E_DEVICE_IN_USE')out.push(F('warning','Микрофон действительно занят в монопольном режиме',`Windows ответила обоим путям: ${hrName(hr)}.`,'Закройте программу, которая забрала микрофон, или снимите галочки «Монопольный режим»: Панель управления → Звук → Запись → микрофон → Свойства → Дополнительно.'));
+  else if(name==='E_ACCESSDENIED')out.push(F('warning','Windows запрещает доступ к микрофону',hrName(hr),'Параметры → Конфиденциальность и защита → Микрофон: включите доступ, в том числе для классических приложений.'));
+  else if(name==='AUDCLNT_E_SERVICE_NOT_RUNNING')out.push(F('warning','Служба звука Windows не работает',hrName(hr),'Перезагрузите компьютер (или запустите службу «Windows Audio»).'));
+  else out.push(F('warning','Драйвер микрофона не запускает запись ни для одной программы',`Окно: ${raw.error}; системный модуль: ${hrName(hr)} на шаге «${native.step||'initialize'}». Формат устройства: ${native.mixFormat?`${native.mixFormat.channels} кан., ${native.mixFormat.rate} Гц, ${native.mixFormat.bits} бит`:'неизвестен'}.`,'Это сбой драйвера или звуковых эффектов, а не занятость. По порядку: (1) Свойства микрофона → «Дополнительно» → «Формат по умолчанию»: 2 канала, 16 бит, 48000 Гц; (2) там же отключите «Улучшения звука»; (3) Диспетчер устройств → «Аудиовходы и аудиовыходы» → микрофон → «Удалить устройство» → перезагрузка (Windows поставит драйвер заново); (4) драйвер Intel Smart Sound с сайта производителя ноутбука.'));
+  return out;
+ }
+ out.push(F('caution','Окно браузера не может открыть микрофон',`${raw.error} без обработки${processed?` и ${processed.error} с обработкой`:''}. Это не значит, что микрофон занят.`,'Выберите «Микрофон (системный модуль)» в студии.'));
  return out;
 }

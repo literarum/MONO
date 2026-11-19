@@ -121,7 +121,7 @@ test('a browser channel that cannot open the microphone (NotReadableError) hands
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
  const context=await browser.newContext();await context.grantPermissions(['microphone'],{origin:server.url});
  // As on the reported laptop: Windows refuses the microphone to the browser (held by another app).
- await context.addInitScript(()=>{const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async c=>{if(c?.audio)throw new DOMException('Could not start audio source','NotReadableError');return original(c)}});
+ await context.addInitScript(()=>{const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async c=>{if(c?.audio)throw new DOMException('Could not start audio source','NotReadableError');return original(c)};try{localStorage.setItem('mono-source-migrated-1',window.__migrate?'0':'1')}catch{}});
  const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
  await page.goto(server.url+'/');
  await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();const headers={'Content-Type':'application/json','X-Mono-CSRF':csrf};
@@ -138,5 +138,35 @@ test('a browser channel that cannot open the microphone (NotReadableError) hands
  assert.equal(mode,'mic','the working path is remembered');
  const report=await page.evaluate(async()=>(await fetch('/api/local/diagnostics')).json());
  assert.equal(report.capture.source,'mic');
+ assert.deepEqual(page.errors,[]);
+});
+
+test('deep diagnostics tells a browser-only fault from a broken microphone: the system module opens it while the window gets NotReadableError',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});
+ const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
+ const context=await browser.newContext();await context.grantPermissions(['microphone','clipboard-read','clipboard-write'],{origin:server.url});
+ await context.addInitScript(()=>{const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async c=>{if(c?.audio)throw new DOMException('Could not start audio source','NotReadableError');return original(c)}});
+ const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
+ await page.goto(server.url+'/');
+ await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();const headers={'Content-Type':'application/json','X-Mono-CSRF':csrf};
+  await fetch('/api/local/library/configure',{method:'POST',headers,body:JSON.stringify({useDefault:true})});
+  await fetch('/api/local/preferences',{method:'PATCH',headers,body:JSON.stringify({onboarding:{completed:true,keySkipped:true,soundTested:true}})})});
+ await page.reload();await page.waitForFunction(()=>document.querySelector('#nav-count'));await page.evaluate(()=>{location.hash='#settings'});
+ await page.waitForSelector('.preflight-deep',{timeout:30000});await page.click('.preflight-deep');
+ await page.waitForSelector('#deep-copy',{timeout:60000});
+ const text=await page.textContent('#modal-text');
+ assert.match(text,/Браузер не может открыть микрофон, системный модуль — может/);
+ assert.doesNotMatch(text,/занят/,'a NotReadableError is not reported as a busy microphone');
+ await page.click('#deep-copy');const report=JSON.parse((await page.evaluate(()=>navigator.clipboard.readText())).replace(/^[\s\S]*?\n\{/,'{'));
+ assert.equal(report.server.capture.probe.opened,true);assert.equal(report.server.capture.probe.rawSupported,true);assert.equal(report.microphone.raw.error,'NotReadableError');
+ assert.deepEqual(page.errors,[]);
+});
+
+test('a source pinned to the browser channel moves to the system module once, with a notice',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});const page=await open(t,server,'browser');
+ await page.waitForSelector('.toast:has-text("Источник записи — системный модуль")',{timeout:30000});
+ assert.equal(await until(page,async()=>(await (await fetch('/api/local/preferences')).json()).capture.mode,null,{timeout:10000}),'mic');
+ await page.reload();await page.waitForTimeout(4000);
+ assert.equal(await page.locator('.toast:has-text("Источник записи — системный модуль")').count(),0,'only once');
  assert.deepEqual(page.errors,[]);
 });

@@ -17,7 +17,7 @@ export class NativeCaptureController{
   const epoch=this.epoch,abort=new AbortController();this.readAbort=abort;const timeout=setTimeout(()=>abort.abort(),3000);timeout.unref?.();
   this.reading=this.client.status({signal:abort.signal}).then(value=>{this.lastError=null;if(epoch===this.epoch&&!this.command)this.publish({...value,connected:true});return this.snapshot}).catch(error=>{
    this.lastError=error;
-   if(!this.closed&&epoch===this.epoch&&!this.command){const first=this.snapshot.connected;this.publish({connected:false});if(first)this.onError(new LibraryError('CAPTURE_CONNECTION_LOST','Связь с записью потеряна. Остановка не подтверждена. Восстанавливаем соединение…'))}throw error;
+   if(!this.closed&&epoch===this.epoch&&!this.command){const first=this.snapshot.connected,recording=captureActive(this.snapshot);this.publish({connected:false});if(first&&recording)this.onError(new LibraryError('CAPTURE_CONNECTION_LOST','Связь с записью потеряна. Остановка не подтверждена. Восстанавливаем соединение…'))}throw error;
   }).finally(()=>{clearTimeout(timeout);this.reading=null;if(this.readAbort===abort)this.readAbort=null});return this.reading;
  }
  async mutate(action){

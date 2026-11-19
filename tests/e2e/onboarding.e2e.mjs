@@ -1,0 +1,28 @@
+// First launch: choosing a folder must move on to the next step with no error line,
+// whatever the capture module is doing in the background.
+import test from 'node:test';import assert from 'node:assert/strict';import {writeFileSync} from 'node:fs';import path from 'node:path';import {fileURLToPath} from 'node:url';
+import {localServer} from '../helpers/local-server.mjs';import {createRequire} from 'node:module';
+let playwright=null;
+try{playwright=await import('playwright')}catch{try{playwright=createRequire(import.meta.url)('playwright')}catch{}}
+const FOLDER_WORKER=fileURLToPath(new URL('../fixtures/folder-worker.py',import.meta.url));
+
+for(const [name,env] of [['without the system capture module',{}],['with the system capture module',{MONO_AUDIO_HELPER:process.platform==='win32'?'':'__fixture__'}],['real picker timing: the dialog stays open 6 s',{MONO_FIXTURE_PICKER_DELAY:'6'}],['real picker timing, 20 s',{MONO_FIXTURE_PICKER_DELAY:'20'}],['the capture module takes 12 s to start (first launch on Windows)',{MONO_AUDIO_HELPER:'__fixture__',behavior:'slow-boot'}]]){
+ test(`first launch: a chosen folder becomes the archive and setup moves on (${name})`,{skip:(!playwright&&'playwright is not installed')||(env.MONO_AUDIO_HELPER==='__fixture__'&&process.platform==='win32'&&'POSIX only')},async t=>{
+  const extra={MONO_CORE_SCRIPT:FOLDER_WORKER,...(env.MONO_FIXTURE_PICKER_DELAY?{MONO_FIXTURE_PICKER_DELAY:env.MONO_FIXTURE_PICKER_DELAY}:{})};
+  if(env.MONO_AUDIO_HELPER==='__fixture__'){const {mkdtempSync,chmodSync}=await import('node:fs');const {tmpdir}=await import('node:os');const dir=mkdtempSync(path.join(tmpdir(),'mono-helper-')),file=path.join(dir,'helper.sh');writeFileSync(file,`#!/bin/sh\nexec python3 '${fileURLToPath(new URL('../fixtures/audio-helper.py',import.meta.url))}' "$@" --behavior ${env.behavior||'impulse'}\n`);chmodSync(file,0o755);extra.MONO_AUDIO_HELPER=file}
+  const server=await localServer(t,extra);
+  writeFileSync(path.join(server.root,'test-picker.json'),JSON.stringify({create:path.join(server.root,'Мои записи'),open:path.join(server.root,'Мои записи')}));
+  const browser=await playwright.chromium.launch();t.after(()=>browser.close());
+  const page=await (await browser.newContext()).newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto(server.url+'/');
+  await page.waitForSelector('.setup-panel :text("Выбрать папку")',{timeout:20000});
+  await page.click('.setup-panel button:has-text("Выбрать папку")');
+  await page.waitForFunction(()=>{const m=document.querySelector('.setup-message')?.textContent||'';return /2 из 3/.test(document.querySelector('.setup-step')?.textContent||'')||(m&&!/Выберите папку в системном окне/.test(m))},null,{timeout:45000});
+  const state=await page.evaluate(()=>({step:document.querySelector('.setup-step')?.textContent,message:document.querySelector('.setup-message')?.textContent,toasts:[...document.querySelectorAll('.toast.error')].map(t=>t.textContent)}));
+  assert.equal(state.message,'',`no error line under the button (got: ${state.message})`);
+  assert.match(state.step,/2 из 3/);assert.deepEqual(state.toasts,[]);
+  const status=await page.evaluate(async()=>(await fetch('/api/local/status')).json());
+  assert.equal(status.libraryAvailable,true);assert.match(status.libraryPath,/Мои записи$/);
+  assert.deepEqual(errors,[]);
+ });
+}
