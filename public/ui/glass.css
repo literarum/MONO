@@ -331,3 +331,15 @@ body:has(#view-editor.active) .toast-area{bottom:96px}
  .input-level{flex-wrap:wrap}
 }
 .deep-passed{color:var(--muted);font-size:12px;margin:4px 0 10px}
+
+/* ---- Critic round 2 ---- */
+@media(max-width:650px){.editor-layout{display:flex!important;flex-direction:column}.editor-workspace{order:-1}.editor-sidebar{position:static!important}.speed-select{min-width:64px;padding:5px 6px}}
+/* Transcript reads as text, not as form fields */
+.segment-edit{background:transparent!important;border-color:transparent!important;box-shadow:none!important;min-height:0!important;padding:2px 6px!important;border-radius:8px!important}
+.segment-edit:hover{background:color-mix(in srgb,var(--text) 4%,transparent)!important}
+.segment-edit:focus{background:var(--glass-soft)!important;border-color:var(--borderstrong)!important}
+.editor-layout{align-items:start}.editor-sidebar{margin-top:0!important}
+/* Status heading: dot on the first line */
+.preflight-head{align-items:flex-start}.preflight-light{margin-top:5px}
+/* Level check: standard small button, only when idle */
+.level-check{font-family:inherit;font-size:11px;letter-spacing:0;font-weight:600;padding:5px 12px;border-color:var(--borderstrong);color:var(--text)}

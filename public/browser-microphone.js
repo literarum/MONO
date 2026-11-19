@@ -22,7 +22,7 @@ function waitFor(promise,signal,onLate=()=>{},timeoutMs=10000){
 function microphoneError(error,stage){
  if(error instanceof LibraryError||error.name==='AbortError')return error;
  const code={NotAllowedError:'ACCESS_DENIED',SecurityError:'ACCESS_DENIED',NotFoundError:'DEVICE_LOST',OverconstrainedError:'DEVICE_LOST',NotReadableError:'BROWSER_OPEN_FAILED'}[error.name]||'BROWSER_AUDIO_ERROR';
- const message={ACCESS_DENIED:'Разрешите микрофон в запросе браузера.',DEVICE_LOST:'Выбранный микрофон недоступен этому окну. Обновите список и выберите его снова.',BROWSER_OPEN_FAILED:'Окно браузера не смогло открыть микрофон: система отклонила запуск записи. Это не обязательно значит, что микрофон занят.'}[code];
+ const message={ACCESS_DENIED:'Разрешите микрофон в запросе браузера.',DEVICE_LOST:'Выбранный микрофон недоступен этому окну. Обновите список и выберите его снова.',BROWSER_OPEN_FAILED:'Окно браузера не смогло открыть микрофон: система отклонила запуск записи. Это не обязательно значит, что микрофон занят. Выберите другой микрофон в студии или нажмите «Диагностика».'}[code];
  return new LibraryError(code,message||(stage==='worklet'?'Не удалось подготовить запись в этом окне. Обновите окно MONO и повторите.':'Не удалось подготовить запись. Перезапустите MONO и повторите.'));
 }
 /** Chrome/Edge list the system default as 'default' ("По умолчанию - X") and, on
@@ -49,11 +49,11 @@ const RETRYABLE=new Set(['NotReadableError','OverconstrainedError','NotFoundErro
 export class BrowserMicrophoneClient{
  async acquire(inputId,intent,accessTimeout){
   let last=null;
-  for(const audio of CONSTRAINT_LADDER(inputId)){
+  for(const [rung,audio] of CONSTRAINT_LADDER(inputId).entries()){
    for(let attempt=0;attempt<3;attempt++){
     intent?.throwIfAborted?.();
     try{const stream=await waitFor(this.devices.getUserMedia({audio,video:false}),intent,late=>late.getTracks().forEach(track=>track.stop()),accessTimeout);if(last)this.recovered=last.name;return stream}
-    catch(error){last=error;if(!RETRYABLE.has(error?.name)||error?.name==='AbortError'&&intent?.aborted)throw error;if(error.name!=='NotReadableError'||attempt>=2)break;await new Promise(resolve=>setTimeout(resolve,attempt?1200:300))}
+    catch(error){last=error;if(!RETRYABLE.has(error?.name)||error?.name==='AbortError'&&intent?.aborted)throw error;if(error.name!=='NotReadableError'||attempt>=(rung===0?2:0))break;/* retries only on the first rung: ~3 s, not ~10 s */await new Promise(resolve=>setTimeout(resolve,attempt?1200:300))}
    }
   }
   throw last;

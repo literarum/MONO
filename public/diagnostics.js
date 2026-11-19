@@ -130,7 +130,7 @@ export function microphoneFindings(paths,probe){
  const level=r=>r?.ok?r.peakDb:null;
  if(raw.ok){
   if(level(raw)<=-90)out.push(F('warning','Микрофон открылся, но передаёт полную тишину',`«${raw.label||'по умолчанию'}»: пик ${raw.peakDb} dBFS.`,'Проверьте аппаратный выключатель микрофона (клавиша с перечёркнутым микрофоном, шторка) и вход по умолчанию в Windows.'));
-  else if(raw.clippedShare>.01)out.push(F('caution','Микрофон перегружен',`${(raw.clippedShare*100).toFixed(1)} % отсчётов на пределе.`,'Уменьшите громкость входа в Windows.'));
+  else if(raw.clippedShare>.01)out.push(F('caution','Микрофон перегружен',`${(raw.clippedShare*100).toFixed(1)} % отсчётов на пределе.`,'Уменьшите громкость входа в настройках звука системы.'));
   return out;
  }
  const rawNote=native?.rawSupported===true?' Драйвер заявляет поддержку режима RAW: Chrome 152+ открывает такие микрофоны именно в нём и при отказе драйвера не пробует иначе.':'';

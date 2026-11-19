@@ -53,7 +53,7 @@ const blackBox=[];
 export const recentErrors=()=>blackBox.slice(-20);
 export function remember(kind,message){blackBox.push({at:new Date().toISOString(),kind,message:String(message||'').replace(/[A-Za-z]:\\[^\s]+|\/(?:home|Users)\/[^\s]+/g,'(путь)').slice(0,240)});if(blackBox.length>30)blackBox.shift()}
 if(typeof addEventListener==='function'){addEventListener('error',event=>remember('error',event.message));addEventListener('unhandledrejection',event=>remember('rejection',event.reason?.code||event.reason?.message||event.reason))}
-const SUMMARY={ok:'Всё готово к записи',advisory:'Готово к записи · есть подсказки',caution:'Записывать можно · есть ограничения',warning:'Запись недоступна · нужно действие'};
+const SUMMARY={ok:'Всё готово к записи',advisory:'Готово к записи',caution:'Есть ограничения',warning:'Нужно действие'};
 export function mountPreflight(host,{model,onError=()=>{},compact=false,onDeep=null}){
  host.classList.add('preflight');
  host.innerHTML=`<div class="preflight-head"><span class="preflight-light" aria-hidden="true"></span><strong class="preflight-summary" role="status" aria-live="polite">Проверяем системы…</strong></div><ul class="preflight-list"></ul><div class="inline-actions"><button type="button" class="btn btn-outline btn-small preflight-run">Проверить снова</button>${compact?'':'<button type="button" class="btn btn-outline btn-small preflight-copy">Скопировать диагностику</button>'}${!compact&&onDeep?'<button type="button" class="btn btn-primary btn-small preflight-deep">Глубокая диагностика</button>':''}</div>`;

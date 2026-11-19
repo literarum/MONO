@@ -139,12 +139,12 @@ function onNativeState(value){
  }else if(state.capture?.native){state.capture=null;state.recordingId=null}
  // Never a dead control: without a connection, pressing Start reconnects and explains.
  $('#start-record').hidden=active;$('#start-record').disabled=false;
- $('#pause-record').hidden=!active||value.state==='requesting';$('#stop-record').hidden=!active;$('#mark-record').hidden=!active;$('.studio-buttons').classList.toggle('is-recording',active);
+ $('#pause-record').hidden=!active||value.state==='requesting';$('#level-check').hidden=active;$('#stop-record').hidden=!active;$('#mark-record').hidden=!active;$('.studio-buttons').classList.toggle('is-recording',active);
  watchDisk(active);
  if(active){saveClock.observe(value.sessionId||value.recordId,value.duration);if(!battery.active){battery.active=true;battery.reset()}void battery.check();levelPreview.stop()}else battery.active=false;
  $('#pause-record').disabled=!value.connected||Boolean(value.pendingAction)||!['recording','paused'].includes(value.state);
  $('#stop-record').disabled=value.state==='stopping';$('#pause-record').innerHTML=icon(value.state==='paused'?'play':'pause')+(value.state==='paused'?' Продолжить':' Пауза');
- setText('#record-saved',!value.connected?(active?'Связь потеряна. Остановка и сохранение не подтверждены.':'Подключаемся к модулю записи…'+(nativeController?.lastError?.code?` (${nativeController.lastError.code})`:'')):value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве: '+durationText(value.duration)+(value.state==='recording'?' · сохранено '+saveClock.text():'')+captureHealthHint(value):value.errorCode?captureFailureMessage(value):'Аудио сохраняется в выбранной папке');
+ setText('#record-saved',!value.connected?(active?'Связь потеряна. Остановка и сохранение не подтверждены.':'Подключаемся к модулю записи…'+(nativeController?.lastError?.code?` (${nativeController.lastError.code})`:'')):value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве '+(value.state==='recording'?saveClock.text():'')+captureHealthHint(value):value.errorCode?captureFailureMessage(value):'Аудио сохраняется в выбранной папке');
  updateRecordUI();
  if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId));syncLevelPreview();
   if(wasActive&&value.state==='interrupted')markRecoveredSeen(value.recordId);
@@ -241,7 +241,7 @@ async function initializeNative(local){
   $('#setting-safety').checked=safetySettings;$('#setting-safety').onchange=e=>{safetySettings=e.target.checked;try{localStorage.setItem('mono-safety-track',safetySettings?'1':'0')}catch{}};
   const help=document.createElement('article');help.className='glass settings-card';mountHelp(help);$('#view-settings .settings-grid').append(help);
   // Pre-flight check: compact (problems only) in the studio, full in settings.
-  preflight=new Preflight(local);
+  preflight=new Preflight(local);$('#system-health-card').hidden=true; // the pre-flight check below covers the same systems in depth
   const studioCheck=document.createElement('div');studioCheck.className='glass side-card';$('.studio-side').prepend(studioCheck);mountPreflight(studioCheck,{model:preflight,compact:true,onError:()=>{}});
   const settingsCheck=document.createElement('article');settingsCheck.className='glass settings-card';settingsCheck.innerHTML='<div class="settings-card-icon"><svg><use href="#i-check"/></svg></div><h2>Предполётная проверка</h2><div></div>';$('#view-settings .settings-grid').prepend(settingsCheck);mountPreflight(settingsCheck.lastElementChild,{model:preflight,onError:error=>notify(error.message,'error'),onDeep:()=>void runDeepDiagnostics()});
  }
@@ -460,6 +460,7 @@ async function followSafety(value,wasActive){
  }
 }
 function offerSafety(id,meta){
+ setText('#record-saved','Основная запись прервалась — звук сохранён страховочной дорожкой. Нажмите «Восстановить».');
  // One notice per event: the rescue replaces the generic failure toasts of the same take.
  document.querySelectorAll('.toast.error').forEach(t=>{if(/Запись прервана|модуля записи|Перезапустите MONO/.test(t.textContent))t.remove()});
  notify('Основная запись прервалась. Страховочная дорожка сохранила звук микрофона'+(meta.bytes?` (${Math.max(1,Math.round(meta.bytes/1024/1024))} МБ)`:'')+'.','error',{text:'Восстановить',run:()=>void restoreSafety(id,meta)});
@@ -549,7 +550,7 @@ function passedLine(report){
 }
 function showDeepReport(findings,text,report={}){
  const mark={warning:'✖',caution:'▲',advisory:'●'};
- const body=(findings.length?`<p>${findings.some(f=>f.level==='warning')?'Есть проблемы, которые мешают работе:':'Найдено:'}</p>${passedLine(report)}<ul class="deep-findings">${findings.map(f=>`<li data-level="${f.level}"><span class="deep-mark" aria-hidden="true">${mark[f.level]||'•'}</span><div><strong>${h(f.title)}</strong>${f.detail?`<span>${h(f.detail)}</span>`:''}${f.action?`<em>${h(f.action)}</em>`:''}</div></li>`).join('')}</ul>`:'<p><strong>Проблем не найдено.</strong></p>')+passedLine(report)+
+ const body=(findings.length?`<p>${findings.some(f=>f.level==='warning')?'Есть проблемы, которые мешают работе:':'Найдено:'}</p><ul class="deep-findings">${findings.map(f=>`<li data-level="${f.level}"><span class="deep-mark" aria-hidden="true">${mark[f.level]||'•'}</span><div><strong>${h(f.title)}</strong>${f.detail?`<span>${h(f.detail)}</span>`:''}${f.action?`<em>${h(f.action)}</em>`:''}</div></li>`).join('')}</ul>`:'<p><strong>Проблем не найдено.</strong></p>')+passedLine(report)+
   '<p class="field-hint">В отчёте нет названий записей, текста, ключей и путей к файлам. Названия звуковых устройств остаются — по ним видно, какой микрофон проверялся.</p><div class="inline-actions"><button type="button" class="btn btn-primary btn-small" id="deep-copy">Скопировать отчёт</button><button type="button" class="btn btn-outline btn-small" id="deep-save">Сохранить файл</button></div>';
  modal('Глубокая диагностика',body);const close=$('#modal-actions .btn-outline');if(close)close.textContent='Закрыть';
  $('#deep-copy').onclick=async()=>{try{await navigator.clipboard.writeText(text);$('#deep-copy').textContent='Скопировано'}catch(e){notify('Не удалось скопировать: '+e.message,'error')}};
@@ -801,11 +802,13 @@ async function beginRecord(){
  * ~2 s chunks; it never runs more than 3 s ahead of what is confirmed and freezes on pause. */
 const recordClock={session:null,base:0,at:0,shown:0};
 function smoothSeconds(value){
- const now=performance.now(),confirmed=Number(value.duration)||0,session=value.sessionId||value.recordId;
- if(recordClock.session!==session){Object.assign(recordClock,{session,base:confirmed,at:now,shown:confirmed})}
- if(confirmed>recordClock.base){recordClock.base=confirmed;recordClock.at=now}
- if(value.state!=='recording'){recordClock.at=now;recordClock.base=Math.max(recordClock.base,recordClock.shown);return recordClock.shown}
- recordClock.shown=Math.max(recordClock.shown,Math.min(recordClock.base+(now-recordClock.at)/1000,confirmed+3));
+ // Shows recorded time (pauses excluded) on both engines. The browser engine's confirmed duration
+ // includes pauses (they stay on the timeline as gaps), so it only bounds the clock, never jumps it.
+ const now=performance.now(),confirmed=Number(value.duration)||0,session=value.sessionId||value.recordId,browser=value.engine==='browser';
+ if(recordClock.session!==session){Object.assign(recordClock,{session,at:now,shown:browser?0:confirmed})}
+ const dt=Math.max(0,(now-recordClock.at)/1000);recordClock.at=now;
+ if(value.state==='recording')recordClock.shown=Math.min(recordClock.shown+dt,confirmed+3);
+ if(!browser)recordClock.shown=Math.max(recordClock.shown,Math.min(confirmed,recordClock.shown+3)); // module: catch up to confirmed
  return recordClock.shown;
 }
 function currentRecordingSeconds(){
