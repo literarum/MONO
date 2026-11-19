@@ -304,7 +304,7 @@ kbd{font:600 12px/1 var(--font);padding:5px 8px;border-radius:7px;border:1px sol
 /* Studio: long device names never push the panel off-screen. */
 .studio-panel,.studio-display,.studio-panel-head{min-width:0}
 .record-source{max-width:100%}
-.level-check{border:1px solid var(--border);background:transparent;color:var(--muted);border-radius:999px;font-size:10px;letter-spacing:.06em;padding:4px 10px;margin-right:4px;white-space:nowrap}
+.level-check{margin-right:6px;white-space:nowrap;letter-spacing:0;font-family:var(--font)}
 .level-check:hover{color:var(--text);border-color:var(--borderstrong)}
 /* Editor: the transcript reads as a document; the title appears once. */
 #editor-name{display:none}
@@ -342,4 +342,11 @@ body:has(#view-editor.active) .toast-area{bottom:96px}
 /* Status heading: dot on the first line */
 .preflight-head{align-items:flex-start}.preflight-light{margin-top:5px}
 /* Level check: standard small button, only when idle */
-.level-check{font-family:inherit;font-size:11px;letter-spacing:0;font-weight:600;padding:5px 12px;border-color:var(--borderstrong);color:var(--text)}
+
+
+/* ---- Critic round 3 ---- */
+#player-speed{min-width:64px!important;flex:0 0 auto}
+#view-editor .audio-player .seek{min-width:0;flex:1 1 auto}
+.editor-layout>.editor-sidebar,.editor-layout>.editor-workspace{margin-top:0!important;align-self:start}
+.transcript-paragraph{padding:4px 0!important}
+.segment-edit{min-height:0!important;line-height:1.7!important}
