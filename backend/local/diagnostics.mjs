@@ -19,7 +19,7 @@ export class Journal{
  }
  note(level,message){
   let text=typeof message==='string'?message:JSON.stringify(message);
-  try{const v=JSON.parse(text);if(v&&typeof v==='object')text=[v.event,v.code,v.phase,v.message,v.operation,v.stage,v.errorName].filter(Boolean).join(' · ')}catch{}
+  try{const v=JSON.parse(text);if(v?.event==='startup_phase')return;if(v&&typeof v==='object')text=[v.event,v.code,v.phase,v.message,v.operation,v.stage,v.errorName].filter(Boolean).join(' · ')}catch{}
   this.rows.push({at:this.now(),level,message:scrub(text)});if(this.rows.length>this.limit)this.rows.splice(0,this.rows.length-this.limit);this.persist();
  }
  persist(){
@@ -71,10 +71,12 @@ export async function usbSelectiveSuspend({platform=process.platform,exec=run}={
 }
 export async function diskHealth({platform=process.platform,exec=run}={}){
  if(platform!=='win32')return null;
- const out=await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command','Get-PhysicalDisk | Select-Object FriendlyName,MediaType,HealthStatus,OperationalStatus | ConvertTo-Json -Compress'],9000);
+ const out=await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command','Get-PhysicalDisk | Select-Object FriendlyName,MediaType,HealthStatus,OperationalStatus | ConvertTo-Json -Compress'],20000); // a cold PowerShell start took ~10 s in CI
  try{const value=JSON.parse(out);return (Array.isArray(value)?value:[value]).map(d=>({name:scrub(d.FriendlyName),media:String(d.MediaType??''),health:String(d.HealthStatus??''),status:[].concat(d.OperationalStatus??[]).map(String).join(', ')}))}catch{return null}
 }
 export async function collect({worker,runtime,keyManager,journal,health=()=>({}),jobs=()=>[],toolVersion=async()=>null,groqBase,fetch,env=process.env,privacy=microphonePrivacy,users=microphoneUsers,usb=usbSelectiveSuspend,disks=diskHealth}){
+ // Slow OS probes (PowerShell can take ~10 s cold) start first and run alongside the rest.
+ const slow={usb:usb().catch(()=>null),disks:disks().catch(()=>null)};
  const report={generatedAt:new Date().toISOString(),app:{},system:{},core:{},archive:{},capture:{},groq:{},jobs:{},journal:[]};
  const h=health();
  report.app={version:h.version,mode:h.mode,uptimeSeconds:h.uptimeSeconds,launcher:Boolean(env.MONO_LAUNCHER),node:process.version,startsLastHour:journal?.starts(3600e3)??null,startsLastDay:journal?.starts(86400e3)??null};
@@ -96,6 +98,7 @@ export async function collect({worker,runtime,keyManager,journal,health=()=>({})
   }
  }
  const caps=await settle(()=>worker.call('capture.capabilities'),9000);
+ const prefs=await settle(()=>worker.call('preferences.get'),4000);report.capture.source=prefs.ok?prefs.value?.capture?.mode||null:null;
  report.capture.module=caps.ok?{ready:Boolean(caps.value.ready),supported:caps.value.supported,reason:caps.value.reason||null,modes:caps.value.modes||[],state:caps.value.state||null,inputs:(caps.value.inputDevices||[]).length,outputs:(caps.value.outputDevices||[]).length}:{error:caps.code};
  const diag=await settle(()=>worker.call('capture.diagnose'),8000);
  report.capture.inputs=diag.ok&&Array.isArray(diag.value?.inputs)?diag.value.inputs.map(d=>({name:scrub(d.name),state:d.state,default:Boolean(d.default),muted:d.muted??null,volume:typeof d.volume==='number'?Math.round(d.volume*100):null})):null;
@@ -103,7 +106,7 @@ export async function collect({worker,runtime,keyManager,journal,health=()=>({})
  const mic=await settle(privacy,4000);report.capture.privacy=mic.ok?{blocked:Boolean(mic.value?.blocked),scope:mic.value?.scope||null}:null;
  const holders=await settle(users,5000);report.capture.heldBy=holders.ok?(holders.value||[]).slice(0,5).map(scrub):null;
  report.groq=await probeGroq({keyManager,base:groqBase,fetch});
- report.power={usbSelectiveSuspend:await usb().catch(()=>null)};report.disks=await disks().catch(()=>null);
+ report.power={usbSelectiveSuspend:await slow.usb};report.disks=await slow.disks;
  report.trends=trends(journal?.rows);
  const list=jobs();const by={};for(const j of list)by[j.status]=(by[j.status]||0)+1;
  report.jobs={counts:by,recentErrors:list.filter(j=>j.error).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0,5).map(j=>({status:j.status,stage:scrub(j.stage),error:scrub(j.error),attempts:j.attempts||0}))};
@@ -134,6 +137,8 @@ export function findings(r){
  if(c.inputs&&!active.length)out.push(F('warning','Windows не видит рабочего микрофона',inputs.length?`Устройства есть, но они ${[...new Set(inputs.map(d=>d.state))].join(', ')}.`:'Ни одного входа звука.','Подключите микрофон или включите его: Параметры → Система → Звук.'));
  if(main?.muted)out.push(F('caution','Микрофон выключен в Windows',`«${main.name}».`,'MONO включит его при записи или нажмите «Исправить» в предполётной проверке.'));
  else if(main&&typeof main.volume==='number'&&main.volume<10)out.push(F('caution','Громкость микрофона почти 0',`«${main.name}»: ${main.volume} %.`,'MONO поднимет её при записи.'));
+ if(c.source==='browser'&&c.module?.ready&&(c.module.modes||[]).includes('mic'))out.push(F('caution','Источник записи — окно браузера, хотя системный модуль готов','Системный модуль надёжнее: он открывает микрофон в общем режиме Windows с повтором через встроенный конвертер.','Студия → «Что записывать» → «Микрофон (системный модуль)». Если окно не откроет микрофон, MONO переключится сам.'));
+ if(inputs.some(d=>/voicemeeter/i.test(d.name||''))&&c.heldBy!==null)out.push(F('advisory','Установлен Voicemeeter','Если ваш микрофон выбран в Voicemeeter аппаратным входом, он может забирать его у остальных программ.','При ошибке «микрофон занят» уберите микрофон из Voicemeeter на время записи.'));
  if(c.heldBy?.length)out.push(F('advisory','Микрофон может держать другое приложение',c.heldBy.join(', ')+'.','Если запись не начинается — закройте его.'));
  if(c.module?.error)out.push(F('caution','Системный модуль записи не ответил',`Код: ${c.module.error}.`,'Микрофон пишется через окно; звук компьютера недоступен.'));
  else if(c.module&&!c.module.ready&&['HELPER_UNAVAILABLE','HELPER_MISSING'].includes(c.module.reason))out.push(F('advisory','Системный модуль записи не установлен','Микрофон пишется через окно; звук компьютера недоступен.','Переустановите MONO, если нужен звук компьютера.'));

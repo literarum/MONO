@@ -28,6 +28,6 @@ export async function captureRoute(req,res,url,worker){
   if(operation==='repair'&&Object.keys(params).some(key=>!['inputId','mute','minimumVolume'].includes(key))){send(res,400,{error:'Проверьте параметры записи',code:'INVALID_CAPTURE'});return true}
   if(['start','test'].includes(operation)&&Object.keys(params).some(key=>!['mode','inputId','outputId'].includes(key))){send(res,400,{error:'Проверьте параметры записи',code:'INVALID_CAPTURE'});return true}
   send(res,['start','test','browser_start'].includes(operation)?202:200,await worker.call('capture.'+operation,params));
- }catch(error){send(res,['CAPTURE_BUSY','LIBRARY_BUSY','DEVICE_LOST'].includes(error.code)?409:error.code?.startsWith('INVALID')?400:503,{error:'Не удалось выполнить операцию со звуком',code:error.code||'CAPTURE_UNAVAILABLE'})}
+ }catch(error){if(['start','test'].includes(operation))console.warn(JSON.stringify({event:'native_capture_failure',operation,code:error.code||'CAPTURE_UNAVAILABLE'}));send(res,['CAPTURE_BUSY','LIBRARY_BUSY','DEVICE_LOST'].includes(error.code)?409:error.code?.startsWith('INVALID')?400:503,{error:'Не удалось выполнить операцию со звуком',code:error.code||'CAPTURE_UNAVAILABLE'})}
  return true;
 }

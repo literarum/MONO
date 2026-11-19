@@ -115,3 +115,28 @@ test('safety track: a clean take keeps its backup marked clean (removed after a 
  assert.equal(await page.locator('.toast:has-text("Страховочная")').count(),0,'no rescue offer after a clean take');
  assert.deepEqual(page.errors,[]);
 });
+
+test('a browser channel that cannot open the microphone (NotReadableError) hands over to the system module and stays there',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});
+ const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
+ const context=await browser.newContext();await context.grantPermissions(['microphone'],{origin:server.url});
+ // As on the reported laptop: Windows refuses the microphone to the browser (held by another app).
+ await context.addInitScript(()=>{const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async c=>{if(c?.audio)throw new DOMException('Could not start audio source','NotReadableError');return original(c)}});
+ const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
+ await page.goto(server.url+'/');
+ await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();const headers={'Content-Type':'application/json','X-Mono-CSRF':csrf};
+  await fetch('/api/local/library/configure',{method:'POST',headers,body:JSON.stringify({useDefault:true})});
+  await fetch('/api/local/preferences',{method:'PATCH',headers,body:JSON.stringify({onboarding:{completed:true,keySkipped:true,soundTested:true},capture:{mode:'browser'}})})});
+ await page.reload();await page.waitForFunction(()=>document.querySelector('#nav-count'));
+ await page.click('.nav-link[data-view=record]');await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);
+ await page.click('#start-record');
+ await page.waitForSelector('.toast:has-text("записывает через системный модуль")',{timeout:30000});
+ await page.waitForFunction(()=>/Подтверждено/.test(document.querySelector('#record-saved').textContent),null,{timeout:20000});
+ await page.click('#stop-record');
+ await until(page,async()=>{const {items}=await (await fetch('/api/local/records?limit=5&q=&trash=false')).json();return items.some(r=>r.status==='saved'&&r.tracks?.some(x=>x.id==='mic'))},null,{timeout:20000});
+ const mode=await until(page,async()=>(await (await fetch('/api/local/preferences')).json()).capture.mode==='mic'&&'mic',null,{timeout:10000});
+ assert.equal(mode,'mic','the working path is remembered');
+ const report=await page.evaluate(async()=>(await fetch('/api/local/diagnostics')).json());
+ assert.equal(report.capture.source,'mic');
+ assert.deepEqual(page.errors,[]);
+});

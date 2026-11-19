@@ -6,12 +6,15 @@
  * retrying them would hide a decision or a problem that only the person can resolve. */
 export const RETRYABLE=new Set(['START_TIMEOUT','STOP_PENDING','DEVICE_BUSY','DEVICE_LOST','UNSUPPORTED_FORMAT','CAPTURE_HELPER_UNAVAILABLE','CAPTURE_HELPER_TIMEOUT','CAPTURE_NOT_READY','ACCESS_TIMEOUT','INTERNAL','INVALID_CAPTURE_PROTOCOL']);
 
-/** Recovery ladder for one press of Record: chosen devices → system defaults → (microphone
- * only) the browser channel. At most two steps, never the same step twice. */
-export function recoverySteps(selection,browserAvailable){
+/** Recovery ladder for one press of Record: chosen devices → system defaults → the other,
+ * dissimilar microphone path (system module ⇄ browser channel). At most two steps, never the
+ * same step twice. The browser channel and the system module open the microphone through
+ * different Windows stacks, so one may succeed where the other gets "device busy". */
+export function recoverySteps(selection,browserAvailable,nativeMicAvailable=false){
  const steps=[];
  if(selection.inputId||selection.outputId)steps.push({...selection,inputId:null,outputId:null});
  if(selection.mode==='mic'&&browserAvailable)steps.push({mode:'browser',inputId:null,outputId:null});
+ if(selection.mode==='browser'&&nativeMicAvailable)steps.push({mode:'mic',inputId:null,outputId:null});
  if(!steps.length)steps.push({...selection});
  return steps.slice(0,2);
 }

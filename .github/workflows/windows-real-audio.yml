@@ -36,6 +36,8 @@ jobs:
           "MONO_AUDIO_HELPER=$PWD\.build\helper\MonoAudio.exe" >> $env:GITHUB_ENV
 
       - name: Diagnostics probes on real Windows (USB power saving, disk health)
+        # Reported separately: a slow probe must never skip the audio steps below.
+        continue-on-error: true
         shell: pwsh
         run: |
           node -e "import('./backend/local/diagnostics.mjs').then(async m=>{const usb=await m.usbSelectiveSuspend();const disks=await m.diskHealth();console.log(JSON.stringify({usb,disks}));if(!Array.isArray(disks)||!disks.length||!disks.every(d=>d.health)){console.error('diskHealth did not parse Get-PhysicalDisk');process.exit(1)}if(usb===null)console.log('powercfg: USB selective suspend setting not exposed on this edition')})"
