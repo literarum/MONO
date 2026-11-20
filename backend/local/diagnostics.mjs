@@ -89,7 +89,8 @@ export function parseSecurity(text){
 }
 export async function securitySoftware({platform=process.platform,exec=run}={}){
  if(platform!=='win32')return null;
- const script="$av=@(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction SilentlyContinue|ForEach-Object displayName);$ps=@(Get-Process -Name avp,avpui -ErrorAction SilentlyContinue|ForEach-Object Name);@{av=$av;ps=$ps}|ConvertTo-Json -Compress";
+ // root/SecurityCenter2 exists only on client editions of Windows (not Server): its absence is not an error.
+ const script="$av=@();try{$av=@(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop|ForEach-Object displayName)}catch{};$ps=@(Get-Process -Name avp,avpui -ErrorAction SilentlyContinue|ForEach-Object Name);@{av=$av;ps=$ps}|ConvertTo-Json -Compress";
  return parseSecurity(await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],20000));
 }
 export async function collect({worker,runtime,keyManager,journal,health=()=>({}),jobs=()=>[],toolVersion=async()=>null,groqBase,fetch,env=process.env,privacy=microphonePrivacy,users=microphoneUsers,usb=usbSelectiveSuspend,disks=diskHealth,security=securitySoftware}){
