@@ -174,7 +174,7 @@ async function autopilotBeforeStart(selection){
 /** Start failures that a different path can fix: same mode on the default devices, then the
  * browser channel for a microphone-only take. Two attempts per press, then an honest message. */
 const autopilot={selection:null,steps:[],mode:null};
-function arm(selection){autopilot.selection=selection;autopilot.mode=selection.mode;autopilot.inputId=selection.inputId;autopilot.steps=recoverySteps(selection,(captureSources?.capability?.modes||[]).includes('browser'),nativeMicState())}
+function arm(selection){autopilot.selection=selection;autopilot.mode=selection.mode;autopilot.inputId=selection.inputId;autopilot.steps=recoverySteps(selection,(captureSources?.capability?.modes||[]).includes('browser')||Boolean(captureSources?.client?.supported),nativeMicState())} // the window's own channel does not depend on the module having answered
 // A capability never loaded (the first query timed out while the module was still launching)
 // is «starting», not «absent»: the step refreshes it and decides then.
 function nativeMicState(capability=captureSources?.capability){return capability?.nativeReady&&(capability.modes||[]).includes('mic')?true:capability?.nativeStarting||capability&&!('nativeReady' in capability)?'starting':false}
@@ -194,6 +194,7 @@ async function readyForStep(step){
  * raw-capable microphones in raw mode with no retry, and it cannot record the computer's sound. */
 function migrateBrowserSource(){
  try{if(localStorage.getItem('mono-source-migrated-1')==='1')return}catch{return}
+ if(windowState?.engine==='browser')return; // there the window is the working path
  const capability=captureSources?.capability;if(captureSources?.value?.mode!=='browser'||!capability?.nativeReady||!(capability.modes||[]).includes('mic')||captureActive(nativeController?.snapshot))return;
  void captureSources.update({mode:'mic',inputId:null},{quiet:true}).then(()=>{try{localStorage.setItem('mono-source-migrated-1','1')}catch{}notify('Источник записи — системный модуль: он открывает микрофон надёжнее окна браузера. Вернуть окно можно в студии.')}).catch(()=>{});
 }
@@ -253,6 +254,8 @@ async function initializeNative(local){
   const card=document.createElement('article');card.className='glass settings-card';card.innerHTML='<div class="settings-card-icon"><svg><use href="#i-mic"/></svg></div><h2>Источники записи</h2><div class="settings-capture-sources"></div><button type="button" class="btn btn-outline btn-small" id="check-native-sound">Проверить звук</button>';$('#view-settings .settings-grid').prepend(card);mountCaptureSources(card.querySelector('.settings-capture-sources'),{model:captureSources,onError:error=>notify(error.message,'error')});card.querySelector('button#check-native-sound').onclick=()=>void showSetup('sound').catch(error=>notify(error.message,'error'));
   const guide=$('.studio-side>.side-card:not(.capture-sources)');guide.replaceChildren();mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
   const safe=document.createElement('article');safe.className='glass settings-card';safe.innerHTML='<div class="settings-card-icon"><svg><use href="#i-shield"/></svg></div><h2>Страховочная дорожка</h2><p>Пока системный модуль пишет микрофон, окно MONO параллельно пишет его копию другим путём (свой кодек и своё хранилище). Если основная запись оборвётся, MONO предложит восстановить встречу из копии. Копия удаляется через сутки после удачной записи (через неделю — после сбоя). Около 14 МБ за час.</p><label class="check-row"><input type="checkbox" id="setting-safety"> Вести страховочную дорожку</label>';$('#view-settings .settings-grid').append(safe);
+  const windowCard=document.createElement('article');windowCard.className='glass settings-card';windowCard.id='window-card';windowCard.hidden=true;windowCard.innerHTML='<div class="settings-card-icon"><svg><use href="#i-shield"/></svg></div><h2>Окно MONO</h2><p></p><div class="inline-actions"><button type="button" class="btn btn-outline btn-small"></button></div>';$('#view-settings .settings-grid').append(windowCard);
+  void loadWindowState().then(renderWindowCard);
   $('#setting-safety').checked=safetySettings;$('#setting-safety').onchange=e=>{safetySettings=e.target.checked;try{localStorage.setItem('mono-safety-track',safetySettings?'1':'0')}catch{}};
   const help=document.createElement('article');help.className='glass settings-card';mountHelp(help);$('#view-settings .settings-grid').append(help);
   // Pre-flight check: compact (problems only) in the studio, full in settings.
@@ -262,7 +265,7 @@ async function initializeNative(local){
  }
  await nativeController.connect();
  await captureSources.load();
- migrateBrowserSource();
+ await loadWindowState();migrateBrowserSource();
  return {controller:nativeController,sources:captureSources};
  })().catch(error=>{nativeInitializing=null;throw error});return nativeInitializing;
 }
@@ -548,7 +551,7 @@ async function runDeepDiagnostics(){
    local?local.json('/diagnostics',{signal:AbortSignal.timeout(45000)}).catch(error=>({error:error.code||error.message})):Promise.resolve(null),
    windowProbe().catch(()=>null),
    recording?Promise.resolve({raw:{skipped:'recording'}}):microphonePaths().catch(()=>null)]);
-  const findings=consolidate([...(server?.findings||[]),...(server?.error?[{level:'warning',title:'Ядро не ответило на диагностику',detail:String(server.error),action:'Перезапустите MONO.'}]:[]),...windowFindings(windowInfo,null),...microphoneFindings(microphone,server?.capture?.probe)]);
+  const findings=consolidate([...(server?.findings||[]),...(server?.error?[{level:'warning',title:'Ядро не ответило на диагностику',detail:String(server.error),action:'Перезапустите MONO.'}]:[]),...windowFindings(windowInfo,null),...microphoneFindings(microphone,server?.capture?.probe,{engine:(await loadWindowState())?.engine})]);
   const report={generatedAt:new Date().toISOString(),findings,server:server&&!server.error?{...server,findings:undefined}:server,window:windowInfo,microphone,recentWindowErrors:recentErrors()};
   const text=formatReport(report);
   if($('#modal').hidden){notify('Диагностика готова','info',{text:'Показать',run:()=>showDeepReport(findings,text)});return}
@@ -569,14 +572,33 @@ function passedLine(report){
 function showDeepReport(findings,text,report={}){
  const mark={warning:'✖',caution:'▲',advisory:'●'};
  const body=(findings.length?`<p>${findings.some(f=>f.level==='warning')?'Есть проблемы, которые мешают работе:':'Найдено:'}</p><ul class="deep-findings">${findings.map(f=>`<li data-level="${f.level}"><span class="deep-mark" aria-hidden="true">${mark[f.level]||'•'}</span><div><strong>${h(f.title)}</strong>${f.detail?`<span>${h(f.detail)}</span>`:''}${f.action?`<em>${h(f.action)}</em>`:''}</div></li>`).join('')}</ul>`:'<p><strong>Проблем не найдено.</strong></p>')+passedLine(report)+
-  '<p class="field-hint">В отчёте нет названий записей, текста, ключей и путей к файлам. Названия звуковых устройств остаются — по ним видно, какой микрофон проверялся.</p><div class="inline-actions"><button type="button" class="btn btn-primary btn-small" id="deep-copy">Скопировать отчёт</button><button type="button" class="btn btn-outline btn-small" id="deep-save">Сохранить файл</button>'+(findings.some(f=>f.browser)?'<button type="button" class="btn btn-outline btn-small" id="deep-browser">Открыть в браузере</button>':'')+'</div><p class="field-hint" id="deep-browser-hint" hidden></p>';
+  '<p class="field-hint">В отчёте нет названий записей, текста, ключей и путей к файлам. Названия звуковых устройств остаются — по ним видно, какой микрофон проверялся.</p><div class="inline-actions"><button type="button" class="btn btn-primary btn-small" id="deep-copy">Скопировать отчёт</button><button type="button" class="btn btn-outline btn-small" id="deep-save">Сохранить файл</button>'+(findings.some(f=>f.browser)?`<button type="button" class="btn btn-outline btn-small" id="deep-browser">${windowState?.launcher&&windowState.engine!=='browser'?'Открывать MONO в моём браузере':'Скопировать адрес MONO'}</button>`:'')+'</div><p class="field-hint" id="deep-browser-hint" hidden></p>';
  modal('Глубокая диагностика',body);
- // The user's own browser, started by them, is a process the security software already trusts;
- // a window MONO opens itself would inherit MONO's restrictions — so MONO only gives the address.
- if($('#deep-browser'))$('#deep-browser').onclick=async()=>{const address=location.origin,hint=$('#deep-browser-hint');let copied=false;try{await navigator.clipboard.writeText(address);copied=true}catch{}
-  hint.hidden=false;hint.textContent=`${copied?'Адрес скопирован':'Адрес MONO'}: ${address}. Откройте Chrome или Edge сами (через меню «Пуск» или панель задач), вставьте адрес и разрешите микрофон. Записи сохраняются в тот же архив. Окно MONO не закрывайте — оно держит запущенным ядро.`};const close=$('#modal-actions .btn-outline');if(close)close.textContent='Закрыть';
+ if($('#deep-browser'))$('#deep-browser').onclick=async()=>{const hint=$('#deep-browser-hint');hint.hidden=false;
+  if(windowState?.launcher&&windowState.engine!=='browser'){try{await switchWindow('browser');$('#deep-browser').disabled=true;hint.textContent=BROWSER_STEPS}catch(error){hint.textContent='Не удалось переключить: '+error.message}return}
+  const address=location.origin;let copied=false;try{await navigator.clipboard.writeText(address);copied=true}catch{}
+  hint.textContent=`${copied?'Адрес скопирован':'Адрес MONO'}: ${address}. Откройте Chrome или Edge сами, вставьте адрес и разрешите микрофон.`};const close=$('#modal-actions .btn-outline');if(close)close.textContent='Закрыть';
  $('#deep-copy').onclick=async()=>{try{await navigator.clipboard.writeText(text);$('#deep-copy').textContent='Скопировано'}catch(e){notify('Не удалось скопировать: '+e.message,'error')}};
  $('#deep-save').onclick=()=>downloadBlob(new Blob([text],{type:'text/plain;charset=utf-8'}),`MONO-диагностика-${new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')}.txt`);
+}
+/** Window mode. «browser»: MONO opens as a tab in the person's own browser. A browser the person
+ * started is not a program launched by MONO, so security software that restricts MONO's processes
+ * (Kaspersky passes a parent's restrictions to its children) does not restrict its microphone. */
+let windowState=null;
+async function loadWindowState(){try{const local=await localLibraryClient();windowState=local?await local.json('/window'):null}catch{windowState=null}return windowState}
+const BROWSER_STEPS='Готово. Дальше: (1) закройте это окно MONO; (2) откройте свой браузер (Chrome или Edge) сами, как обычно; (3) запустите MONO — он откроется вкладкой в вашем браузере. Браузер должен быть открыт до запуска MONO: иначе его запустит MONO, и защитная программа ограничит и его. Вернуть отдельное окно: Настройки → «Окно MONO».';
+async function switchWindow(engine){
+ const local=await localLibraryClient();windowState=await local.json('/window',{method:'POST',body:{engine}});
+ // In the person's browser the microphone is recorded by the window itself (the system module stays blocked).
+ if(engine==='browser'){try{await captureSources?.update({mode:'browser',inputId:null},{quiet:true})}catch{}try{localStorage.setItem('mono-source-migrated-1','1')}catch{}}
+ renderWindowCard();return windowState;
+}
+function renderWindowCard(){
+ const card=$('#window-card');if(!card)return;card.hidden=!windowState?.launcher;if(card.hidden)return;
+ const browser=windowState.engine==='browser';
+ card.querySelector('p').textContent=browser?'MONO открывается вкладкой в вашем браузере. Это нужно, когда защитная программа (например, Kaspersky) не даёт микрофон программам, запущенным MONO: браузер, который вы открыли сами, она не ограничивает. Открывайте браузер до запуска MONO.':'MONO открывается в собственном окне. Если защитная программа не даёт MONO микрофон, MONO можно открывать вкладкой в вашем браузере.';
+ const button=card.querySelector('button');button.textContent=browser?'Открывать в отдельном окне':'Открывать в моём браузере';
+ button.onclick=async()=>{try{await switchWindow(browser?'chromium':'browser');notify(browser?'Готово. При следующем запуске MONO откроется в отдельном окне.':BROWSER_STEPS,'info')}catch(error){notify('Не удалось переключить: '+error.message,'error')}};
 }
 function closeModal(){
   if($('#modal').hidden)return;

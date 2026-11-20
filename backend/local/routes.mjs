@@ -5,7 +5,7 @@ import {libraryRoute,readJSON} from './library-routes.mjs';
 import {captureRoute} from './capture-routes.mjs';
 import {credentialsRoute} from './credentials-routes.mjs';
 import {audioRoute} from './audio-routes.mjs';
-import {preflight,BYTES_PER_HOUR} from './preflight.mjs';import {statfs} from 'node:fs/promises';import {microphoneUsers} from './privacy.mjs';
+import {preflight,BYTES_PER_HOUR} from './preflight.mjs';import {statfs,readFile,writeFile,rename} from 'node:fs/promises';import path from 'node:path';import {microphoneUsers} from './privacy.mjs';
 const sessions=new LocalSessions();export const localWorker=new WorkerClient();
 export const authorizeLocalRequest=req=>sessions.authorize(req);
 const send=(res,status,body)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(body))};
@@ -25,6 +25,16 @@ export async function localRoute(req,res,url,mode,services={}){
   if(await audioRoute(req,res,url,services.preparation))return true;
   if(await summaryRoute(req,res,url,localWorker,{keyManager:services.keyManager,summarizer:services.summarizer,speakers:services.resolveSpeakers}))return true;
   if(await libraryRoute(req,res,url,localWorker,services))return true;
+  // Which window MONO opens: its own (Chromium --app, started by MONO) or the person's browser.
+  if(url.pathname==='/api/local/window'&&['GET','POST'].includes(req.method)){
+   const home=process.env.MONO_LAUNCHER_HOME,file=home?path.join(home,'ui-engine.json'):null;
+   const current=async()=>{try{return JSON.parse(await readFile(file,'utf8')).engine||null}catch{return null}};
+   if(req.method==='GET'){send(res,200,{launcher:Boolean(file),engine:file?await current():null});return true}
+   const body=await readJSON(req,200);if(!file){send(res,409,{code:'NO_LAUNCHER',error:'MONO запущен без лаунчера'});return true}
+   if(!['browser','chromium'].includes(body.engine)){send(res,400,{code:'INVALID_ENGINE',error:'Неизвестный режим окна'});return true}
+   if(await current()==='native'){send(res,409,{code:'NATIVE_WINDOW',error:'Это окно нельзя сменить на браузер'});return true}
+   const temp=file+'.tmp';await writeFile(temp,JSON.stringify({engine:body.engine}),'utf8');await rename(temp,file);
+   send(res,200,{launcher:true,engine:body.engine,restartNeeded:true});return true}
   if(url.pathname==='/api/local/preflight'&&req.method==='GET'){send(res,200,await preflight({worker:localWorker,runtime:services.runtime||(()=>({})),keyManager:services.keyManager}));return true}
   if(url.pathname==='/api/local/diagnostics'&&req.method==='GET'&&services.diagnostics){send(res,200,await services.diagnostics());return true}
   if(url.pathname==='/api/local/diagnostics/event'&&req.method==='POST'&&services.journal){

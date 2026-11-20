@@ -71,9 +71,11 @@ export async function usbSelectiveSuspend({platform=process.platform,exec=run}={
  // Subgroup «USB settings» / «USB selective suspend setting».
  return parsePowercfg(await exec('powercfg',['/query','SCHEME_CURRENT','2a737441-1930-4402-8d77-b2bebba308a3','48e6b7a6-50f5-4782-a5d4-53bb8f07e226'],5000));
 }
+/** PowerShell writes to a pipe in the OEM code page: without this, «для Windows» arrives as «���». */
+export const UTF8='[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;';
 export async function diskHealth({platform=process.platform,exec=run}={}){
  if(platform!=='win32')return null;
- const out=await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command','Get-PhysicalDisk | Select-Object FriendlyName,MediaType,HealthStatus,OperationalStatus | ConvertTo-Json -Compress'],20000); // a cold PowerShell start took ~10 s in CI
+ const out=await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command',UTF8+'Get-PhysicalDisk | Select-Object FriendlyName,MediaType,HealthStatus,OperationalStatus | ConvertTo-Json -Compress'],20000); // a cold PowerShell start took ~10 s in CI
  try{const value=JSON.parse(out);return (Array.isArray(value)?value:[value]).map(d=>({name:scrub(d.FriendlyName),media:String(d.MediaType??''),health:String(d.HealthStatus??''),status:[].concat(d.OperationalStatus??[]).map(String).join(', ')}))}catch{return null}
 }
 /** Security software that can refuse audio to an application it does not trust.
@@ -90,7 +92,7 @@ export function parseSecurity(text){
 export async function securitySoftware({platform=process.platform,exec=run}={}){
  if(platform!=='win32')return null;
  // root/SecurityCenter2 exists only on client editions of Windows (not Server): its absence is not an error.
- const script="$av=@();try{$av=@(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop|ForEach-Object displayName)}catch{};$ps=@(Get-Process -Name avp,avpui -ErrorAction SilentlyContinue|ForEach-Object Name);@{av=$av;ps=$ps}|ConvertTo-Json -Compress";
+ const script=UTF8+"$av=@();try{$av=@(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop|ForEach-Object displayName)}catch{};$ps=@(Get-Process -Name avp,avpui -ErrorAction SilentlyContinue|ForEach-Object Name);@{av=$av;ps=$ps}|ConvertTo-Json -Compress";
  return parseSecurity(await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],20000));
 }
 export async function collect({worker,runtime,keyManager,journal,health=()=>({}),jobs=()=>[],toolVersion=async()=>null,groqBase,fetch,env=process.env,privacy=microphonePrivacy,users=microphoneUsers,usb=usbSelectiveSuspend,disks=diskHealth,security=securitySoftware}){

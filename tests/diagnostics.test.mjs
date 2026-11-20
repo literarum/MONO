@@ -103,3 +103,10 @@ test('microphone refused to MONO alone: Kaspersky is named (not the driver, not 
  const f=findings({capture:{heldBy:['Discord'],probe:{opened:false,attempts},inputs:[]}});
  assert.ok(!f.some(x=>/держать другое приложение/.test(x.title)));
 });
+test('a refused microphone absorbs its weekly consequences (failed starts, hand-overs) instead of listing them as separate faults',async()=>{
+ const {consolidate}=await import('../public/diagnostics.js');
+ const list=consolidate([{level:'warning',title:'Kaspersky не даёт MONO получать звук микрофона',detail:'x'},{level:'caution',title:'Запись часто не начинается с первого раза',detail:'3'},{level:'advisory',title:'Системный модуль записи часто уступает запасному каналу',detail:'3'},{level:'advisory',title:'Groq не подключён',detail:''}]);
+ assert.deepEqual(list.map(f=>f.title),['Kaspersky не даёт MONO получать звук микрофона','Groq не подключён']);
+ assert.match(list[0].detail,/Следствия этой причины \(2\)/);
+ const {UTF8}=await import('../backend/local/diagnostics.mjs');assert.match(UTF8,/OutputEncoding=\[System\.Text\.Encoding\]::UTF8/);
+});
