@@ -52,3 +52,9 @@ test('getUserMedia ladder: exact device → default → processed → plain; Not
  const later=await attempt([err('NotReadableError'),err('NotReadableError'),err('NotReadableError'),err('NotReadableError'),'ok']);assert.equal(later.calls.length,5,'later rungs are tried once each');
  const gone=await attempt([err('OverconstrainedError'),'ok']);assert.equal(gone.ok,true);assert.equal(gone.calls.length,2);
 });
+
+test('a browser start that fails while the system module is still launching keeps the module as the next step (it waits for it)',()=>{
+ assert.deepEqual(recoverySteps({mode:'browser',inputId:null,outputId:null},true,'starting'),[{mode:'mic',inputId:null,outputId:null,waitNative:true}]);
+ assert.deepEqual(recoverySteps({mode:'browser',inputId:null,outputId:null},true,true),[{mode:'mic',inputId:null,outputId:null}]);
+ assert.deepEqual(recoverySteps({mode:'browser',inputId:null,outputId:null},true,false),[{mode:'browser',inputId:null,outputId:null}]);
+});

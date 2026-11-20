@@ -40,7 +40,7 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          node -e "import('./backend/local/diagnostics.mjs').then(async m=>{const usb=await m.usbSelectiveSuspend();const disks=await m.diskHealth();console.log(JSON.stringify({usb,disks}));if(!Array.isArray(disks)||!disks.length||!disks.every(d=>d.health)){console.error('diskHealth did not parse Get-PhysicalDisk');process.exit(1)}if(usb===null)console.log('powercfg: USB selective suspend setting not exposed on this edition')})"
+          node -e "import('./backend/local/diagnostics.mjs').then(async m=>{const usb=await m.usbSelectiveSuspend();const disks=await m.diskHealth();console.log(JSON.stringify({usb,disks}));if(!Array.isArray(disks)||!disks.length||!disks.every(d=>d.health)){console.error('diskHealth did not parse Get-PhysicalDisk');process.exit(1)}if(usb===null)console.log('powercfg: USB selective suspend setting not exposed on this edition');const security=await m.securitySoftware();console.log(JSON.stringify({security}));if(!security||!Array.isArray(security.products)||typeof security.kaspersky!=='boolean'){console.error('securitySoftware did not run');process.exit(1)}})"
 
       - name: Windows Audio service
         shell: pwsh

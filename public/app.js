@@ -174,7 +174,21 @@ async function autopilotBeforeStart(selection){
 /** Start failures that a different path can fix: same mode on the default devices, then the
  * browser channel for a microphone-only take. Two attempts per press, then an honest message. */
 const autopilot={selection:null,steps:[],mode:null};
-function arm(selection){autopilot.selection=selection;autopilot.mode=selection.mode;autopilot.inputId=selection.inputId;autopilot.steps=recoverySteps(selection,(captureSources?.capability?.modes||[]).includes('browser'),Boolean(captureSources?.capability?.nativeReady)&&(captureSources?.capability?.modes||[]).includes('mic'))}
+function arm(selection){autopilot.selection=selection;autopilot.mode=selection.mode;autopilot.inputId=selection.inputId;autopilot.steps=recoverySteps(selection,(captureSources?.capability?.modes||[]).includes('browser'),nativeMicState())}
+// A capability never loaded (the first query timed out while the module was still launching)
+// is «starting», not «absent»: the step refreshes it and decides then.
+function nativeMicState(capability=captureSources?.capability){return capability?.nativeReady&&(capability.modes||[]).includes('mic')?true:capability?.nativeStarting||capability&&!('nativeReady' in capability)?'starting':false}
+/** A fallback to the system module that is still launching waits for it (up to 20 s) instead of being lost. */
+async function readyForStep(step){
+ if(!step?.waitNative)return step;
+ notify('Окно не открыло микрофон — ждём, пока запустится системный модуль записи…');
+ for(const deadline=Date.now()+20000;Date.now()<deadline;){
+  try{await captureSources.refresh()}catch{}
+  const now=nativeMicState();if(now===true){const {waitNative,...ready}=step;return ready}if(now===false)return null;
+  await new Promise(resolve=>setTimeout(resolve,700));
+ }
+ return null;
+}
 /** Once: a source pinned to the browser channel by an earlier fault (the reported laptop) moves to the
  * system module when it is ready. On Windows the browser path is the weaker one: Chromium ≥152 opens
  * raw-capable microphones in raw mode with no retry, and it cannot record the computer's sound. */
@@ -198,11 +212,11 @@ async function startWithAutopilotOnce(selection){
  state.footerNote=null;arm(selection);
  for(;;){
   try{captureMode=selection.mode;const started=await nativeController.start(selection);rememberPathSwitch(autopilot.mode,selection.mode);return started}
-  catch(error){const next=AUTOPILOT_RETRY.has(error?.code)?autopilotNext():null;if(!next)throw error;notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));if(next.mode==='browser'&&selection.mode!=='browser')notify('Записываем через запасной канал — окно MONO.');selection=next}
+  catch(error){const next=AUTOPILOT_RETRY.has(error?.code)?await readyForStep(autopilotNext()):null;if(!next)throw error;notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));if(next.mode==='browser'&&selection.mode!=='browser')notify('Записываем через запасной канал — окно MONO.');selection=next}
  }
 }
 async function autopilotRetry(code){
- const next=autopilotNext();if(!next)return false;
+ const next=await readyForStep(autopilotNext());if(!next)return false;
  notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));
  try{if(next.mode==='browser'&&autopilot.mode!=='browser'){notify('Записываем через запасной канал — окно MONO.');healthEvent('BROWSER_FALLBACK')}captureMode=next.mode;await nativeController.start(next);rememberPathSwitch(autopilot.mode,next.mode);return true}
  catch(error){if(AUTOPILOT_RETRY.has(error?.code)&&await autopilotRetry(error.code))return true;void notifyCaptureError(captureErrors[error?.code]||error.message||'Не удалось начать запись.',error?.code||code);return true}
@@ -555,8 +569,12 @@ function passedLine(report){
 function showDeepReport(findings,text,report={}){
  const mark={warning:'✖',caution:'▲',advisory:'●'};
  const body=(findings.length?`<p>${findings.some(f=>f.level==='warning')?'Есть проблемы, которые мешают работе:':'Найдено:'}</p><ul class="deep-findings">${findings.map(f=>`<li data-level="${f.level}"><span class="deep-mark" aria-hidden="true">${mark[f.level]||'•'}</span><div><strong>${h(f.title)}</strong>${f.detail?`<span>${h(f.detail)}</span>`:''}${f.action?`<em>${h(f.action)}</em>`:''}</div></li>`).join('')}</ul>`:'<p><strong>Проблем не найдено.</strong></p>')+passedLine(report)+
-  '<p class="field-hint">В отчёте нет названий записей, текста, ключей и путей к файлам. Названия звуковых устройств остаются — по ним видно, какой микрофон проверялся.</p><div class="inline-actions"><button type="button" class="btn btn-primary btn-small" id="deep-copy">Скопировать отчёт</button><button type="button" class="btn btn-outline btn-small" id="deep-save">Сохранить файл</button></div>';
- modal('Глубокая диагностика',body);const close=$('#modal-actions .btn-outline');if(close)close.textContent='Закрыть';
+  '<p class="field-hint">В отчёте нет названий записей, текста, ключей и путей к файлам. Названия звуковых устройств остаются — по ним видно, какой микрофон проверялся.</p><div class="inline-actions"><button type="button" class="btn btn-primary btn-small" id="deep-copy">Скопировать отчёт</button><button type="button" class="btn btn-outline btn-small" id="deep-save">Сохранить файл</button>'+(findings.some(f=>f.browser)?'<button type="button" class="btn btn-outline btn-small" id="deep-browser">Открыть в браузере</button>':'')+'</div><p class="field-hint" id="deep-browser-hint" hidden></p>';
+ modal('Глубокая диагностика',body);
+ // The user's own browser, started by them, is a process the security software already trusts;
+ // a window MONO opens itself would inherit MONO's restrictions — so MONO only gives the address.
+ if($('#deep-browser'))$('#deep-browser').onclick=async()=>{const address=location.origin,hint=$('#deep-browser-hint');let copied=false;try{await navigator.clipboard.writeText(address);copied=true}catch{}
+  hint.hidden=false;hint.textContent=`${copied?'Адрес скопирован':'Адрес MONO'}: ${address}. Откройте Chrome или Edge сами (через меню «Пуск» или панель задач), вставьте адрес и разрешите микрофон. Записи сохраняются в тот же архив. Окно MONO не закрывайте — оно держит запущенным ядро.`};const close=$('#modal-actions .btn-outline');if(close)close.textContent='Закрыть';
  $('#deep-copy').onclick=async()=>{try{await navigator.clipboard.writeText(text);$('#deep-copy').textContent='Скопировано'}catch(e){notify('Не удалось скопировать: '+e.message,'error')}};
  $('#deep-save').onclick=()=>downloadBlob(new Blob([text],{type:'text/plain;charset=utf-8'}),`MONO-диагностика-${new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')}.txt`);
 }

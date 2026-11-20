@@ -76,9 +76,26 @@ export async function diskHealth({platform=process.platform,exec=run}={}){
  const out=await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command','Get-PhysicalDisk | Select-Object FriendlyName,MediaType,HealthStatus,OperationalStatus | ConvertTo-Json -Compress'],20000); // a cold PowerShell start took ~10 s in CI
  try{const value=JSON.parse(out);return (Array.isArray(value)?value:[value]).map(d=>({name:scrub(d.FriendlyName),media:String(d.MediaType??''),health:String(d.HealthStatus??''),status:[].concat(d.OperationalStatus??[]).map(String).join(', ')}))}catch{return null}
 }
-export async function collect({worker,runtime,keyManager,journal,health=()=>({}),jobs=()=>[],toolVersion=async()=>null,groqBase,fetch,env=process.env,privacy=microphonePrivacy,users=microphoneUsers,usb=usbSelectiveSuspend,disks=diskHealth}){
+/** Security software that can refuse audio to an application it does not trust.
+ * Kaspersky Endpoint Security (12+) by default gives the microphone stream only to «Trusted»
+ * applications, and a child process inherits the restrictions of its parent: then every
+ * IAudioClient::Initialize of that process fails (E_INVALIDARG) and the browser started by it
+ * gets NotReadableError, while Discord and other trusted programs record normally. */
+export function parseSecurity(text){
+ let value;try{value=JSON.parse(String(text||''))}catch{return null}
+ const names=[].concat(value?.av??[]).map(String).filter(Boolean),processes=[].concat(value?.ps??[]).map(p=>String(p).toLowerCase());
+ const kaspersky=names.some(n=>/kaspersky/i.test(n))||processes.some(p=>p==='avp'||p==='avpui');
+ return {products:[...new Set(names)].slice(0,4).map(scrub),kaspersky};
+}
+export async function securitySoftware({platform=process.platform,exec=run}={}){
+ if(platform!=='win32')return null;
+ // root/SecurityCenter2 exists only on client editions of Windows (not Server): its absence is not an error.
+ const script="$av=@();try{$av=@(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop|ForEach-Object displayName)}catch{};$ps=@(Get-Process -Name avp,avpui -ErrorAction SilentlyContinue|ForEach-Object Name);@{av=$av;ps=$ps}|ConvertTo-Json -Compress";
+ return parseSecurity(await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],20000));
+}
+export async function collect({worker,runtime,keyManager,journal,health=()=>({}),jobs=()=>[],toolVersion=async()=>null,groqBase,fetch,env=process.env,privacy=microphonePrivacy,users=microphoneUsers,usb=usbSelectiveSuspend,disks=diskHealth,security=securitySoftware}){
  // Slow OS probes (PowerShell can take ~10 s cold) start first and run alongside the rest.
- const slow={usb:usb().catch(()=>null),disks:disks().catch(()=>null)};
+ const slow={usb:usb().catch(()=>null),disks:disks().catch(()=>null),security:security().catch(()=>null)};
  const report={generatedAt:new Date().toISOString(),app:{},system:{},core:{},archive:{},capture:{},groq:{},jobs:{},journal:[]};
  const h=health();
  report.app={version:h.version,mode:h.mode,uptimeSeconds:h.uptimeSeconds,launcher:Boolean(env.MONO_LAUNCHER),node:process.version,startsLastHour:journal?.starts(3600e3)??null,startsLastDay:journal?.starts(86400e3)??null};
@@ -112,7 +129,9 @@ export async function collect({worker,runtime,keyManager,journal,health=()=>({})
  const mic=await settle(privacy,4000);report.capture.privacy=mic.ok?{blocked:Boolean(mic.value?.blocked),scope:mic.value?.scope||null}:null;
  const holders=await settle(users,5000);report.capture.heldBy=holders.ok?(holders.value||[]).slice(0,5).map(scrub):null;
  report.groq=await probeGroq({keyManager,base:groqBase,fetch});
- report.power={usbSelectiveSuspend:await slow.usb};report.disks=await slow.disks;
+ report.power={usbSelectiveSuspend:await slow.usb};report.disks=await slow.disks;report.security=await slow.security;
+ // The probe result travels to the window's verdict: who else records and what may block MONO.
+ if(report.capture.probe&&typeof report.capture.probe==='object')Object.assign(report.capture.probe,{othersRecording:report.capture.heldBy||[],security:report.security});
  report.trends=trends(journal?.rows);
  const list=jobs();const by={};for(const j of list)by[j.status]=(by[j.status]||0)+1;
  report.jobs={counts:by,recentErrors:list.filter(j=>j.error).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0,5).map(j=>({status:j.status,stage:scrub(j.stage),error:scrub(j.error),attempts:j.attempts||0}))};
@@ -145,7 +164,10 @@ export function findings(r){
  else if(main&&typeof main.volume==='number'&&main.volume<10)out.push(F('caution','Громкость микрофона почти 0',`«${main.name}»: ${main.volume} %.`,'MONO поднимет её при записи.'));
  if(c.source==='browser'&&c.module?.ready&&(c.module.modes||[]).includes('mic'))out.push(F('caution','Источник записи — окно браузера, хотя системный модуль готов','Системный модуль надёжнее: он открывает микрофон в общем режиме Windows с повтором через встроенный конвертер.','Студия → «Что записывать» → «Микрофон (системный модуль)». Если окно не откроет микрофон, MONO переключится сам.'));
  if(inputs.some(d=>/voicemeeter/i.test(d.name||''))&&c.heldBy!==null)out.push(F('advisory','Установлен Voicemeeter','Если ваш микрофон выбран в Voicemeeter аппаратным входом, он может забирать его у остальных программ.','При ошибке «микрофон занят» уберите микрофон из Voicemeeter на время записи.'));
- if(c.heldBy?.length&&!c.probe?.opened)out.push(F('advisory','Микрофон может держать другое приложение',c.heldBy.join(', ')+'.','Если запись не начинается — закройте его.'));
+ // When every way to open the stream fails with E_INVALIDARG, other programs keep recording: the
+ // microphone is not "held", MONO's processes are refused — this hint would mislead.
+ const refused=c.probe&&!c.probe.opened&&Object.values(c.probe.attempts||{}).length>0&&Object.values(c.probe.attempts).every(v=>v==='80070057');
+ if(c.heldBy?.length&&!c.probe?.opened&&!refused)out.push(F('advisory','Микрофон может держать другое приложение',c.heldBy.join(', ')+'.','Если запись не начинается — закройте его.'));
  if(c.module?.error)out.push(F('caution','Системный модуль записи не ответил',`Код: ${c.module.error}.`,'Микрофон пишется через окно; звук компьютера недоступен.'));
  else if(c.module&&!c.module.ready&&['HELPER_UNAVAILABLE','HELPER_MISSING'].includes(c.module.reason))out.push(F('advisory','Системный модуль записи не установлен','Микрофон пишется через окно; звук компьютера недоступен.',/^Windows/.test(r.system?.os||'')?'Переустановите MONO, если нужен звук компьютера.':'Звук компьютера записывается только в версии MONO для Windows.'));
  else if(c.module&&!c.module.ready&&c.module.reason==='NOT_SUPPORTED')out.push(F('caution','Windows не сообщает звуковых устройств','Модуль записи работает, но не видит ни входов, ни выходов.','Подключите микрофон или наушники.'));
