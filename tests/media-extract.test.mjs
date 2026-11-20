@@ -21,3 +21,16 @@ test('a real video becomes its audio track; a silent video is refused clearly',{
  assert.ok((await stat(out)).size<(await stat(video)).size);
  await assert.rejects(extractAudio({ffmpeg:'ffmpeg',ffprobe:'ffprobe',input:silent,output:out}),error=>error.code==='NO_AUDIO');
 });
+test('«Авто» chooses processing from the measurement of the original, conservatively',async()=>{
+ const {recommendProfile,publicProfiles}=await import('../backend/audio/profiles.mjs');
+ const m=(integrated,range,clip=0,valid=true,reason=null)=>({loudness:{valid,integrated,range,reason},clipping:{fraction:clip}});
+ assert.equal(recommendProfile(m(-20,6)).profile,'gentle','a normal recording is only cleaned of rumble');
+ assert.equal(recommendProfile(m(-27,6)).profile,'level');assert.equal(recommendProfile(m(-21,11)).profile,'level');
+ assert.equal(recommendProfile(m(-35,8)).profile,'quiet');assert.equal(recommendProfile(m(-22,16)).profile,'quiet');
+ assert.equal(recommendProfile(m(-35,8,.01)).profile,'gentle','clipped audio is never boosted');
+ assert.equal(recommendProfile(m(null,null,0,false,'below-gate')).profile,'quiet');
+ assert.equal(recommendProfile(m(null,null,0,false,'too-short')).profile,'original');
+ assert.match(recommendProfile(m(-35,8)).reason,/-35 LUFS/);
+ const list=publicProfiles();assert.equal(list[0].id,'auto');assert.equal(list.find(p=>p.recommended).id,'auto');
+ for(const id of ['quiet','speech'])assert.ok(list.some(p=>p.id===id));
+});

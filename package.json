@@ -1,7 +1,7 @@
 {
   "name": "mono-transcribe",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.9.0",
   "type": "module",
   "description": "Локальная SPA/PWA для записи и русской транскрибации",
   "scripts": {

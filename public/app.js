@@ -160,7 +160,7 @@ function onNativeState(value){
  if(active){saveClock.observe(value.sessionId||value.recordId,value.duration);if(!battery.active){battery.active=true;battery.reset()}void battery.check();stopLevelCheck()}else battery.active=false;
  $('#pause-record').disabled=!value.connected||Boolean(value.pendingAction)||!['recording','paused'].includes(value.state);
  $('#stop-record').disabled=value.state==='stopping';$('#pause-record').innerHTML=icon(value.state==='paused'?'play':'pause')+(value.state==='paused'?' Продолжить':' Пауза');
- setText('#record-saved',!value.connected?(active?'Связь потеряна. Остановка и сохранение не подтверждены.':'Подключаемся к модулю записи…'+(nativeController?.lastError?.code?` (${nativeController.lastError.code})`:'')):value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве '+(value.state==='recording'?saveClock.text():'')+captureHealthHint(value):state.footerNote?state.footerNote:value.errorCode?captureFailureMessage(value):'Аудио сохраняется в выбранной папке');
+ setText('#record-saved',!value.connected?(active?'Связь потеряна. Остановка и сохранение не подтверждены.':'Подключаемся к модулю записи…'+(nativeController?.lastError?.code?` (${nativeController.lastError.code})`:'')):value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве '+(value.state==='recording'?saveClock.text():'')+captureHealthHint(value):state.footerNote?state.footerNote:value.errorCode?captureFailureMessage(value):'');
  updateRecordUI();
  if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId));syncLevelPreview();
   if(wasActive&&value.state==='interrupted')markRecoveredSeen(value.recordId);
@@ -268,7 +268,7 @@ async function initializeNative(local){
   nativeController=new NativeCaptureController(client,{onState:onNativeState,onError:error=>notify(error.message,'error',fixFor(error.code)),onIntent:async options=>{if(levelPreview.active||levelPreview.wanted){levelPreview.stop();await new Promise(resolve=>setTimeout(resolve,250))}return mediaInterlock.beforeCapture(options)}});
   const studio=$('#audio-source').closest('.side-card');studio.replaceChildren();mountCaptureSources(studio,{model:captureSources,onError:error=>notify(error.message,'error'),onNotice:message=>notify(message)});
   const card=document.createElement('article');card.className='glass settings-card';card.innerHTML='<div class="settings-card-icon"><svg><use href="#i-mic"/></svg></div><h2>Источники записи</h2><div class="settings-capture-sources"></div><button type="button" class="btn btn-outline btn-small" id="check-native-sound">Проверить звук</button>';$('#view-settings .settings-grid').prepend(card);mountCaptureSources(card.querySelector('.settings-capture-sources'),{model:captureSources,onError:error=>notify(error.message,'error')});card.querySelector('button#check-native-sound').onclick=()=>void showSetup('sound').catch(error=>notify(error.message,'error'));
-  const guide=$('.studio-side>.side-card:not(.capture-sources)');guide.replaceChildren();mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
+  const guide=$('#studio-guide');guide.replaceChildren();mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
   const safe=document.createElement('article');safe.className='glass settings-card';safe.innerHTML='<div class="settings-card-icon"><svg><use href="#i-shield"/></svg></div><h2>Страховочная дорожка</h2><p>Пока системный модуль пишет микрофон, окно MONO параллельно пишет его копию другим путём (свой кодек и своё хранилище). Если основная запись оборвётся, MONO предложит восстановить встречу из копии. Копия удаляется через сутки после удачной записи (через неделю — после сбоя). Около 14 МБ за час.</p><label class="check-row"><input type="checkbox" id="setting-safety"> Вести страховочную дорожку</label>';$('#view-settings .settings-grid').append(safe);
   $('#setting-safety').checked=safetySettings;$('#setting-safety').onchange=e=>{safetySettings=e.target.checked;try{localStorage.setItem('mono-safety-track',safetySettings?'1':'0')}catch{}};
   const help=document.createElement('article');help.className='glass settings-card';mountHelp(help);$('#view-settings .settings-grid').append(help);
@@ -638,7 +638,7 @@ function renderRoute({preserveDrawer=false}={}){
   if(view==='settings')document.querySelectorAll('.archive-recovery-notice').forEach(notice=>notice.remove());
   $$('.view').forEach(el=>el.classList.toggle('active',el.id==='view-'+view));
   $$('.nav-link[data-view]').forEach(el=>(el.classList.toggle('selected',el.dataset.view===view),el.setAttribute('aria-current',el.dataset.view===view?'page':'false')));
-  const titles={dashboard:'Обзор',record:'Студия записи',library:'Библиотека',jobs:'Расшифровка',editor:'Редактор',settings:'Настройки'};
+  const titles={dashboard:'Обзор',record:'Запись',library:'Библиотека',jobs:'Расшифровка',editor:'Редактор',settings:'Настройки'};
   $('#current-breadcrumb').textContent=titles[view];
   if(!preserveDrawer)closeDrawer('route');
   if(view==='library')renderLibrary();
@@ -735,7 +735,7 @@ function renderJobs(){
  $('#jobs-list').innerHTML=items.length?items.map(r=>{
   const progress=r.job?.total?Math.min(100,Math.round(r.job.completed/r.job.total*100)):0;
   const failed=r.status==='failed',active=['queued','processing'].includes(r.status);
-  return `<article class="job-card glass"><div class="job-top"><div><span class="small-label">ЗАДАНИЕ / ${h(r.jobId?.slice(0,8).toUpperCase()||'LOADING')}</span><h3>${h(r.title)}</h3><p>${h(r.job?.stage||statusLabel(r))}${r.job?.error?' · '+h(r.job.error):''}</p></div><span class="record-status">${statusLabel(r)}</span></div>
+  return `<article class="job-card glass"><div class="job-top"><div><h3>${h(r.title)}</h3><p>${h(r.job?.stage||statusLabel(r))}${r.job?.error?' · '+h(r.job.error):''}</p></div><span class="record-status">${statusLabel(r)}</span></div>
   <div class="job-progress-track" role="progressbar" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100"><div class="job-progress-fill" style="width:${progress}%"></div></div>
   <div class="job-bottom"><span>${jobEta(r)}${r.job?.total?`Обработано ${r.job.completed||0} из ${r.job.total} фрагментов`:'Ожидание информации от сервера'}</span>
   <div>${failed?`<button class="btn btn-outline btn-small" data-retry="${h(r.id)}">${icon('refresh')} Повторить</button>`:''}${active?`<button class="btn btn-outline btn-small" data-cancel="${h(r.id)}">Отменить</button>`:''}${r.status==='completed'?`<button class="btn btn-primary btn-small" data-open="${h(r.id)}">Открыть текст ${icon('arrow')}</button>`:''}</div></div></article>`;
@@ -1139,17 +1139,17 @@ async function renderEditor(id){
  const hasTranscript=Boolean(rec.transcriptSummary||rec.transcript);$('#editor-segments-count').textContent=(rec.transcriptSummary?.segmentCount??rec.transcript?.segments?.length??0).toLocaleString('ru-RU');
  $('#editor-status').textContent=statusLabel(rec);
  let marks=$('#editor-marks');if(!marks){marks=document.createElement('div');marks.id='editor-marks';marks.className='editor-marks';$('.editor-source-actions').before(marks)}
- marks.innerHTML=(rec.bookmarks||[]).length?'<span class="small-label">ОТМЕТКИ</span>'+rec.bookmarks.map(m=>`<button type="button" class="mark-chip" data-seek="${Number(m.at)||0}" title="Перейти к отметке">★ ${shortTime(m.at)}${m.label&&m.label!=='Важно'?' · '+h(m.label):''}</button>`).join(''):'';
+ marks.innerHTML=(rec.bookmarks||[]).length?'<span class="marks-label">Отметки</span>'+rec.bookmarks.map(m=>`<button type="button" class="mark-chip" data-seek="${Number(m.at)||0}" title="Перейти к отметке">★ ${shortTime(m.at)}${m.label&&m.label!=='Важно'?' · '+h(m.label):''}</button>`).join(''):'';
  $('#editor-heading').textContent=rec.title;
- $('#editor-helper').textContent=hasTranscript?'Исправления сохраняются автоматически на этом устройстве.':'Прослушайте запись перед расшифровкой. Аудио остаётся на компьютере до подтверждения отправки.';
+ $('#editor-helper').textContent=hasTranscript?'Правки сохраняются сами.':'Расшифровки пока нет.';
  $('#copy-transcript').hidden=!hasTranscript;$('#export-transcript').hidden=!hasTranscript;$('#editor-transcribe').textContent=hasTranscript?'Расшифровать заново':'Расшифровать';$('#editor-transcribe').disabled=['recording','requesting','processing','queued','uploading'].includes(rec.status)||!rec.size;$('#editor-download').disabled=!rec.size;
- renderSummary(rec);void renderEditorSegments(rec);if($('#audio-tools'))$('#audio-tools').open=!hasTranscript; // the text is the document; sound tools only before transcription
+ renderSummary(rec);void renderEditorSegments(rec);
  if(state.playerURL)URL.revokeObjectURL(state.playerURL);
  state.playerURL=null;
  const audio=$('#audio-element');audio.pause();audio.removeAttribute('src');
  if(storageDetails().local){
-  if(!audioReview){const tools=document.createElement('details');tools.className='audio-tools';tools.id='audio-tools';tools.innerHTML='<summary>Улучшить звук перед расшифровкой</summary>';const host=document.createElement('section');host.setAttribute('aria-label','Подготовка и сравнение аудио');tools.append(host);$('#editor-pagination').after(tools);audioReview=new AudioReview({library:await localLibraryClient(),host,original:audio,play:media=>{if(!canAudition()||!mediaInterlock)return Promise.reject(new Error('Завершите запись перед прослушиванием.'));return mediaInterlock.play(media)},onError:error=>notify(error.message,'error'),onPlayer:value=>{followPlayback(value.time);setText('#player-now',shortTime(value.time));setText('#player-total',shortTime(value.duration));$('#player-seek').value=String(value.duration?Math.floor(1000*value.time/value.duration):0);const button=$('#player-toggle'),playing=String(value.playing);if(button.dataset.playing!==playing){button.dataset.playing=playing;button.innerHTML=icon(value.playing?'pause':'play');button.setAttribute('aria-label',value.playing?'Приостановить воспроизведение':'Воспроизвести запись')}}})}
-  audioReview.captureState(nativeController?.snapshot||{connected:false});audioReview.open(rec,audioURL(rec));$('#audio-tools').open=!hasTranscript;return;
+  if(!audioReview){const tools=document.createElement('section');tools.className='audio-tools';tools.id='audio-tools';tools.innerHTML='<h2 class="audio-tools-title">Улучшить звук перед расшифровкой</h2>';const host=document.createElement('section');host.setAttribute('aria-label','Подготовка и сравнение аудио');tools.append(host);$('#editor-pagination').after(tools);audioReview=new AudioReview({library:await localLibraryClient(),host,original:audio,play:media=>{if(!canAudition()||!mediaInterlock)return Promise.reject(new Error('Завершите запись перед прослушиванием.'));return mediaInterlock.play(media)},onError:error=>notify(error.message,'error'),onPlayer:value=>{followPlayback(value.time);setText('#player-now',shortTime(value.time));setText('#player-total',shortTime(value.duration));$('#player-seek').value=String(value.duration?Math.floor(1000*value.time/value.duration):0);const button=$('#player-toggle'),playing=String(value.playing);if(button.dataset.playing!==playing){button.dataset.playing=playing;button.innerHTML=icon(value.playing?'pause':'play');button.setAttribute('aria-label',value.playing?'Приостановить воспроизведение':'Воспроизвести запись')}}})}
+  audioReview.captureState(nativeController?.snapshot||{connected:false});audioReview.open(rec,audioURL(rec));return;
  }
  try{const url=audioURL(rec);if(url){audio.src=url}else{const blob=await getBlob(rec);if(state.editorId!==id)return;state.playerURL=URL.createObjectURL(blob);audio.src=state.playerURL}audio.load();
  }catch(e){notify('Оригинальное аудио недоступно: '+e.message,'error')}
@@ -1240,7 +1240,7 @@ function renderSummary(rec){
  const list=(title,rows,fmt)=>rows?.length?`<h3>${title}</h3><ul>${rows.map(r=>`<li>${fmt(r)}${at(r.at)}</li>`).join('')}</ul>`:'';
  const count=rec.transcriptSummary?.segmentCount??rec.transcript?.segments?.length;const stale=s.sourceSegments&&count&&count!==s.sourceSegments;
  const empty=!s.overview&&!s.decisions?.length&&!s.actions?.length&&!s.questions?.length&&!s.topics?.length;
- panel.innerHTML=`<header class="summary-head"><div class="small-label">КОНСПЕКТ ВСТРЕЧИ</div><div class="summary-tools"><button class="btn btn-subtle btn-small" type="button" data-summary="copy">Копировать</button><button class="btn btn-subtle btn-small" type="button" data-summary="redo">Обновить</button><button class="btn btn-subtle btn-small" type="button" data-summary="hide" aria-expanded="true">Свернуть</button></div></header>`+
+ panel.innerHTML=`<header class="summary-head"><h2 class="summary-title">Конспект</h2><div class="summary-tools"><button class="btn btn-subtle btn-small" type="button" data-summary="copy">Копировать</button><button class="btn btn-subtle btn-small" type="button" data-summary="redo">Обновить</button><button class="btn btn-subtle btn-small" type="button" data-summary="hide" aria-expanded="true">Свернуть</button></div></header>`+
   (empty?'<p class="summary-overview">В расшифровке не нашлось решений, задач или тем.</p>':'')+
   (s.overview?`<p class="summary-overview">${h(s.overview)}</p>`:'')+
   list('Решения',s.decisions,r=>h(r.text))+
@@ -1430,7 +1430,7 @@ async function exportPortableLibrary(){
  const source=await listRecordings();
  const records=source.filter(r=>r.status!=='recording');
  const manifest={format:'mono-portable-v1',createdAt:new Date().toISOString(),
-   version:'0.4.0',records:[]};
+   version:state.health?.version||'unknown',records:[]};
  try{
   for(const rec of records){
    if(!/^[a-f0-9-]{36}$/i.test(rec.id))throw new Error('Некорректный ID записи');
@@ -1483,7 +1483,7 @@ async function importPortableLibrary(){
 async function checkHealth(){
  try{
   const res=await fetch('/api/health',{signal:AbortSignal.timeout(4500),cache:'no-store'});if(!res.ok)throw new Error('Сервер недоступен');
-  state.health=await res.json();applyAccent(state.health.accent);offerUpdate(state.health.update);
+  state.health=await res.json();applyAccent(state.health.accent);offerUpdate(state.health.update);if(state.health.version)setText('#sidebar-version',state.health.version);
   $('#settings-health').textContent=`FFmpeg: ${state.health.ffmpeg?'доступен':'нет'} · FFprobe: ${state.health.ffprobe?'доступен':'нет'} · Groq: ${state.health.groq?'ключ задан':'не настроен'}`;
  }catch{
   state.health=null;$('#settings-health').textContent='Сервер недоступен. Запись, локальная библиотека и редактор работают автономно.';

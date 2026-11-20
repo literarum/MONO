@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#08090b">
-<meta name="description" content="MONO TRANSCRIBE — приватная студия записи и транскрибации русской речи">
+<meta name="description" content="MONO — расшифровка аудио и видео на русском">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
-<title>MONO — студия транскрибации</title>
+<title>MONO</title>
 <link rel="stylesheet" href="/styles.css">
 <link rel="stylesheet" href="/ui/controls.css">
 <link rel="stylesheet" href="/ui/scroll-area.css">
@@ -50,24 +50,21 @@
 
 <div class="app-shell" id="app">
 <aside class="sidebar glass" id="sidebar">
- <a href="#dashboard" class="brand" aria-label="MONO — главная"><span class="brand-mark"><i></i><i></i><i></i><i></i><i></i></span><span class="brand-type">MONO<span class="brand-dot">.</span><small>TRANSCRIBE / STUDIO</small></span></a>
- <div class="side-group-label">Рабочее пространство</div>
+ <a href="#dashboard" class="brand" aria-label="MONO — главная"><span class="brand-mark"><i></i><i></i><i></i><i></i><i></i></span><span class="brand-type">MONO</span></a>
  <nav class="nav" aria-label="Основное меню">
   <button aria-label="Обзор" class="nav-link selected" data-view="dashboard"><svg><use href="#i-grid"/></svg><span class="nav-long">Обзор</span><span class="nav-short" aria-hidden="true">Обзор</span></button>
-  <button aria-label="Студия записи" class="nav-link" data-view="record"><svg><use href="#i-mic"/></svg><span class="nav-long">Студия записи</span><span class="nav-short" aria-hidden="true">Запись</span></button>
-  <button aria-label="Моя библиотека" class="nav-link" data-view="library"><svg><use href="#i-library"/></svg><span class="nav-long">Моя библиотека</span><span class="nav-short" aria-hidden="true">Записи</span><span id="nav-count" class="nav-count">0</span></button>
+  <button aria-label="Библиотека" class="nav-link" data-view="library"><svg><use href="#i-library"/></svg><span class="nav-long">Библиотека</span><span class="nav-short" aria-hidden="true">Записи</span><span id="nav-count" class="nav-count">0</span></button>
   <button aria-label="Расшифровка" class="nav-link" data-view="jobs"><svg><use href="#i-activity"/></svg><span class="nav-long">Расшифровка</span><span class="nav-short" aria-hidden="true">Текст</span></button>
+  <button aria-label="Запись" class="nav-link" data-view="record"><svg><use href="#i-mic"/></svg><span class="nav-long">Запись</span><span class="nav-short" aria-hidden="true">Запись</span></button>
  </nav>
  <div class="sidebar-bottom">
-  <div class="side-group-label">Система</div>
   <button aria-label="Настройки" class="nav-link" data-view="settings"><svg><use href="#i-settings"/></svg><span class="nav-long">Настройки</span><span class="nav-short" aria-hidden="true">Настройки</span></button>
-  
-  <div class="sidebar-foot">MONO / v0.4.0 <span>© 2026</span></div>
+  <div class="sidebar-foot"><span>MONO <span id="sidebar-version">0.9.0</span></span><span>by <a href="https://t.me/Gothleifur" target="_blank" rel="noopener noreferrer">@Gothleifur</a> · © 2026</span></div>
  </div>
 </aside>
 <div class="main-column">
 <header class="topbar glass">
- <div class="top-left"><button class="icon-btn mobile-menu" id="mobile-menu" aria-label="Открыть меню"><svg><use href="#i-menu"/></svg></button><span class="top-subtitle">Рабочее пространство</span><svg class="top-chevron"><use href="#i-chevron"/></svg><strong id="current-breadcrumb">Обзор</strong></div>
+ <div class="top-left"><button class="icon-btn mobile-menu" id="mobile-menu" aria-label="Открыть меню"><svg><use href="#i-menu"/></svg></button><strong id="current-breadcrumb">Обзор</strong></div>
  <div class="top-right"><button id="theme-toggle" class="icon-btn" aria-label="Переключить тему" title="Переключить тему"><svg><use href="#i-sun"/></svg></button></div>
 </header>
 <main id="main" tabindex="-1">
@@ -75,61 +72,58 @@
  <div class="hero glass">
   <div class="hero-grid"></div>
   <div class="hero-content">
-   
-   <h1 id="dashboard-heading">ГОЛОС<br><span>В ТЕКСТ</span><span class="hero-period">.</span></h1>
-   <p class="hero-description">Все важные слова — на своём месте.<br>Записывайте, расшифровывайте и работайте с идеями без лишних действий.</p>
-   <div class="hero-actions"><button class="btn btn-primary" data-go="record"><svg><use href="#i-mic"/></svg> Начать запись <svg class="last-arrow"><use href="#i-arrow"/></svg></button><button class="btn btn-subtle" id="hero-import"><svg><use href="#i-upload"/></svg> Загрузить аудио</button></div>
+   <h1 id="dashboard-heading">Голос в текст</h1>
+   <p class="hero-description">Аудио и видео любой длины — расшифровка на русском с таймкодами.</p>
+   <button class="drop-zone" id="hero-import" type="button"><span class="drop-icon"><svg><use href="#i-upload"/></svg></span><span class="drop-text"><strong>Перетащите файл или выберите</strong><span>MP3, WAV, M4A, MP4, MOV, MKV и другие · звук из видео MONO извлечёт сам</span></span></button>
+   <div class="hero-actions"><button class="btn btn-subtle" data-go="record"><svg><use href="#i-mic"/></svg> Записать</button></div>
   </div>
   <div class="hero-art" aria-hidden="true"><div class="art-aura"></div><div class="art-ring ring-1"></div><div class="art-ring ring-2"></div><div class="art-ring ring-3"></div><div class="art-core"><div class="art-bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
-  <div class="hero-bottom"><div><span class="hero-bottom-symbol">✳</span> СОХРАНЯЙТЕ СМЫСЛ. <span>НЕ ТРАТЬТЕ ВРЕМЯ.</span></div></div>
  </div>
- <div class="section-title-line"><div><h2>Ваше пространство</h2></div></div>
+
  <div class="metrics-grid">
-  <article class="metric-card glass"><div class="metric-top"><span>ВСЕГО ЗАПИСЕЙ</span><svg><use href="#i-library"/></svg></div><strong id="metric-total">00</strong><div class="metric-foot">В вашей библиотеке <span>↗</span></div></article>
-  <article class="metric-card glass"><div class="metric-top"><span>ДЛИТЕЛЬНОСТЬ</span><svg><use href="#i-clock"/></svg></div><strong id="metric-duration">0<small>ч</small> 00<small>м</small></strong><div class="metric-foot">Общая длина аудио <span>↗</span></div></article>
-  <article class="metric-card glass"><div class="metric-top"><span>ОБРАБОТАНО ЗА МЕСЯЦ</span><svg><use href="#i-activity"/></svg></div><strong id="metric-month">0<small>мин</small></strong><div class="metric-foot">Расшифрованное аудио <span>↗</span></div></article>
-  <article class="metric-card glass"><div class="metric-top"><span>РАСХОДЫ · ОЦЕНКА</span><svg><use href="#i-arrow"/></svg></div><strong id="metric-cost">0,00 <small>₽</small></strong><div class="metric-foot">По заданному тарифу <span>↗</span></div></article>
+  <article class="metric-card glass"><div class="metric-top"><span>Записей</span><svg><use href="#i-library"/></svg></div><strong id="metric-total">00</strong></article>
+  <article class="metric-card glass"><div class="metric-top"><span>Общая длина</span><svg><use href="#i-clock"/></svg></div><strong id="metric-duration">0<small>ч</small> 00<small>м</small></strong></article>
+  <article class="metric-card glass"><div class="metric-top"><span>Расшифровано за месяц</span><svg><use href="#i-activity"/></svg></div><strong id="metric-month">0<small>мин</small></strong></article>
+  <article class="metric-card glass"><div class="metric-top"><span>Расходы, оценка</span><svg><use href="#i-arrow"/></svg></div><strong id="metric-cost">0,00 <small>₽</small></strong></article>
  </div>
- <div class="section-title-line recent-header"><div><h2>Последние записи</h2></div><button class="text-link" data-go="library">Вся библиотека <svg><use href="#i-arrow"/></svg></button></div>
+ <div class="section-title-line recent-header"><div><h2>Последние</h2></div><button class="text-link" data-go="library">Вся библиотека <svg><use href="#i-arrow"/></svg></button></div>
  <div id="recent-list" class="recent-list glass"></div>
 </section>
 
 <section class="view" id="view-record" aria-labelledby="record-heading">
- <div class="page-heading"><div><h1 id="record-heading">Студия записи<span class="heading-period">.</span></h1><p>Здесь начинается каждая история. Убедитесь, что источник звука подключён.</p></div></div>
+ <div class="page-heading"><div><h1 id="record-heading">Запись</h1></div><button class="btn btn-subtle" id="record-import" type="button"><svg><use href="#i-upload"/></svg> Загрузить готовый файл</button></div>
+ <div id="studio-guide" class="glass side-card studio-guide" hidden></div>
  <div class="studio-layout">
-  <div class="studio-panel glass"><div class="studio-panel-head"><span class="small-label">МОНИТОР ЗАПИСИ</span><span id="record-state" class="state-pill"><span class="tiny-dot"></span> Ожидание</span></div>
-   <div class="studio-display"><div class="display-overline" id="record-caption">ГОТОВО К ЗАПИСИ</div><div class="record-source" id="record-source" aria-live="polite"></div><div class="studio-timer" id="record-timer">00:00:00</div><div class="studio-wave"><canvas id="record-wave" width="960" height="168" aria-label="Визуализация уровня звука"></canvas><div class="wave-baseline"></div></div><div class="input-level"><button type="button" class="btn btn-subtle btn-small level-check" id="level-check" title="Микрофон откроется на 45 секунд только для шкалы — без записи">Проверить уровень</button><span>ВХОДЯЩИЙ СИГНАЛ</span><div class="level-track"><div id="level-fill"></div></div><span id="level-num">−∞ dB</span></div></div>
+  <div class="studio-panel glass"><div class="studio-panel-head"><span id="record-state" class="state-pill"><span class="tiny-dot"></span> Ожидание</span></div>
+   <div class="studio-display"><div class="display-overline" id="record-caption">ГОТОВО К ЗАПИСИ</div><div class="record-source" id="record-source" aria-live="polite"></div><div class="studio-timer" id="record-timer">00:00:00</div><div class="studio-wave"><canvas id="record-wave" width="960" height="168" aria-label="Визуализация уровня звука"></canvas><div class="wave-baseline"></div></div><div class="input-level"><button type="button" class="btn btn-subtle btn-small level-check" id="level-check" aria-pressed="false">Проверить уровень</button><div class="level-track"><div id="level-fill"></div></div><span id="level-num">−∞ dB</span></div></div>
    <div class="studio-buttons"><button id="start-record" class="btn btn-primary btn-large"><svg><use href="#i-mic"/></svg> Начать запись</button><button id="pause-record" class="btn btn-outline" hidden><svg><use href="#i-pause"/></svg> Пауза</button><button id="mark-record" class="btn btn-outline" hidden title="Отметить важный момент (B)" aria-keyshortcuts="B">★ Важно</button><button id="stop-record" class="btn btn-outline" hidden><svg><use href="#i-stop"/></svg> Завершить</button></div>
-   <div class="studio-panel-foot"><div><svg><use href="#i-harddrive"/></svg><span id="record-saved">Данные сохраняются на этом устройстве</span></div><div><svg><use href="#i-shield"/></svg><span>Без скрытой записи</span></div></div>
+   <div class="studio-panel-foot"><span id="record-saved"></span></div>
   </div>
-  <div class="studio-side" role="group" aria-labelledby="studio-side-heading"><h2 id="studio-side-heading" class="sr-only">Подготовка к записи</h2><div class="glass side-card"><div class="small-label">01 / ИСТОЧНИК АУДИО</div><label for="audio-source" class="field-label">Что вы хотите записать?</label><select id="audio-source" class="select"><option value="mic">Микрофон</option><option value="system">Звук вкладки / экрана</option><option value="both">Микрофон + звук экрана</option></select><p class="field-hint">Звук вкладки или экрана доступен только при поддержке браузером и с вашего разрешения.</p></div>
-  <div class="glass side-card"><div class="small-label">02 / ПЕРЕД НАЧАЛОМ</div><div class="check-row"><span class="check-icon"><span class="tiny-dot"></span></span><span>Проверьте разрешение микрофона</span></div><div class="check-row"><span class="check-icon"><span class="tiny-dot"></span></span><span>Убедитесь в свободном месте</span></div><div class="check-row"><span class="check-icon"><span class="tiny-dot"></span></span><span>Предупредите участников встречи</span></div></div>
-  <button class="upload-card glass" id="record-import"><svg><use href="#i-upload"/></svg><strong>Есть готовая запись?</strong><span>Загрузите аудиофайл вместо записи</span><span class="upload-arrow">↗</span></button>
-  </div>
+  <div class="studio-side" role="group" aria-label="Источник записи"><div class="glass side-card"><label for="audio-source" class="field-label">Что записывать</label><select id="audio-source" class="select"><option value="browser">Микрофон</option></select></div></div>
  </div>
 </section>
 
 <section class="view" id="view-library" aria-labelledby="library-heading">
- <div class="page-heading"><div><h1 id="library-heading">Библиотека<span class="heading-period">.</span></h1></div><button class="btn btn-primary" id="library-import"><svg><use href="#i-plus"/></svg> Добавить аудио</button></div>
- <div class="library-toolbar glass"><label class="search-control"><svg><use href="#i-search"/></svg><input id="library-search" placeholder="Поиск по названию или тексту..." aria-label="Поиск по записям"></label><select class="select toolbar-select" id="library-filter" aria-label="Фильтр по статусу"><option value="all">Все записи</option><option value="completed">С транскриптом</option><option value="saved">Без транскрипта</option></select><select class="select toolbar-select" id="library-sort" aria-label="Сортировка"><option value="newest">Сначала новые</option><option value="oldest">Сначала старые</option><option value="name">По названию</option><option value="longest">Сначала длинные</option></select></div>
+ <div class="page-heading"><div><h1 id="library-heading">Библиотека</h1></div><button class="btn btn-primary" id="library-import"><svg><use href="#i-plus"/></svg> Добавить файл</button></div>
+ <div class="library-toolbar glass"><label class="search-control"><svg><use href="#i-search"/></svg><input id="library-search" type="search" placeholder="Поиск по названию и тексту" aria-label="Поиск по записям"></label><select class="select toolbar-select" id="library-filter" aria-label="Фильтр по статусу"><option value="all">Все записи</option><option value="completed">С транскриптом</option><option value="saved">Без транскрипта</option></select><select class="select toolbar-select" id="library-sort" aria-label="Сортировка"><option value="newest">Сначала новые</option><option value="oldest">Сначала старые</option><option value="name">По названию</option><option value="longest">Сначала длинные</option></select></div>
  <div class="library-count small-label" id="library-count">0 ЗАПИСЕЙ</div>
  <h2 id="library-list-heading" class="sr-only">Записи</h2><div id="library-list" class="library-list" aria-labelledby="library-list-heading"></div>
 </section>
 
 <section class="view" id="view-jobs" aria-labelledby="jobs-heading">
- <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> ОЧЕРЕДЬ ЗАДАНИЙ</div><h1 id="jobs-heading">Расшифровка<span class="heading-period">.</span></h1><p>Задания распознавания и их ход. Здесь видно, сколько частей уже обработано.</p></div></div>
+ <div class="page-heading"><div><h1 id="jobs-heading">Расшифровка</h1></div></div>
  <h2 class="sr-only">Задания расшифровки</h2><div id="jobs-list" class="jobs-list"></div>
 </section>
 
 <section class="view" id="view-editor" aria-labelledby="editor-heading">
- <div class="editor-top"><button class="back-link" data-go="library"><svg><use href="#i-chevron"/></svg> Библиотека</button><div class="editor-top-actions"><button class="btn btn-subtle btn-small" id="summary-open" hidden title="Решения, задачи и открытые вопросы встречи"><svg><use href="#i-sparkle"/></svg> Конспект</button><button class="btn btn-subtle btn-small" id="copy-transcript" title="Shift + щелчок — с таймкодами"><svg><use href="#i-copy"/></svg> Копировать</button><button class="btn btn-primary btn-small" id="export-transcript"><svg><use href="#i-download"/></svg> Экспорт</button></div></div>
- <div class="editor-layout"><aside class="editor-sidebar glass"><div class="small-label">ЗАПИСЬ / ДЕТАЛИ</div><h2 id="editor-name">—</h2><div class="detail-pair"><span>Дата</span><strong id="editor-date">—</strong></div><div class="detail-pair"><span>Длительность</span><strong id="editor-duration">—</strong></div><div class="detail-pair"><span>Сегментов</span><strong id="editor-segments-count">—</strong></div><div class="detail-pair"><span>Состояние</span><strong id="editor-status">—</strong></div><div class="detail-pair" id="editor-pace-row" hidden><span>Темп речи</span><strong id="editor-pace">—</strong></div><div class="detail-pair" id="editor-share-row" hidden><span>Говорили</span><strong id="editor-share">—</strong></div><button id="next-doubt" class="doubt-chip" type="button" hidden title="Места, где модель не уверена. Клавиша N — следующее"></button><div class="editor-source-actions"><button id="editor-transcribe" class="btn btn-primary btn-small" type="button">Расшифровать</button><button id="editor-download" class="btn btn-outline btn-small" type="button">Скачать аудио</button></div><div class="side-divider"></div><label class="field-label" for="editor-search">Поиск по тексту</label><div class="search-control editor-search"><svg><use href="#i-search"/></svg><input id="editor-search" placeholder="Найти фразу..."></div><p class="field-hint">Нажмите на временную метку, чтобы перейти к нужной части записи.</p></aside>
- <div class="editor-workspace glass"><div class="editor-document-header"><div class="small-label">РАСШИФРОВКА / РЕДАКТОР</div><h1 id="editor-heading">Текст записи</h1><p id="editor-helper">Исправления сохраняются автоматически на этом устройстве.</p></div><section id="summary-panel" class="summary-panel" hidden aria-label="Конспект встречи"></section><div id="editor-content" class="transcript-content"></div><div id="editor-pagination" class="editor-pagination"></div></div></div>
+ <div class="editor-top"><button class="back-link" data-go="library"><svg><use href="#i-chevron"/></svg> <span>Библиотека</span></button><div class="editor-top-actions"><button class="btn btn-subtle btn-small" id="summary-open" hidden title="Решения, задачи и открытые вопросы встречи"><svg><use href="#i-sparkle"/></svg> Конспект</button><button class="btn btn-subtle btn-small" id="copy-transcript" title="Shift + щелчок — с таймкодами"><svg><use href="#i-copy"/></svg> Копировать</button><button class="btn btn-primary btn-small" id="export-transcript"><svg><use href="#i-download"/></svg> Экспорт</button></div></div>
+ <div class="editor-layout"><aside class="editor-sidebar glass"><h2 id="editor-name">—</h2><div class="detail-pair"><span>Дата</span><strong id="editor-date">—</strong></div><div class="detail-pair"><span>Длительность</span><strong id="editor-duration">—</strong></div><div class="detail-pair"><span>Сегментов</span><strong id="editor-segments-count">—</strong></div><div class="detail-pair"><span>Состояние</span><strong id="editor-status">—</strong></div><div class="detail-pair" id="editor-pace-row" hidden><span>Темп речи</span><strong id="editor-pace">—</strong></div><div class="detail-pair" id="editor-share-row" hidden><span>Говорили</span><strong id="editor-share">—</strong></div><button id="next-doubt" class="doubt-chip" type="button" hidden title="Места, где модель не уверена. Клавиша N — следующее"></button><div class="editor-source-actions"><button id="editor-transcribe" class="btn btn-primary btn-small" type="button">Расшифровать</button><button id="editor-download" class="btn btn-outline btn-small" type="button">Скачать аудио</button></div><div class="side-divider"></div><div class="search-control editor-search"><svg><use href="#i-search"/></svg><input id="editor-search" type="search" placeholder="Найти в тексте" aria-label="Поиск по тексту"></div></aside>
+ <div class="editor-workspace glass"><div class="editor-document-header"><h1 id="editor-heading">Текст</h1><p id="editor-helper"></p></div><section id="summary-panel" class="summary-panel" hidden aria-label="Конспект встречи"></section><div id="editor-content" class="transcript-content"></div><div id="editor-pagination" class="editor-pagination"></div></div></div>
  <div class="audio-player glass" id="audio-player"><button class="play-btn" id="player-toggle" aria-label="Воспроизвести запись"><svg><use href="#i-play"/></svg></button><div class="player-time" id="player-now">00:00</div><input id="player-seek" class="seek" type="range" min="0" max="1000" value="0" aria-label="Позиция аудио"><span class="player-time" id="player-total">00:00</span><select id="player-speed" class="speed-select" aria-label="Скорость воспроизведения"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select><button id="smart-speed" class="smart-speed" type="button" aria-pressed="false" title="Пропускать паузы между фразами" hidden>Без пауз</button><audio id="audio-element" preload="metadata"></audio></div>
 </section>
 
 <section class="view" id="view-settings" aria-labelledby="settings-heading">
- <div class="page-heading"><div><h1 id="settings-heading">Настройки<span class="heading-period">.</span></h1></div></div>
+ <div class="page-heading"><div><h1 id="settings-heading">Настройки</h1></div></div>
  <div class="settings-grid"><article class="glass settings-card"><div class="settings-card-icon"><svg><use href="#i-sun"/></svg></div><h2>Оформление</h2><label class="field-label" for="setting-theme">Цветовая тема</label><select class="select" id="setting-theme"><option value="dark">Тёмная</option><option value="light">Светлая</option><option value="system">Как в системе</option></select></article>
  <article class="glass settings-card"><div class="settings-card-icon"><svg><use href="#i-activity"/></svg></div><h2>Обработка аудио</h2><p>Оригинал всегда остаётся нетронутым.</p><label class="field-label" for="setting-profile">Профиль обработки FFmpeg</label><select class="select" id="setting-profile"><option value="cautious">Осторожный — только фильтр</option><option value="standard">Стандартный — фильтр и громкость (рекомендуется)</option><option value="enhanced">Усиленный — шумоподавление (может ухудшить распознавание)</option></select></article>
  <article class="glass settings-card" id="groq-settings-card"><div class="settings-card-icon"><svg><use href="#i-shield"/></svg></div><h2>Подключение Groq</h2><p>Расшифровка работает через ваш аккаунт Groq. Записывать можно без подключения.</p><div id="groq-credentials"></div><button class="btn btn-outline btn-small" id="resume-transcription" hidden>Продолжить расшифровку</button><details class="setup-details"><summary>Где взять ключ и как оплачивать</summary><ol><li>Войдите в <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">Groq и создайте API-ключ</a>.</li><li>Скопируйте его целиком и вставьте в поле выше.</li><li>Для платного использования настройте способ оплаты и лимит в <a href="https://console.groq.com/settings/billing" target="_blank" rel="noopener noreferrer">Billing</a>. Доступность тарифов и оплаты зависит от аккаунта; актуальные условия указаны в Groq.</li></ol><p class="field-hint">Проверка ключа не отправляет аудио. Перед каждой расшифровкой MONO отдельно запросит подтверждение отправки записи.</p></details></article>

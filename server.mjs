@@ -63,6 +63,8 @@ const uploadingKeys=new Set();
 const MAX_CONCURRENT_UPLOADS=2;
 let uploadsInFlight=0;
 const config={ffmpeg:false,ffprobe:false,groq:!!GROQ_KEY};
+// One source of the version: package.json ships with the server in every build.
+const VERSION=JSON.parse(readFileSync(new URL('./package.json',import.meta.url),'utf8')).version;
 // Absolute paths from the launcher; plain names rely on PATH (Docker, dev).
 const TOOLS={ffmpeg:process.env.MONO_FFMPEG||'ffmpeg',ffprobe:process.env.MONO_FFPROBE||'ffprobe'};
 // Detection is asynchronous and patient: the first launch of a ~100 MB ffmpeg.exe
@@ -88,7 +90,7 @@ const toolsReady=detectTools();
 const eventClients=new Set();
 function broadcast(event,data){for(const client of eventClients)client.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)}
 let accent=null,availableUpdate=null;void systemAccent().then(value=>{accent=value});
-if(process.env.MONO_LAUNCHER==='1'&&!process.env.NODE_TEST_CONTEXT)setTimeout(()=>void checkUpdate({current:'0.4.0'}).then(value=>{availableUpdate=value}),20000).unref();
+if(process.env.MONO_LAUNCHER==='1'&&!process.env.NODE_TEST_CONTEXT)setTimeout(()=>void checkUpdate({current:VERSION}).then(value=>{availableUpdate=value}),20000).unref();
 const originalMedia=new OriginalMedia(localWorker);
 const preparation=new AudioPreparation(localWorker,originalMedia);
 const keyManager=new KeyManager({worker:localWorker,externalKey:GROQ_KEY,endpoint:new URL('/openai/v1/models',GROQ_ENDPOINT).href,onChange:status=>{
@@ -131,7 +133,7 @@ let stopping=false;
 const startedAt=Date.now();
 function publicHealth(){
   const pending=[...jobs.values()].filter(j=>j.status==='queued').length;
-  return {...config,accent,update:availableUpdate,toolsChecking:Boolean(toolsChecking),version:'0.4.0',mode:DEPLOY_MODE,maxUploadBytes:MAX_BYTES,
+  return {...config,accent,update:availableUpdate,toolsChecking:Boolean(toolsChecking),version:VERSION,mode:DEPLOY_MODE,maxUploadBytes:MAX_BYTES,
     retentionHours:JOB_TTL_HOURS,instanceId:process.env.MONO_LAUNCHER_INSTANCE_ID||null,queue:pending,processing:[...jobs.values()].filter(j=>j.status==='processing').length,
     uploadsInFlight,uptimeSeconds:Math.floor((Date.now()-startedAt)/1000),stopping};
 }
