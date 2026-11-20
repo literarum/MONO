@@ -16,7 +16,7 @@ import {captureSelection,selectionKey} from './transcription-selection.js';
 import {Preflight,mountPreflight,remember,recentErrors} from './preflight.js';
 import {windowProbe,microphonePaths,windowFindings,microphoneFindings,formatReport,consolidate} from './diagnostics.js';
 import {SafetyTrack} from './safety-track.js';
-import {LevelPreview,addBookmark,SaveClock,BatteryWatch,DEFAULT_TITLE,suggestTitle} from './studio-extras.js';
+import {LevelPreview,addBookmark,SaveClock,BatteryWatch,DEFAULT_TITLE,suggestTitle} from './studio-extras.js';import {PlayerWave} from './waveform.js';
 import {speakerFor,SPEAKER_NAMES} from './speakers.js';
 import {paragraphs,isDoubtful,nextDoubtful,silenceSkips,skipTarget,savedSeconds,cleanText,transcriptStats,learnTerms,rememberTerms,promptWithTerms} from './intelligence.js';
 import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
@@ -1149,12 +1149,19 @@ async function renderEditor(id){
  const audio=$('#audio-element');audio.pause();audio.removeAttribute('src');
  if(storageDetails().local){
   if(!audioReview){const tools=document.createElement('section');tools.className='audio-tools';tools.id='audio-tools';tools.innerHTML='<h2 class="audio-tools-title">Улучшить звук перед расшифровкой</h2>';const host=document.createElement('section');host.setAttribute('aria-label','Подготовка и сравнение аудио');tools.append(host);$('#editor-pagination').after(tools);audioReview=new AudioReview({library:await localLibraryClient(),host,original:audio,play:media=>{if(!canAudition()||!mediaInterlock)return Promise.reject(new Error('Завершите запись перед прослушиванием.'));return mediaInterlock.play(media)},onError:error=>notify(error.message,'error'),onPlayer:value=>{followPlayback(value.time);setText('#player-now',shortTime(value.time));setText('#player-total',shortTime(value.duration));$('#player-seek').value=String(value.duration?Math.floor(1000*value.time/value.duration):0);const button=$('#player-toggle'),playing=String(value.playing);if(button.dataset.playing!==playing){button.dataset.playing=playing;button.innerHTML=icon(value.playing?'pause':'play');button.setAttribute('aria-label',value.playing?'Приостановить воспроизведение':'Воспроизвести запись')}}})}
-  audioReview.captureState(nativeController?.snapshot||{connected:false});audioReview.open(rec,audioURL(rec));return;
+  audioReview.captureState(nativeController?.snapshot||{connected:false});audioReview.open(rec,audioURL(rec));void loadWave(rec);return;
  }
  try{const url=audioURL(rec);if(url){audio.src=url}else{const blob=await getBlob(rec);if(state.editorId!==id)return;state.playerURL=URL.createObjectURL(blob);audio.src=state.playerURL}audio.load();
  }catch(e){notify('Оригинальное аудио недоступно: '+e.message,'error')}
  $('#player-total').textContent=shortTime(rec.duration);
  $('#player-now').textContent='00:00';$('#player-seek').value='0';$('#player-toggle').innerHTML=icon('play');
+}
+let playerWave=null;
+/** The spectral waveform of the record that is open (computed once on the computer, then cached). */
+async function loadWave(rec){
+ playerWave??=new PlayerWave($('#player-wave'),$('#player-seek'));playerWave.clear();
+ if(!storageDetails().local||!rec?.size||['recording','requesting','paused','importing','migrating'].includes(rec.status))return;
+ try{const local=await localLibraryClient(),data=await local.json(`/records/${rec.id}/peaks`,{signal:AbortSignal.timeout(120000)});if(state.editorId===rec.id)playerWave.load(data)}catch{/* the plain seek bar stays */}
 }
 // ---- Transcript intelligence: on-device analysis + the meeting summary (on request) ----
 const TERMS_KEY='mono-learned-terms',SMART_KEY='mono-smart-speed';

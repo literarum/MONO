@@ -34,3 +34,14 @@ test('«Авто» chooses processing from the measurement of the original, cons
  const list=publicProfiles();assert.equal(list[0].id,'auto');assert.equal(list.find(p=>p.recommended).id,'auto');
  for(const id of ['quiet','speech'])assert.ok(list.some(p=>p.id===id));
 });
+test('spectral waveform: loudness per slice and brightness (vowel-like low, hiss-like high)',{skip},async t=>{
+ const {computePeaks,binsFrom}=await import('../backend/audio/peaks.mjs');
+ assert.deepEqual(binsFrom({rms:[],zcr:[]},10),{peaks:[],brightness:[]});
+ const dir=await mkdtemp(path.join(tmpdir(),'mono-peaks-'));t.after(()=>rm(dir,{recursive:true,force:true}));const file=path.join(dir,'a.wav');
+ // 2 s of a low tone, then 2 s of white noise
+ execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','sine=frequency=150:duration=2','-f','lavfi','-i','anoisesrc=color=white:duration=2:amplitude=0.3','-filter_complex','[0][1]concat=n=2:v=0:a=1','-ar','16000',file]);
+ const value=await computePeaks([file],{ffmpeg:'ffmpeg',bins:8});
+ assert.ok(value.duration>3.9&&value.duration<4.1,String(value.duration));assert.equal(value.peaks.length,8);
+ assert.ok(value.brightness.slice(0,3).every(b=>b<.3),'tone is dark: '+value.brightness);assert.ok(value.brightness.slice(5).every(b=>b>.7),'noise is bright: '+value.brightness);
+ assert.ok(value.peaks.every(p=>p>0&&p<=1));
+});

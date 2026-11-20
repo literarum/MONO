@@ -1,5 +1,7 @@
 import {open,unlink,statfs} from 'node:fs/promises';import {createReadStream} from 'node:fs';import {createHash} from 'node:crypto';import {once} from 'node:events';
-import {pipeline} from 'node:stream/promises';import {extractAudio} from './media-extract.mjs';
+import {pipeline} from 'node:stream/promises';import {extractAudio} from './media-extract.mjs';import {computePeaks} from '../audio/peaks.mjs';
+// Waveforms are small (≈1.5 kB) and keyed by the exact audio they describe.
+const waveforms=new Map();
 const send=(res,status,body)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(body))};
 export async function readJSON(req,limit=60000){let size=0;const chunks=[];for await(const part of req){size+=part.length;if(size>limit){const e=new Error('Слишком большой запрос');e.code='TOO_LARGE';throw e}chunks.push(part)}try{const value=JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}');if(!value||Array.isArray(value)||typeof value!=='object')throw new Error();return value}catch{const e=new Error('Некорректный запрос');e.code='INVALID_JSON';throw e}}
 function errorStatus(code){return ['NOT_FOUND','TRASHED','AUDIO_NOT_FOUND'].includes(code)?404:['VERSION_CONFLICT','LIBRARY_BUSY','LIBRARY_ACTIVE','SEGMENT_CONFLICT','ID_CONFLICT','MIGRATION_CONFLICT','TRANSFER_CONFLICT','TRANSFER_PENDING','TRANSFER_SOURCE_CHANGED','TRANSFER_LIBRARY_CHANGED','PREPARATION_BUSY','SOURCE_BUSY','CAPTURE_BUSY','STALE_AUDIO_VERSION'].includes(code)?409:code==='TOO_LARGE'?413:code==='DISK_FULL'?507:code?.startsWith('INVALID')||['CHECKSUM','SEQUENCE','NOT_LIBRARY','UNSAFE_PATH'].includes(code)?400:503}
@@ -79,7 +81,7 @@ export async function libraryRoute(req,res,url,worker,{submitLibraryJob,isLibrar
     send(res,201,await worker.call('records.import',{meta,...audio},{timeoutMs:60000}));
    }finally{await worker.call('stage.discard',{id:uploaded.stagingId}).catch(()=>{});if(audio!==uploaded)await worker.call('stage.discard',{id:audio.stagingId}).catch(()=>{})}return true;
   }
-  const match=pathname.match(/^\/api\/local\/records\/([a-f0-9-]{36})(?:\/(audio|speakers|trash|restore|transcribe|transcript(?:\/edit)?|segments\/(mic|system|mix|original)\/(\d+)))?$/);
+  const match=pathname.match(/^\/api\/local\/records\/([a-f0-9-]{36})(?:\/(audio|peaks|speakers|trash|restore|transcribe|transcript(?:\/edit)?|segments\/(mic|system|mix|original)\/(\d+)))?$/);
   if(!match)return false;const id=match[1],action=match[2];
   if(!action&&req.method==='GET'){send(res,200,await worker.call('records.get',{id}));return true}
   if(action==='speakers'&&req.method==='GET'){let profile=null;try{profile=resolveSpeakers?await resolveSpeakers(id):null}catch{}send(res,200,{profile});return true}
@@ -100,6 +102,16 @@ export async function libraryRoute(req,res,url,worker,{submitLibraryJob,isLibrar
    try{send(res,200,await worker.call(action==='transcript'?'records.transcript.commit':'records.transcript.edit',{id,expectedVersion:Number(req.headers['x-mono-version']),...uploaded},{timeoutMs:60000}))}finally{await worker.call('stage.discard',{id:uploaded.stagingId}).catch(()=>{})}return true;
   }
   if(['trash','restore'].includes(action)&&req.method==='POST'){send(res,200,await worker.call('records.'+action,{...await readJSON(req),id}));return true}
+  if(action==='peaks'&&req.method==='GET'){
+   const controller=new AbortController(),close=()=>{if(!res.writableEnded)controller.abort()};res.on('close',close);
+   try{
+    const descriptor=resolveOriginal?await resolveOriginal(id,{signal:controller.signal}):await worker.call('records.audio',{id});
+    const files=(descriptor.files||[]).map(file=>file.path),key=id+':'+(descriptor.files||[]).map(file=>file.sha256||file.size).join(',');
+    let value=waveforms.get(key);
+    if(!value){const tools=runtime?await runtime():{},ffmpeg=typeof tools.ffmpeg==='string'?tools.ffmpeg:process.env.MONO_FFMPEG||'ffmpeg';value=await computePeaks(files,{ffmpeg,signal:controller.signal});waveforms.set(key,value);if(waveforms.size>64)waveforms.delete(waveforms.keys().next().value)}
+    send(res,200,value);
+   }finally{res.off('close',close)}return true;
+  }
   if(action==='audio'&&['GET','HEAD'].includes(req.method)){
    const controller=new AbortController(),close=()=>{if(!res.writableEnded)controller.abort()};res.on('close',close);
    try{const variant=url.searchParams.get('variant')||'original';const descriptor=variant==='original'&&resolveOriginal?await resolveOriginal(id,{signal:controller.signal}):await worker.call('records.audio',{id,variant});if(!res.destroyed)await streamAudio(req,res,descriptor)}finally{res.off('close',close)}return true;
