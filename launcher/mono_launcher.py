@@ -503,33 +503,72 @@ def _external_browser_environment():
                     "Не удалось восстановить окружение MONO. Перезапустите приложение.") from exc
 
 
-def launch_chromium(chrome: str, folder: Path, url: str) -> subprocess.Popen:
-    profile = folder / "browser-profile"
-    ensure_private_directory(profile)
-    args = [chrome, f"--user-data-dir={profile}", f"--app={url}",
-            "--no-first-run", "--no-default-browser-check", "--disable-background-mode",
-            # A recording window must stay fully alive when minimised or covered: Chromium
-            # otherwise throttles timers after ~10 s in the background, lowers the renderer's
-            # priority and treats an occluded window as hidden (heartbeats and the browser
-            # capture channel would stall). Same switches desktop apps such as Discord use.
-            "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
-            "--disable-backgrounding-occluded-windows",
-            "--window-size=1380,900"]
-    with _external_browser_environment() as environment:
-        extra = {"env": environment} if environment is not None else {}
-        return subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, **extra)
+CHROMIUM_BROWSERS = {"chrome.exe", "msedge.exe", "brave.exe", "browser.exe", "opera.exe", "vivaldi.exe",
+                     "chromium.exe", "yandex.exe"}
 
 
-def open_in_browser(url: str) -> None:
-    """Hand the address to the person's default browser through the Windows shell. When that browser
-    is already running (the person started it), Chromium passes the address to the existing browser
-    process and the new one exits at once: the page, and its microphone, belong to a process the
-    person started — security software that restricts programs launched by MONO does not apply."""
+def _command_executable(command: str) -> str | None:
+    """The program of a shell command such as '"C:\\...\\chrome.exe" --single-argument %1'."""
+    command = command.strip()
+    if command.startswith('"'):
+        end = command.find('"', 1)
+        return command[1:end] if end > 1 else None
+    return command.split(" ", 1)[0] or None
+
+
+def default_browser() -> tuple[str, str] | None:
+    """(kind, executable) of the person's default browser for http links: kind is 'chromium'
+    (Chrome, Edge, Brave, Yandex, Opera, Vivaldi), 'firefox' or 'other'. None off Windows or if unknown."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice") as key:
+            prog_id = winreg.QueryValueEx(key, "ProgId")[0]
+        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, prog_id + r"\shell\open\command") as key:
+            executable = _command_executable(winreg.QueryValueEx(key, "")[0])
+    except (OSError, ImportError, IndexError, TypeError):
+        return None
+    if not executable or not Path(executable).is_file():
+        return None
+    name = Path(executable).name.lower()
+    return ("chromium" if name in CHROMIUM_BROWSERS else "firefox" if name == "firefox.exe" else "other", executable)
+
+
+def browser_window_command(url: str, browser: tuple[str, str] | None) -> list[str] | None:
+    """A separate window of the person's own browser, in their usual profile (no --user-data-dir):
+    Chromium browsers get an app window without tabs, Firefox a new window."""
+    if not browser:
+        return None
+    kind, executable = browser
+    if kind == "chromium":
+        return [executable, f"--app={url}/"]
+    if kind == "firefox":
+        return [executable, "-new-window", f"{url}/"]
+    return None
+
+
+def open_in_browser(url: str, browser=None) -> None:
+    """Open MONO in a separate window of the person's default browser, in their own profile. When
+    that browser is already running (the person started it), Chromium and Firefox pass the request to
+    the running browser and the new process exits at once: the window, and its microphone, belong to
+    a process the person started — security software that restricts programs launched by MONO (as
+    Kaspersky does for a program's children) does not apply to it."""
+    command = browser_window_command(url, (browser or default_browser)())
+    if command is None and sys.platform != "win32":
+        chrome = discover_chromium()
+        command = [chrome, f"--app={url}/"] if chrome else None
+    if command is not None:
+        with _external_browser_environment() as environment:
+            extra = {"env": environment} if environment is not None else {}
+            subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, **extra)
+        return
     if os.name == "nt":
         os.startfile(url + "/")  # noqa: S606 — ShellExecute of an http URL opens the default browser
     else:
-        webbrowser.open(url + "/")
+        webbrowser.open_new(url + "/")
 
 
 def browser_pages(url: str, token: str, timeout: float = 2.0) -> int | None:
@@ -572,64 +611,35 @@ def launch_native(folder: Path, url: str) -> None:
 
 def launch_window(folder: Path, url: str, logger: logging.Logger,
                   preferred: str = "auto", pages=None) -> None:
-    chrome = discover_chromium()
+    """MONO opens in a separate window of the person's own browser (their usual profile). The older
+    MONO-owned Chromium window («chromium») is retired: a browser MONO starts itself inherits the
+    restrictions security software places on MONO, and its microphone can be refused. Only a window
+    explicitly pinned to the native WebView keeps it."""
     pin_file = folder / "ui-engine.json"
     try:
         pinned = json.loads(pin_file.read_text(encoding="utf-8")).get("engine")
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, AttributeError):
         pinned = None
     if pinned not in (None, "native", "chromium", "browser"):
         raise LaunchError("Неизвестный оконный движок в сохранённых настройках.")
-    if pinned == "browser":
-        logger.info("GUI: the person's own browser")
-        open_in_browser(url)
-        serve_browser(url, logger, pages or (lambda: None))
-        return
-    # WebKit and Chromium have distinct IndexedDB storage. Never silently switch
-    # an existing user to a new engine: that would show an apparently empty library.
-    if pinned:
-        choices = [pinned]
-    else:
-        native_first = preferred == "native" or (preferred == "auto" and sys.platform == "darwin")
-        choices = ["native", "chromium"] if native_first else ["chromium", "native"]
-    last_error = None
-    for mode in choices:
-        if mode == "native":
-            try:
-                import webview  # noqa: F401
-            except ImportError:
-                continue
-            try:
-                logger.info("GUI: native pywebview")
-                if not pinned:
-                    pin_file.write_text(json.dumps({"engine":mode}), encoding="utf-8")
-                launch_native(folder, url)
-                return
-            except Exception as exc:
-                logger.error("Native GUI failure: %s", type(exc).__name__)
-                last_error = exc
-                if not pinned:
-                    pin_file.unlink(missing_ok=True)
-        elif chrome:
-            try:
-                logger.info("GUI: Chromium app window")
-                proc = launch_chromium(chrome, folder, url)
-                time.sleep(.6)
-                if proc.poll() is not None:
-                    raise LaunchError("Окно браузера завершилось сразу после запуска.")
-                if not pinned:
-                    pin_file.write_text(json.dumps({"engine":mode}), encoding="utf-8")
-                proc.wait()
-                return
-            except _BrowserEnvironmentRestoreError:
-                raise
-            except (OSError, LaunchError) as exc:
-                logger.error("Chromium app window failed: %s", type(exc).__name__)
-                last_error = exc
-    raise LaunchError("Не удалось открыть прежнее окно MONO. "
-                      "Профиль приложения сохранён, библиотека не удалена.\n"
-                      f"Проверьте доступность {pinned or 'Chromium/WebView'}.\n"
-                      f"Детали: {last_error or 'оконный движок не найден'}")
+    if pinned == "native" or (pinned is None and preferred == "native"):
+        try:
+            import webview  # noqa: F401
+            logger.info("GUI: native pywebview")
+            launch_native(folder, url)
+            return
+        except ImportError:
+            logger.warning("Native window unavailable; using the browser")
+        except Exception as exc:
+            logger.error("Native GUI failure: %s", type(exc).__name__)
+    if pinned in (None, "chromium"):
+        try:
+            pin_file.write_text(json.dumps({"engine": "browser"}), encoding="utf-8")
+        except OSError:
+            pass
+    logger.info("GUI: a window of the person's own browser")
+    open_in_browser(url)
+    serve_browser(url, logger, pages or (lambda: None))
 
 
 def current_engine(folder: Path) -> str | None:
@@ -732,14 +742,9 @@ def handle_second_instance(folder: Path, logger: logging.Logger) -> int:
     if not healthy(instance_id=instance_id):
         raise LaunchError("Другой экземпляр MONO уже запускается или завершает работу. "
                           "Подождите несколько секунд и повторите двойной щелчок.")
-    if current_engine(folder) == "browser":
+    if current_engine(folder) != "native":
         open_in_browser(URL)
-        logger.info("Second invocation: opened MONO in the person's browser")
-        return 0
-    chrome = discover_chromium()
-    if current_engine(folder) == "chromium" and chrome:
-        launch_chromium(chrome, folder, URL)
-        logger.info("Second invocation: reopened existing Chromium profile")
+        logger.info("Second invocation: opened another MONO window in the person's browser")
         return 0
     # Never try to start another backend on the same storage.
     raise LaunchError("MONO уже запущен. Переключитесь на открытое окно приложения.")

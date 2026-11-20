@@ -121,13 +121,19 @@ export class BrowserMicrophoneClient{
    // Windows sleep/wake or an audio-device change can suspend or interrupt the context
    // outside the page's control; while this take is running, bring it back immediately.
    context.addEventListener?.('statechange',()=>{if(this.runtime===runtime&&!runtime.cleaned&&!runtime.paused&&['suspended','interrupted'].includes(context.state))void context.resume().catch(()=>{})});
-   runtime.heartbeat=setInterval(()=>{
-    if(runtime.pinging||runtime.cleaned)return;
-    runtime.pinging=true;void this.call('heartbeat',{sessionId:runtime.sessionId}).then(state=>{runtime.heartbeatAt=performance.now();if(!active(state))return this.release(runtime);if(state.state==='stopping'&&!runtime.stopPromise)void this.stop().catch(()=>{})}).catch(error=>{
+   // The heartbeat goes on two independent clocks: a timer, and the audio itself (worklet messages
+   // arrive from the audio thread). A hidden tab of the person's browser may have its timers slowed
+   // to once a minute; the audio keeps flowing, so the archive keeps hearing from this take.
+   runtime.ping=()=>{
+    if(runtime.pinging||runtime.cleaned||performance.now()-(runtime.pingedAt||0)<900)return;
+    runtime.pinging=true;runtime.pingedAt=performance.now();void this.call('heartbeat',{sessionId:runtime.sessionId}).then(state=>{runtime.heartbeatAt=performance.now();if(!active(state))return this.release(runtime);if(state.state==='stopping'&&!runtime.stopPromise)void this.stop().catch(()=>{})}).catch(error=>{
      // A rejected session is final; a slow or briefly unavailable archive is not.
      if(error?.status>=400&&error.status<500||performance.now()-runtime.heartbeatAt>HEARTBEAT_GRACE_MS)return this.fail(runtime,error);
     }).finally(()=>runtime.pinging=false);
-   },1000);runtime.heartbeat.unref?.();
+   };
+   runtime.heartbeat=setInterval(runtime.ping,1000);runtime.heartbeat.unref?.();
+   // A page holding a Web Lock is not frozen by the browser while it sits in the background.
+   if(globalThis.navigator?.locks?.request&&!test)void globalThis.navigator.locks.request('mono-recording',()=>new Promise(resolve=>{runtime.releaseLock=resolve})).catch(()=>{});
    if(test){runtime.testTimer=setTimeout(()=>{void this.stop().catch(()=>{})},5000);runtime.testTimer.unref?.()}
    return value;
   }catch(error){
@@ -136,7 +142,7 @@ export class BrowserMicrophoneClient{
    const normalized=microphoneError(error,stage);await this.diagnose('start',stage,error,normalized);throw normalized;
   }finally{if(this.opening===opening)this.opening=null}
  }
- message(runtime,data){
+ message(runtime,data){runtime.ping?.();
   if(runtime.failed||runtime.cleaned||!data)return;
   if(data.type==='level'){
    const v=data.value;if(!v||!['peak','rms'].every(key=>Number.isFinite(v[key])&&v[key]>=0&&v[key]<=1)||!Number.isInteger(v.clippedFrames)||v.clippedFrames<0){void this.fail(runtime,new LibraryError('INVALID_CAPTURE_PROTOCOL','Получен неверный уровень микрофона.'));return}
@@ -177,7 +183,7 @@ export class BrowserMicrophoneClient{
  }
  async release(runtime){
   if(runtime.releasePromise)return runtime.releasePromise;
-  runtime.cleaned=true;clearInterval(runtime.heartbeat);clearTimeout(runtime.testTimer);
+  runtime.cleaned=true;clearInterval(runtime.heartbeat);runtime.releaseLock?.();clearTimeout(runtime.testTimer);
   runtime.releasePromise=(async()=>{for(const request of runtime.requests.values()){clearTimeout(request.timer);request.reject(new LibraryError('BROWSER_AUDIO_ERROR','Микрофон остановлен.'))}runtime.requests.clear();runtime.stream.getTracks().forEach(track=>track.stop());runtime.source.disconnect();runtime.node.disconnect();runtime.gain.disconnect();await runtime.context.close()})();
   if(this.runtime===runtime)this.runtime=null;return runtime.releasePromise;
  }

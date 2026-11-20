@@ -71,17 +71,6 @@ class LauncherTests(unittest.TestCase):
                 self.assertNotIn("NODE_PATH",env)
                 self.assertTrue(env["MONO_DATA_DIR"].startswith(tmp))
 
-    def test_chrome_browser_profile_is_persistent(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            folder=Path(tmp)
-            with patch("subprocess.Popen") as proc:
-                mono.launch_chromium("/fake/chromium",folder,mono.URL)
-                args=proc.call_args[0][0]
-                self.assertIn("--app="+mono.URL,args)
-                self.assertIn("--user-data-dir="+str(folder/"browser-profile"),args)
-                self.assertTrue((folder/"browser-profile").is_dir())
-
-
     @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')
 
 
@@ -113,13 +102,13 @@ class LauncherTests(unittest.TestCase):
             folder=Path(tmp)
             (folder/"ui-engine.json").write_text('{"engine":"native"}')
             self.assertEqual(mono.current_engine(folder),"native")
-            # Chrome may exist, but a missing native engine must NOT switch profile.
-            with patch("test_launcher.mono.discover_chromium",return_value="/fake/chromium"):
+            # A missing native engine opens the person's browser for this launch, but the choice is kept.
+            with patch.object(mono,"open_in_browser") as opened,patch.object(mono,"serve_browser"):
                 with patch.dict(sys.modules,{"webview": None}):
-                    with self.assertRaises(mono.LaunchError):
-                        logger=mono.logger_for(folder)
-                        try:mono.launch_window(folder,mono.URL,logger)
-                        finally:mono.close_logger(logger)
+                    logger=mono.logger_for(folder)
+                    try:mono.launch_window(folder,mono.URL,logger)
+                    finally:mono.close_logger(logger)
+            opened.assert_called_once()
             self.assertEqual(mono.current_engine(folder),"native")
 
     @unittest.skipUnless(sys.platform=='win32' and os.environ.get('MONO_RELEASE_TOOLCHAIN')=='1','Requires the pinned Windows x64 release toolchain (set MONO_RELEASE_TOOLCHAIN=1)')

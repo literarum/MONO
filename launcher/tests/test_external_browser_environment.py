@@ -49,22 +49,21 @@ class ExternalBrowserEnvironmentTests(unittest.TestCase):
                 self.assertEqual(kwargs['env']['PATH'],';'.join([bundle+'-neighbor',r'C:\Windows\System32']))
                 self.assertEqual(kwargs['env']['MONO_TEST_SENTINEL'],'preserved')
                 self.assertEqual(os.environ['PATH'],original_path,'Parent environment must remain unchanged')
-                self.assertIn('--user-data-dir='+str(Path(tmp)/'state/browser-profile'),arguments)
-                self.assertIn('--app='+mono.URL,arguments)
+                self.assertFalse(any(a.startswith('--user-data-dir') for a in arguments),'the person\'s own browser profile')
+                self.assertIn('--app='+mono.URL+'/',arguments)
                 self.assertEqual(arguments[0],r'C:\InstalledChrome\chrome.exe')
                 return expected_process
             # The factory is an OS boundary, not a replacement for production
-            # launch_chromium or its scoped environment logic. It is unused on RED.
+            # open_in_browser or its scoped environment logic. It is unused on RED.
             with patch.object(mono,'bundled',return_value=True),patch.object(mono.sys,'platform','win32'),patch.object(mono.sys,'_MEIPASS',bundle,create=True),patch.dict(os.environ,environment,clear=True),patch.object(mono,'_windows_dll_directory_api',return_value=api,create=True),patch.object(mono.subprocess,'Popen',side_effect=spawn):
-                result=mono.launch_chromium(r'C:\InstalledChrome\chrome.exe',Path(tmp)/'state',mono.URL)
-            self.assertIs(result,expected_process)
+                mono.open_in_browser(mono.URL,browser=lambda:('chromium',r'C:\InstalledChrome\chrome.exe'))
             self.assertEqual(api.current,bundle,'The frozen loader directory must be restored')
             self.assertEqual(api.calls,[None,bundle])
 
     def test_developer_launch_keeps_existing_subprocess_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(mono,'bundled',return_value=False),patch.object(mono.subprocess,'Popen') as spawn:
-                mono.launch_chromium('/installed/chrome',Path(tmp),mono.URL)
+                mono.open_in_browser(mono.URL,browser=lambda:('chromium','/installed/chrome'))
             self.assertNotIn('env',spawn.call_args.kwargs)
 
     def test_path_case_quotes_unicode_neighbors_and_other_drives(self):
@@ -99,7 +98,7 @@ class ExternalBrowserEnvironmentTests(unittest.TestCase):
         api.get=Mock(side_effect=mono.LaunchError('query failure'))
         with tempfile.TemporaryDirectory() as tmp,self.frozen(api,r'C:\Bundle'),patch.object(mono.subprocess,'Popen') as spawn:
             with self.assertRaisesRegex(mono.LaunchError,'query failure'):
-                mono.launch_chromium('/installed/chrome',Path(tmp),mono.URL)
+                mono.open_in_browser(mono.URL,browser=lambda:('chromium','/installed/chrome'))
             spawn.assert_not_called()
         self.assertEqual(api.calls,[])
 
@@ -112,7 +111,7 @@ class ExternalBrowserEnvironmentTests(unittest.TestCase):
         api.set=set_directory
         with tempfile.TemporaryDirectory() as tmp,self.frozen(api,r'C:\Bundle'),patch.object(mono.subprocess,'Popen') as spawn:
             with self.assertRaisesRegex(mono.LaunchError,'reset failure'):
-                mono.launch_chromium('/installed/chrome',Path(tmp),mono.URL)
+                mono.open_in_browser(mono.URL,browser=lambda:('chromium','/installed/chrome'))
             spawn.assert_not_called()
         self.assertEqual(api.calls,[None,r'C:\Bundle'])
 
@@ -120,7 +119,7 @@ class ExternalBrowserEnvironmentTests(unittest.TestCase):
         api=LoaderState(r'C:\Bundle')
         with tempfile.TemporaryDirectory() as tmp,self.frozen(api,r'C:\Bundle'),patch.dict(os.environ,{'PATH':r'C:\Bundle;C:\Windows'},clear=True),patch.object(mono.subprocess,'Popen',side_effect=OSError('spawn failure')):
             with self.assertRaisesRegex(OSError,'spawn failure'):
-                mono.launch_chromium('/installed/chrome',Path(tmp),mono.URL)
+                mono.open_in_browser(mono.URL,browser=lambda:('chromium','/installed/chrome'))
             self.assertEqual(os.environ['PATH'],r'C:\Bundle;C:\Windows')
         self.assertEqual(api.current,r'C:\Bundle')
         self.assertEqual(api.calls,[None,r'C:\Bundle'])
@@ -131,9 +130,10 @@ class ExternalBrowserEnvironmentTests(unittest.TestCase):
             if value is not None:raise mono.LaunchError('restore failure')
             api.current=None
         api.set=set_directory
-        with tempfile.TemporaryDirectory() as tmp,self.frozen(api,r'C:\Bundle'),patch.object(mono,'discover_chromium',return_value='/installed/chrome'),patch.object(mono.subprocess,'Popen'),patch.object(mono,'launch_native') as native,patch.dict(sys.modules,{'webview':Mock()}):
+        with tempfile.TemporaryDirectory() as tmp,self.frozen(api,r'C:\Bundle'),patch.object(mono,'default_browser',return_value=('chromium','/installed/chrome')),patch.object(mono.subprocess,'Popen'),patch.object(mono,'launch_native') as native,patch.object(mono,'serve_browser') as served,patch.dict(sys.modules,{'webview':Mock()}):
             with self.assertRaises(mono.LaunchError):
                 mono.launch_window(Path(tmp),mono.URL,Mock())
+            served.assert_not_called()
             native.assert_not_called()
 
     def test_overlapping_spawns_are_serialized_and_each_restores(self):

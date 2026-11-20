@@ -11,9 +11,10 @@ const FIXTURE=fileURLToPath(new URL('../fixtures/audio-helper.py',import.meta.ur
 // The helper is started as an executable; a shell wrapper is enough off Windows.
 const skip=!playwright?'playwright is not installed':process.platform==='win32'?'fixture helper wrapper needs a POSIX shell':false;
 function helper(behavior){const dir=mkdtempSync(path.join(tmpdir(),'mono-helper-')),file=path.join(dir,'helper.sh');writeFileSync(file,`#!/bin/sh\nexec python3 '${FIXTURE}' "$@" --behavior ${behavior}\n`);chmodSync(file,0o755);return file}
-async function open(t,server,mode='both'){
+async function open(t,server,mode='both',{migrated=true}={}){
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
  const context=await browser.newContext();await context.grantPermissions(['microphone'],{origin:server.url});
+ if(migrated)await context.addInitScript(()=>{try{localStorage.setItem('mono-source-browser-1','1')}catch{}});
  const page=await context.newPage();page.errors=[];page.on('pageerror',error=>page.errors.push(error.message));
  await page.goto(server.url+'/');
  await page.evaluate(async mode=>{const {csrf}=await (await fetch('/api/local/session')).json();const headers={'Content-Type':'application/json','X-Mono-CSRF':csrf};
@@ -82,7 +83,7 @@ test('autopilot: when the system module cannot open the microphone, the take con
 test('autopilot: the browser channel is still the fallback when the module never answered the first capability query (slow runner, first launch)',{skip},async t=>{
  const server=await localServer(t,{MONO_AUDIO_HELPER:helper('open-failure')});
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
- const context=await browser.newContext();await context.grantPermissions(['microphone'],{origin:server.url});
+ const context=await browser.newContext();await context.addInitScript(()=>{try{localStorage.setItem('mono-source-browser-1','1')}catch{}});await context.grantPermissions(['microphone'],{origin:server.url});
  let slow=true;await context.route('**/api/local/capture/capabilities',async route=>{if(slow)await new Promise(r=>setTimeout(r,11000));await route.continue().catch(()=>{})});
  const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
  await page.goto(server.url+'/');
@@ -136,10 +137,10 @@ test('safety track: a clean take keeps its backup marked clean (removed after a 
  assert.deepEqual(page.errors,[]);
 });
 
-test('a browser channel that cannot open the microphone (NotReadableError) hands over to the system module and stays there',{skip},async t=>{
+test('a browser channel that cannot open the microphone (NotReadableError) hands over to the system module for this take; the window stays the chosen source',{skip},async t=>{
  const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
- const context=await browser.newContext();await context.grantPermissions(['microphone'],{origin:server.url});
+ const context=await browser.newContext();await context.addInitScript(()=>{try{localStorage.setItem('mono-source-browser-1','1')}catch{}});await context.grantPermissions(['microphone'],{origin:server.url});
  // As on the reported laptop: Windows refuses the microphone to the browser (held by another app).
  await context.addInitScript(()=>{const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async c=>{if(c?.audio)throw new DOMException('Could not start audio source','NotReadableError');return original(c)};try{localStorage.setItem('mono-source-migrated-1',window.__migrate?'0':'1')}catch{}});
  const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
@@ -150,21 +151,19 @@ test('a browser channel that cannot open the microphone (NotReadableError) hands
  await page.reload();await page.waitForFunction(()=>document.querySelector('#nav-count'));
  await page.click('.nav-link[data-view=record]');await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);
  await page.click('#start-record');
- await page.waitForSelector('.toast:has-text("записывает через системный модуль")',{timeout:30000});
+ await page.waitForSelector('.toast:has-text("эта запись идёт через модуль Windows")',{timeout:30000});
  await page.waitForFunction(()=>/Подтверждено/.test(document.querySelector('#record-saved').textContent),null,{timeout:20000});
  await page.click('#stop-record');
  await until(page,async()=>{const {items}=await (await fetch('/api/local/records?limit=5&q=&trash=false')).json();return items.some(r=>r.status==='saved'&&r.tracks?.some(x=>x.id==='mic'))},null,{timeout:20000});
- const mode=await until(page,async()=>(await (await fetch('/api/local/preferences')).json()).capture.mode==='mic'&&'mic',null,{timeout:10000});
- assert.equal(mode,'mic','the working path is remembered');
- const report=await page.evaluate(async()=>(await fetch('/api/local/diagnostics')).json());
- assert.equal(report.capture.source,'mic');
+ await page.waitForTimeout(1500);
+ assert.equal((await page.evaluate(async()=>(await fetch('/api/local/preferences')).json())).capture.mode,'browser','the window stays the source: the module only rescued this take');
  assert.deepEqual(page.errors,[]);
 });
 
 test('a browser start that fails while the system module is still launching (12 s) waits for the module instead of giving up',{skip},async t=>{
  const server=await localServer(t,{MONO_AUDIO_HELPER:helper('slow-boot')});
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
- const context=await browser.newContext();await context.grantPermissions(['microphone'],{origin:server.url});
+ const context=await browser.newContext();await context.addInitScript(()=>{try{localStorage.setItem('mono-source-browser-1','1')}catch{}});await context.grantPermissions(['microphone'],{origin:server.url});
  await context.addInitScript(()=>{const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async c=>{if(c?.audio)throw new DOMException('Could not start audio source','NotReadableError');return original(c)};try{localStorage.setItem('mono-source-migrated-1','1')}catch{}});
  const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
  await page.goto(server.url+'/');
@@ -175,17 +174,17 @@ test('a browser start that fails while the system module is still launching (12 
  await page.click('.nav-link[data-view=record]');await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);
  assert.notEqual(await page.evaluate(async()=>(await (await fetch('/api/local/capture/capabilities')).json()).ready),true,'the module is still launching when Start is pressed');
  await page.click('#start-record');
- await page.waitForSelector('.toast:has-text("записывает через системный модуль")',{timeout:40000});
+ await page.waitForSelector('.toast:has-text("эта запись идёт через модуль Windows")',{timeout:40000});
  await page.waitForFunction(()=>/Подтверждено/.test(document.querySelector('#record-saved').textContent),null,{timeout:20000});
  await page.click('#stop-record');
  await until(page,async()=>{const {items}=await (await fetch('/api/local/records?limit=5&q=&trash=false')).json();return items.some(r=>r.status==='saved'&&r.tracks?.some(x=>x.id==='mic'))},null,{timeout:20000});
  assert.deepEqual(page.errors,[]);
 });
-test('browser mode: from the Kaspersky verdict one button makes MONO open in the person\'s own browser; the launcher sees the open page',{skip},async t=>{
+test('browser window: the launcher sees the open page (by token only); the Kaspersky verdict offers the address for the person\'s own browser',{skip},async t=>{
  const home=mkdtempSync(path.join(tmpdir(),'mono-launcher-home-'));writeFileSync(path.join(home,'ui-engine.json'),JSON.stringify({engine:'chromium'}));
  const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse'),MONO_LAUNCHER_HOME:home,MONO_LAUNCHER_TOKEN:'test-token'});
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
- const context=await browser.newContext();await context.grantPermissions(['microphone','clipboard-read','clipboard-write'],{origin:server.url});
+ const context=await browser.newContext();await context.addInitScript(()=>{try{localStorage.setItem('mono-source-browser-1','1')}catch{}});await context.grantPermissions(['microphone','clipboard-read','clipboard-write'],{origin:server.url});
  await context.addInitScript(()=>{const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async c=>{if(c?.audio)throw new DOMException('Could not start audio source','NotReadableError');return original(c)}});
  const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
  await page.route('**/api/local/diagnostics',async route=>{const response=await route.fetch(),report=await response.json();
@@ -201,20 +200,16 @@ test('browser mode: from the Kaspersky verdict one button makes MONO open in the
  assert.ok(pages>=1,'the open page is counted');
  assert.equal((await fetch(server.url+'/api/launcher/clients')).status,403,'no token, no answer');
  await page.evaluate(()=>{location.hash='#settings'});
- await page.waitForSelector('#window-card:not([hidden])',{timeout:30000});assert.match(await page.textContent('#window-card'),/собственном окне/);
  await page.click('.preflight-deep');await page.waitForSelector('#deep-browser',{timeout:60000});
- assert.equal((await page.textContent('#deep-browser')).trim(),'Открывать MONO в моём браузере');
+ assert.equal((await page.textContent('#deep-browser')).trim(),'Скопировать адрес MONO');
  await page.click('#deep-browser');
- await page.waitForFunction(()=>/закройте это окно MONO/.test(document.querySelector('#deep-browser-hint')?.textContent||''),null,{timeout:10000});
- assert.deepEqual(JSON.parse(readFileSync(path.join(home,'ui-engine.json'),'utf8')),{engine:'browser'});
- assert.equal(await until(page,async()=>(await (await fetch('/api/local/preferences')).json()).capture.mode==='browser'&&'browser',null,{timeout:10000}),'browser','in the browser the window records the microphone');
- assert.match(await page.textContent('#window-card'),/вкладкой в вашем браузере/);
+ await page.waitForFunction(()=>/Откройте Chrome или Edge сами/.test(document.querySelector('#deep-browser-hint')?.textContent||''),null,{timeout:10000});
  assert.deepEqual(page.errors,[]);
 });
 test('deep diagnostics: when Kaspersky refuses audio to MONO alone, it is named and the own-browser path gives the address',{skip},async t=>{
  const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
- const context=await browser.newContext();await context.grantPermissions(['microphone','clipboard-read','clipboard-write'],{origin:server.url});
+ const context=await browser.newContext();await context.addInitScript(()=>{try{localStorage.setItem('mono-source-browser-1','1')}catch{}});await context.grantPermissions(['microphone','clipboard-read','clipboard-write'],{origin:server.url});
  await context.addInitScript(()=>{const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async c=>{if(c?.audio)throw new DOMException('Could not start audio source','NotReadableError');return original(c)}});
  const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
  // The Windows-only facts (Security Center, who records the microphone) are injected into the real server answer.
@@ -241,7 +236,7 @@ test('deep diagnostics: when Kaspersky refuses audio to MONO alone, it is named 
 test('deep diagnostics tells a browser-only fault from a broken microphone: the system module opens it while the window gets NotReadableError',{skip},async t=>{
  const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
- const context=await browser.newContext();await context.grantPermissions(['microphone','clipboard-read','clipboard-write'],{origin:server.url});
+ const context=await browser.newContext();await context.addInitScript(()=>{try{localStorage.setItem('mono-source-browser-1','1')}catch{}});await context.grantPermissions(['microphone','clipboard-read','clipboard-write'],{origin:server.url});
  await context.addInitScript(()=>{const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async c=>{if(c?.audio)throw new DOMException('Could not start audio source','NotReadableError');return original(c)}});
  const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
  await page.goto(server.url+'/');
@@ -259,11 +254,14 @@ test('deep diagnostics tells a browser-only fault from a broken microphone: the 
  assert.deepEqual(page.errors,[]);
 });
 
-test('a source pinned to the browser channel moves to the system module once, with a notice',{skip},async t=>{
- const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});const page=await open(t,server,'browser');
- await page.waitForSelector('.toast:has-text("Источник записи — системный модуль")',{timeout:30000});
- assert.equal(await until(page,async()=>(await (await fetch('/api/local/preferences')).json()).capture.mode,null,{timeout:10000}),'mic');
+test('a source left on the module microphone moves to the browser window once, quietly',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});const page=await open(t,server,'mic',{migrated:false});
+ // As after an update: the stored source is the module microphone and this version has not run yet.
+ await page.evaluate(()=>localStorage.removeItem('mono-source-browser-1'));await page.reload();await page.waitForFunction(()=>document.querySelector('#nav-count'));
+ await page.click('.nav-link[data-view=record]');
+ assert.equal(await until(page,async()=>{const mode=(await (await fetch('/api/local/preferences')).json()).capture.mode;return mode==='browser'&&mode},null,{timeout:15000}),'browser');
+ await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();await fetch('/api/local/preferences',{method:'PATCH',headers:{'Content-Type':'application/json','X-Mono-CSRF':csrf},body:JSON.stringify({capture:{mode:'mic'}})})});
  await page.reload();await page.waitForTimeout(4000);
- assert.equal(await page.locator('.toast:has-text("Источник записи — системный модуль")').count(),0,'only once');
+ assert.equal((await page.evaluate(async()=>(await fetch('/api/local/preferences')).json())).capture.mode,'mic','only once: a later choice of the module is respected');
  assert.deepEqual(page.errors,[]);
 });

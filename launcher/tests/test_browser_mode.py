@@ -47,17 +47,17 @@ class BrowserModeTests(unittest.TestCase):
     def test_pinned_browser_engine_opens_the_default_browser_not_a_chromium_window(self):
         with tempfile.TemporaryDirectory() as folder:
             Path(folder,"ui-engine.json").write_text(json.dumps({"engine":"browser"}),encoding="utf-8")
-            with patch.object(mono,"open_in_browser") as opened,patch.object(mono,"launch_chromium") as chromium,patch.object(mono,"serve_browser") as served:
+            with patch.object(mono,"open_in_browser") as opened,patch.object(mono,"serve_browser") as served:
                 mono.launch_window(Path(folder),"http://127.0.0.1:4173",LOG,pages=lambda:1)
-            opened.assert_called_once_with("http://127.0.0.1:4173");chromium.assert_not_called();served.assert_called_once()
+            opened.assert_called_once_with("http://127.0.0.1:4173");served.assert_called_once()
 
     def test_second_click_in_browser_mode_opens_a_tab(self):
         with tempfile.TemporaryDirectory() as folder:
             Path(folder,"ui-engine.json").write_text(json.dumps({"engine":"browser"}),encoding="utf-8")
             Path(folder,"session.json").write_text(json.dumps({"instanceId":"x","url":"http://127.0.0.1:4173"}),encoding="utf-8")
-            with patch.object(mono,"healthy",return_value=True),patch.object(mono,"open_in_browser") as opened,patch.object(mono,"launch_chromium") as chromium:
+            with patch.object(mono,"healthy",return_value=True),patch.object(mono,"open_in_browser") as opened:
                 self.assertEqual(mono.handle_second_instance(Path(folder),LOG),0)
-            opened.assert_called_once();chromium.assert_not_called()
+            opened.assert_called_once()
 
     def test_pages_answer_is_read_with_the_launcher_token(self):
         seen={}
@@ -71,6 +71,22 @@ class BrowserModeTests(unittest.TestCase):
         self.assertEqual(seen["token"],"secret")
         with patch.object(mono.urllib.request,"urlopen",side_effect=OSError):
             self.assertIsNone(mono.browser_pages("http://127.0.0.1:4173","secret"))
+
+    def test_a_window_of_the_default_browser_in_its_own_profile(self):
+        self.assertEqual(mono._command_executable('"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --single-argument %1'),"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe")
+        self.assertEqual(mono.browser_window_command("http://127.0.0.1:4173",("chromium","C:/chrome.exe")),["C:/chrome.exe","--app=http://127.0.0.1:4173/"])
+        self.assertEqual(mono.browser_window_command("http://127.0.0.1:4173",("firefox","C:/firefox.exe")),["C:/firefox.exe","-new-window","http://127.0.0.1:4173/"])
+        self.assertIsNone(mono.browser_window_command("http://127.0.0.1:4173",("other","C:/x.exe")))
+        for command in [mono.browser_window_command("http://x",("chromium","c"))]:
+            self.assertFalse(any(a.startswith("--user-data-dir") for a in command),"the person's own profile, not a MONO profile")
+
+    def test_the_retired_mono_chromium_window_moves_to_the_browser(self):
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder,"ui-engine.json").write_text(json.dumps({"engine":"chromium"}),encoding="utf-8")
+            with patch.object(mono,"open_in_browser") as opened,patch.object(mono,"serve_browser"):
+                mono.launch_window(Path(folder),"http://127.0.0.1:4173",LOG)
+            opened.assert_called_once()
+            self.assertEqual(json.loads(Path(folder,"ui-engine.json").read_text())["engine"],"browser")
 
 
 if __name__=="__main__":unittest.main()

@@ -17,8 +17,11 @@ class PortFallbackTests(unittest.TestCase):
     def test_free_preferred_port_is_kept(self):
         probe=socket.socket();probe.bind((launcher.HOST,0));port=probe.getsockname()[1];probe.close()
         launcher.PORT=port;launcher.choose_port();self.assertEqual(launcher.PORT,port)
-    def test_recording_window_is_never_throttled_in_the_background(self):
-        source=Path(launcher.__file__).read_text(encoding='utf-8')
-        for flag in ['--disable-background-timer-throttling','--disable-renderer-backgrounding','--disable-backgrounding-occluded-windows']:self.assertIn(flag,source)
+    def test_a_hidden_browser_window_keeps_the_take_alive(self):
+        # MONO now lives in the person's own browser, where launch flags cannot switch throttling off:
+        # the take's heartbeat rides on the audio stream and a Web Lock keeps the page from freezing.
+        source=(Path(launcher.__file__).resolve().parents[1]/'public'/'browser-microphone.js').read_text(encoding='utf-8')
+        self.assertIn("message(runtime,data){runtime.ping?.();",source)
+        self.assertIn("locks.request('mono-recording'",source)
 
 if __name__=='__main__':unittest.main()

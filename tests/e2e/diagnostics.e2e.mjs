@@ -9,7 +9,7 @@ test('deep diagnostics: live microphone, server checks, private report, journal 
  const closed=net.createServer().listen(0,'127.0.0.1');await once(closed,'listening');const port=closed.address().port;await new Promise(r=>closed.close(r));
  const server=await localServer(t,{GROQ_API_KEY:'gsk_secret_e2e_key',MONO_GROQ_CHAT_BASE:`http://127.0.0.1:${port}/openai/v1`});
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
- const context=await browser.newContext();await context.grantPermissions(['microphone','clipboard-read','clipboard-write'],{origin:server.url});
+ const context=await browser.newContext();await context.addInitScript(()=>{try{localStorage.setItem('mono-source-browser-1','1')}catch{}});await context.grantPermissions(['microphone','clipboard-read','clipboard-write'],{origin:server.url});
  const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(server.url+'/');
  await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();const headers={'Content-Type':'application/json','X-Mono-CSRF':csrf};

@@ -61,12 +61,11 @@ export async function preflight({worker,runtime,keyManager,now=()=>performance.n
   if(status.libraryBusy)checks.push(check('transfer','warning','Идёт копирование архива','Запись станет доступна после завершения копирования.','Дождитесь окончания или остановите копирование в настройках.'));
   else if(status.transfer)checks.push(check('transfer','advisory','Есть незавершённое копирование архива','Записи это не мешает.','Продолжите или отмените копирование в настройках.'));
  }
+ // The microphone records through the browser window; the system module only adds the computer's sound.
+ // Its absence is not a fault the person needs to read about.
  try{const capture=await timed(worker.call('capture.capabilities'),9000);
-  if(capture.browserActive)checks.push(check('capture','ok','Модуль записи','Идёт запись через браузер.'));
-  else if(capture.ready)checks.push(check('capture','ok','Системный модуль записи',`Доступно: ${(capture.modes||[]).map(mode=>({mic:'микрофон',system:'звук компьютера',both:'микрофон и компьютер'})[mode]||mode).join(', ')}.`));
-  else if(capture.reason==='NOT_SUPPORTED')checks.push(check('capture','caution','Звуковые устройства не найдены','Системный модуль записи работает, но Windows не сообщает ни микрофона, ни устройства вывода.','Подключите микрофон или наушники и нажмите «Проверить снова».'));
-  else checks.push(check('capture','advisory','Системный модуль записи не установлен','Микрофон записывается через окно браузера. Звук компьютера недоступен.'));
- }catch{checks.push(check('capture','advisory','Системный модуль записи не ответил','Микрофон записывается через окно браузера.'))}
+  if(capture.ready&&(capture.modes||[]).includes('system'))checks.push(check('capture','ok','Звук компьютера','Можно записывать звук компьютера вместе с микрофоном.'));
+ }catch{}
  try{checks.push(...microphoneChecks(await timed(worker.call('capture.diagnose'),7000)))}catch{}
  try{const apps=await timed(users(),5000);if(apps?.length)checks.push(check('mic-users','advisory','Микрофон сейчас может использовать другое приложение',apps.slice(0,3).join(', ')+'.','Если запись не начнётся — закройте его или выключите в нём микрофон.'))}catch{}
  try{const mic=await timed(privacy(),4000);
