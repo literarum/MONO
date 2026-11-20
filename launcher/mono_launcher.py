@@ -305,6 +305,8 @@ def server_environment(*, roots: dict[str, Path], executables: dict[str, str],
         "MONO_CONFIG_DIR": str(roots["data"] / "config"),
         "MONO_CORE_EXECUTABLE": sys.executable,
         "MONO_CORE_PACKAGED": '1' if bundled() else '0',
+        # Where the window engine choice lives (ui-engine.json): the app can switch to «your own browser».
+        "MONO_LAUNCHER_HOME": str(roots["data"]),
         "MONO_CORE_SCRIPT": str(assets_root() / 'launcher' / 'local_core' / 'worker.py'),
     })
     config_key = roots["data"] / "config" / "groq_api_key"
@@ -519,6 +521,46 @@ def launch_chromium(chrome: str, folder: Path, url: str) -> subprocess.Popen:
                                 stderr=subprocess.DEVNULL, **extra)
 
 
+def open_in_browser(url: str) -> None:
+    """Hand the address to the person's default browser through the Windows shell. When that browser
+    is already running (the person started it), Chromium passes the address to the existing browser
+    process and the new one exits at once: the page, and its microphone, belong to a process the
+    person started — security software that restricts programs launched by MONO does not apply."""
+    if os.name == "nt":
+        os.startfile(url + "/")  # noqa: S606 — ShellExecute of an http URL opens the default browser
+    else:
+        webbrowser.open(url + "/")
+
+
+def browser_pages(url: str, token: str, timeout: float = 2.0) -> int | None:
+    """How many MONO pages are open (their live event streams), or None if the server did not answer."""
+    request = urllib.request.Request(url + "/api/launcher/clients", headers={"X-Mono-Launcher-Token": token})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return int(json.loads(response.read(4096)).get("pages", 0))
+    except (OSError, ValueError, TypeError, urllib.error.URLError, http.client.HTTPException):
+        return None
+
+
+def serve_browser(url: str, logger: logging.Logger, pages, *, first_wait: float = 900, idle_wait: float = 300,
+                  poll: float = 3.0, clock=time.monotonic, sleep=time.sleep) -> None:
+    """Browser mode: MONO keeps running while a MONO page is open in the person's browser. It stops
+    when no page has been open for `idle_wait` seconds (a reload or a closed tab must not stop it),
+    or when no page ever connected within `first_wait` seconds."""
+    seen = False
+    last = clock()
+    while True:
+        count = pages()
+        now = clock()
+        if count:
+            seen = True
+            last = now
+        elif now - last > (idle_wait if seen else first_wait):
+            logger.info("Browser mode: no MONO page open for %.0f s; stopping", now - last)
+            return
+        sleep(poll)
+
+
 def launch_native(folder: Path, url: str) -> None:
     import webview  # optional, packaged on supported Windows/macOS builds
     session = folder / "native-profile"
@@ -529,15 +571,20 @@ def launch_native(folder: Path, url: str) -> None:
 
 
 def launch_window(folder: Path, url: str, logger: logging.Logger,
-                  preferred: str = "auto") -> None:
+                  preferred: str = "auto", pages=None) -> None:
     chrome = discover_chromium()
     pin_file = folder / "ui-engine.json"
     try:
         pinned = json.loads(pin_file.read_text(encoding="utf-8")).get("engine")
     except (OSError, ValueError, TypeError):
         pinned = None
-    if pinned not in (None, "native", "chromium"):
+    if pinned not in (None, "native", "chromium", "browser"):
         raise LaunchError("Неизвестный оконный движок в сохранённых настройках.")
+    if pinned == "browser":
+        logger.info("GUI: the person's own browser")
+        open_in_browser(url)
+        serve_browser(url, logger, pages or (lambda: None))
+        return
     # WebKit and Chromium have distinct IndexedDB storage. Never silently switch
     # an existing user to a new engine: that would show an apparently empty library.
     if pinned:
@@ -685,6 +732,10 @@ def handle_second_instance(folder: Path, logger: logging.Logger) -> int:
     if not healthy(instance_id=instance_id):
         raise LaunchError("Другой экземпляр MONO уже запускается или завершает работу. "
                           "Подождите несколько секунд и повторите двойной щелчок.")
+    if current_engine(folder) == "browser":
+        open_in_browser(URL)
+        logger.info("Second invocation: opened MONO in the person's browser")
+        return 0
     chrome = discover_chromium()
     if current_engine(folder) == "chromium" and chrome:
         launch_chromium(chrome, folder, URL)
@@ -781,7 +832,8 @@ def _run_session(*, dev: bool, smoke: bool, preferred_ui: str, smoke_hold: float
             except Exception as error:  # a hotkey is a convenience, never a launch blocker
                 logger.warning("Global hotkey unavailable: %s", error)
             threading.Thread(target=supervise, daemon=True, name="mono-backend-supervisor").start()
-            launch_window(folder, URL, logger, preferred=preferred_ui)
+            launch_window(folder, URL, logger, preferred=preferred_ui,
+                          pages=lambda: browser_pages(URL, hotkey_token))
             return 0
         except LaunchError as exc:
             logger.error("Startup error: %s; backend_tail=%s", exc, recent_lines[-5:])

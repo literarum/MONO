@@ -474,6 +474,12 @@ async function route(req,res){
     if(!token||Buffer.byteLength(given)!==Buffer.byteLength(token)||!timingSafeEqual(Buffer.from(given),Buffer.from(token))){res.writeHead(403).end();return}
     broadcast('hotkey',{action:'toggle-recording'});res.writeHead(204).end();return;
   }
+  // Browser mode: the launcher keeps MONO running while a page is open (each page holds one event stream).
+  if(url.pathname==='/api/launcher/clients'&&req.method==='GET'){
+    const token=process.env.MONO_LAUNCHER_TOKEN||'',given=String(req.headers['x-mono-launcher-token']||'');
+    if(!token||Buffer.byteLength(given)!==Buffer.byteLength(token)||!timingSafeEqual(Buffer.from(given),Buffer.from(token))){res.writeHead(403).end();return}
+    res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify({pages:eventClients.size}));return;
+  }
   if(url.pathname==='/api/local/events'&&req.method==='GET'){
     const denied=authorizeLocalRequest(req);if(denied){fail(res,denied,'Доступ отклонён');return}
     if(eventClients.size>=16){fail(res,429,'Слишком много окон');return}

@@ -4,7 +4,7 @@
 // and recording that continues after the audio device disappears.
 import test from 'node:test';import assert from 'node:assert/strict';
 import {localServer} from '../helpers/local-server.mjs';import {until} from '../helpers/until.mjs';import {createRequire} from 'node:module';
-import {writeFileSync,chmodSync,mkdtempSync} from 'node:fs';import {tmpdir} from 'node:os';import path from 'node:path';import {fileURLToPath} from 'node:url';
+import {writeFileSync,chmodSync,mkdtempSync,readFileSync} from 'node:fs';import {tmpdir} from 'node:os';import path from 'node:path';import {fileURLToPath} from 'node:url';
 let playwright=null;
 try{playwright=await import('playwright')}catch{try{playwright=createRequire(import.meta.url)('playwright')}catch{}}
 const FIXTURE=fileURLToPath(new URL('../fixtures/audio-helper.py',import.meta.url));
@@ -159,6 +159,36 @@ test('a browser start that fails while the system module is still launching (12 
  await page.waitForFunction(()=>/Подтверждено/.test(document.querySelector('#record-saved').textContent),null,{timeout:20000});
  await page.click('#stop-record');
  await until(page,async()=>{const {items}=await (await fetch('/api/local/records?limit=5&q=&trash=false')).json();return items.some(r=>r.status==='saved'&&r.tracks?.some(x=>x.id==='mic'))},null,{timeout:20000});
+ assert.deepEqual(page.errors,[]);
+});
+test('browser mode: from the Kaspersky verdict one button makes MONO open in the person\'s own browser; the launcher sees the open page',{skip},async t=>{
+ const home=mkdtempSync(path.join(tmpdir(),'mono-launcher-home-'));writeFileSync(path.join(home,'ui-engine.json'),JSON.stringify({engine:'chromium'}));
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse'),MONO_LAUNCHER_HOME:home,MONO_LAUNCHER_TOKEN:'test-token'});
+ const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
+ const context=await browser.newContext();await context.grantPermissions(['microphone','clipboard-read','clipboard-write'],{origin:server.url});
+ await context.addInitScript(()=>{const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async c=>{if(c?.audio)throw new DOMException('Could not start audio source','NotReadableError');return original(c)}});
+ const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
+ await page.route('**/api/local/diagnostics',async route=>{const response=await route.fetch(),report=await response.json();
+  report.capture.probe={available:true,opened:false,step:'initialize',hresult:'80070057',attempts:{event:'80070057',autoconvert:'80070057'},othersRecording:['Discord'],security:{products:['Kaspersky Endpoint Security для Windows'],kaspersky:true}};
+  await route.fulfill({response,json:report})});
+ await page.goto(server.url+'/');
+ await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();const headers={'Content-Type':'application/json','X-Mono-CSRF':csrf};
+  await fetch('/api/local/library/configure',{method:'POST',headers,body:JSON.stringify({useDefault:true})});
+  await fetch('/api/local/preferences',{method:'PATCH',headers,body:JSON.stringify({onboarding:{completed:true,keySkipped:true,soundTested:true}})})});
+ await page.reload();await page.waitForFunction(()=>document.querySelector('#nav-count'));
+ // The launcher's lifetime signal: one open page.
+ let pages=0;for(const deadline=Date.now()+15000;Date.now()<deadline&&!pages;await new Promise(r=>setTimeout(r,300)))pages=(await (await fetch(server.url+'/api/launcher/clients',{headers:{'X-Mono-Launcher-Token':'test-token'}})).json()).pages;
+ assert.ok(pages>=1,'the open page is counted');
+ assert.equal((await fetch(server.url+'/api/launcher/clients')).status,403,'no token, no answer');
+ await page.evaluate(()=>{location.hash='#settings'});
+ await page.waitForSelector('#window-card:not([hidden])',{timeout:30000});assert.match(await page.textContent('#window-card'),/собственном окне/);
+ await page.click('.preflight-deep');await page.waitForSelector('#deep-browser',{timeout:60000});
+ assert.equal((await page.textContent('#deep-browser')).trim(),'Открывать MONO в моём браузере');
+ await page.click('#deep-browser');
+ await page.waitForFunction(()=>/закройте это окно MONO/.test(document.querySelector('#deep-browser-hint')?.textContent||''),null,{timeout:10000});
+ assert.deepEqual(JSON.parse(readFileSync(path.join(home,'ui-engine.json'),'utf8')),{engine:'browser'});
+ assert.equal(await until(page,async()=>(await (await fetch('/api/local/preferences')).json()).capture.mode==='browser'&&'browser',null,{timeout:10000}),'browser','in the browser the window records the microphone');
+ assert.match(await page.textContent('#window-card'),/вкладкой в вашем браузере/);
  assert.deepEqual(page.errors,[]);
 });
 test('deep diagnostics: when Kaspersky refuses audio to MONO alone, it is named and the own-browser path gives the address',{skip},async t=>{
