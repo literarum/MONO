@@ -11,8 +11,8 @@ test('the audio stream is copied when the browser plays it as is, re-encoded oth
 test('a real video becomes its audio track; a silent video is refused clearly',{skip},async t=>{
  const dir=await mkdtemp(path.join(tmpdir(),'mono-video-'));t.after(()=>rm(dir,{recursive:true,force:true}));
  const video=path.join(dir,'talk.mp4'),silent=path.join(dir,'silent.mp4'),out=path.join(dir,'out');
- execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','testsrc=size=160x120:rate=10','-f','lavfi','-i','sine=frequency=440:sample_rate=44100','-t','3','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-shortest',video]);
- execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','testsrc=size=160x120:rate=10','-t','1','-c:v','libx264','-pix_fmt','yuv420p',silent]);
+ execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','testsrc=size=160x120:rate=10','-f','lavfi','-i','sine=frequency=440:sample_rate=44100','-t','3','-c:v','mpeg4','-c:a','aac','-shortest',video]);
+ execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','testsrc=size=160x120:rate=10','-t','1','-c:v','mpeg4',silent]);
  const result=await extractAudio({ffmpeg:'ffmpeg',ffprobe:'ffprobe',input:video,output:out});
  assert.equal(result.mime,'audio/mp4');assert.equal(result.copied,true);assert.ok(result.duration>2.5&&result.duration<3.6,String(result.duration));
  const probed=await probeAudio('ffprobe',out);assert.equal(probed.codec,'aac');

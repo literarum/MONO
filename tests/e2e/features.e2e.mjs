@@ -120,7 +120,7 @@ test('level check: a toggle with a countdown that never comes back by itself aft
 test('a video file of any length is imported as its audio track and can be played',{skip},async t=>{
  const dir=mkdtempSync(path.join(tmpdir(),'mono-video-')),video=path.join(dir,'meeting.mp4');
  const {execFileSync}=await import('node:child_process');
- try{execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','testsrc=size=160x120:rate=10','-f','lavfi','-i','sine=frequency=330:sample_rate=48000','-t','4','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-shortest',video])}catch{t.skip('ffmpeg cannot make a test video');return}
+ try{execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','testsrc=size=160x120:rate=10','-f','lavfi','-i','sine=frequency=330:sample_rate=48000','-t','4','-c:v','mpeg4','-c:a','aac','-shortest',video])}catch{t.skip('ffmpeg cannot make a test video');return}
  const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});const page=await open(t,server,'browser');
  await page.click('.nav-link[data-view=library]');const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.click('#library-import')]);await chooser.setFiles(video);
  await page.waitForSelector('.toast:has-text("Звук из видео сохранён")',{timeout:60000});

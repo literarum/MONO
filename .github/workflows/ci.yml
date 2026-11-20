@@ -26,7 +26,17 @@ jobs:
           python-version: '3.13'
       - name: Install FFmpeg (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        timeout-minutes: 8
+        # A static build from GitHub (the same BtbN builds the Windows job uses): seconds instead of
+        # apt, whose mirrors have taken 19+ minutes on hosted runners. apt stays as the fallback.
+        run: |
+          set -e
+          if curl -fsSL --retry 3 -o /tmp/ffmpeg.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-lgpl.tar.xz; then
+            mkdir -p /tmp/ffmpeg && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1
+            echo /tmp/ffmpeg/bin >> "$GITHUB_PATH"
+          else
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
       - name: Install FFmpeg (macOS)
         if: runner.os == 'macOS'
         run: brew install ffmpeg
@@ -60,7 +70,17 @@ jobs:
           python-version: '3.13'
       - name: FFmpeg (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        timeout-minutes: 8
+        # A static build from GitHub (the same BtbN builds the Windows job uses): seconds instead of
+        # apt, whose mirrors have taken 19+ minutes on hosted runners. apt stays as the fallback.
+        run: |
+          set -e
+          if curl -fsSL --retry 3 -o /tmp/ffmpeg.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-lgpl.tar.xz; then
+            mkdir -p /tmp/ffmpeg && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1
+            echo /tmp/ffmpeg/bin >> "$GITHUB_PATH"
+          else
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
       - name: FFmpeg (Windows)
         if: runner.os == 'Windows'
         run: choco install ffmpeg --no-progress -y
