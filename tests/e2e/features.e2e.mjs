@@ -79,6 +79,26 @@ test('autopilot: when the system module cannot open the microphone, the take con
  assert.deepEqual(page.errors,[]);
 });
 
+test('autopilot: the browser channel is still the fallback when the module never answered the first capability query (slow runner, first launch)',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('open-failure')});
+ const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
+ const context=await browser.newContext();await context.grantPermissions(['microphone'],{origin:server.url});
+ let slow=true;await context.route('**/api/local/capture/capabilities',async route=>{if(slow)await new Promise(r=>setTimeout(r,11000));await route.continue().catch(()=>{})});
+ const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
+ await page.goto(server.url+'/');
+ await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();const headers={'Content-Type':'application/json','X-Mono-CSRF':csrf};
+  await fetch('/api/local/library/configure',{method:'POST',headers,body:JSON.stringify({useDefault:true})});
+  await fetch('/api/local/preferences',{method:'PATCH',headers,body:JSON.stringify({onboarding:{completed:true,keySkipped:true,soundTested:true},capture:{mode:'mic'}})})});
+ await page.reload();await page.waitForFunction(()=>document.querySelector('#nav-count'));
+ await page.click('.nav-link[data-view=record]');await page.waitForFunction(()=>!document.querySelector('#start-record').disabled,null,{timeout:30000});
+ await page.waitForTimeout(12000); // the window's first capability query has timed out by now
+ slow=false;await page.click('#start-record');
+ await page.waitForSelector('.toast:has-text("запасной канал")',{timeout:30000});
+ await page.waitForFunction(()=>/Подтверждено в архиве/.test(document.querySelector('#record-saved').textContent),null,{timeout:20000});
+ await page.click('#stop-record');
+ assert.deepEqual(page.errors,[]);
+});
+
 test('the window survives a core restart: banner, then automatic reconnect with a working session',{skip:!playwright&&'playwright is not installed'},async t=>{
  const server=await localServer(t);const page=await open(t,server,'mic');
  await server.restart();

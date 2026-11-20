@@ -174,7 +174,7 @@ async function autopilotBeforeStart(selection){
 /** Start failures that a different path can fix: same mode on the default devices, then the
  * browser channel for a microphone-only take. Two attempts per press, then an honest message. */
 const autopilot={selection:null,steps:[],mode:null};
-function arm(selection){autopilot.selection=selection;autopilot.mode=selection.mode;autopilot.inputId=selection.inputId;autopilot.steps=recoverySteps(selection,(captureSources?.capability?.modes||[]).includes('browser'),nativeMicState())}
+function arm(selection){autopilot.selection=selection;autopilot.mode=selection.mode;autopilot.inputId=selection.inputId;autopilot.steps=recoverySteps(selection,(captureSources?.capability?.modes||[]).includes('browser')||Boolean(captureSources?.client?.supported),nativeMicState())} // the window's own channel does not depend on the module having answered
 // A capability never loaded (the first query timed out while the module was still launching)
 // is «starting», not «absent»: the step refreshes it and decides then.
 function nativeMicState(capability=captureSources?.capability){return capability?.nativeReady&&(capability.modes||[]).includes('mic')?true:capability?.nativeStarting||capability&&!('nativeReady' in capability)?'starting':false}
