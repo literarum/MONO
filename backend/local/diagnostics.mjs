@@ -100,7 +100,7 @@ export async function collect({worker,runtime,keyManager,journal,health=()=>({})
  const slow={usb:usb().catch(()=>null),disks:disks().catch(()=>null),security:security().catch(()=>null)};
  const report={generatedAt:new Date().toISOString(),app:{},system:{},core:{},archive:{},capture:{},groq:{},jobs:{},journal:[]};
  const h=health();
- report.app={version:h.version,mode:h.mode,uptimeSeconds:h.uptimeSeconds,launcher:Boolean(env.MONO_LAUNCHER),node:process.version,startsLastHour:journal?.starts(3600e3)??null,startsLastDay:journal?.starts(86400e3)??null};
+ report.app={version:h.version,mode:h.mode,uptimeSeconds:h.uptimeSeconds,launcher:Boolean(env.MONO_LAUNCHER),executable:env.MONO_CORE_EXECUTABLE?path.basename(env.MONO_CORE_EXECUTABLE):null,node:process.version,startsLastHour:journal?.starts(3600e3)??null,startsLastDay:journal?.starts(86400e3)??null};
  report.system={os:`${os.type()} ${os.release()}`,arch:os.arch(),cpu:os.cpus()[0]?.model?.trim()||null,cores:os.cpus().length,memoryGB:+(os.totalmem()/1024**3).toFixed(1),freeMemoryGB:+(os.freemem()/1024**3).toFixed(1),processMB:Math.round(process.memoryUsage().rss/1024**2),systemUptimeHours:+(os.uptime()/3600).toFixed(1)};
  const tools=await settle(runtime,15000);
  report.tools={ffmpeg:tools.ok?Boolean(tools.value.ffmpeg):false,ffprobe:tools.ok?Boolean(tools.value.ffprobe):false,ffmpegVersion:await toolVersion().catch(()=>null)};
@@ -133,7 +133,7 @@ export async function collect({worker,runtime,keyManager,journal,health=()=>({})
  report.groq=await probeGroq({keyManager,base:groqBase,fetch});
  report.power={usbSelectiveSuspend:await slow.usb};report.disks=await slow.disks;report.security=await slow.security;
  // The probe result travels to the window's verdict: who else records and what may block MONO.
- if(report.capture.probe&&typeof report.capture.probe==='object')Object.assign(report.capture.probe,{othersRecording:report.capture.heldBy||[],security:report.security});
+ if(report.capture.probe&&typeof report.capture.probe==='object')Object.assign(report.capture.probe,{othersRecording:report.capture.heldBy||[],security:report.security,executable:report.app.executable});
  report.trends=trends(journal?.rows);
  const list=jobs();const by={};for(const j of list)by[j.status]=(by[j.status]||0)+1;
  report.jobs={counts:by,recentErrors:list.filter(j=>j.error).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0,5).map(j=>({status:j.status,stage:scrub(j.stage),error:scrub(j.error),attempts:j.attempts||0}))};

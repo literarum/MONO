@@ -5,7 +5,7 @@ import {libraryRoute,readJSON} from './library-routes.mjs';
 import {captureRoute} from './capture-routes.mjs';
 import {credentialsRoute} from './credentials-routes.mjs';
 import {audioRoute} from './audio-routes.mjs';
-import {preflight,BYTES_PER_HOUR} from './preflight.mjs';import {statfs,readFile,writeFile,rename} from 'node:fs/promises';import path from 'node:path';import {microphoneUsers} from './privacy.mjs';
+import {preflight,BYTES_PER_HOUR} from './preflight.mjs';import {statfs,readFile,writeFile,rename,mkdir,open as openFile,rm} from 'node:fs/promises';import path from 'node:path';import {stageUpdate,updateStatus} from './update-package.mjs';import {fileURLToPath} from 'node:url';import {microphoneUsers} from './privacy.mjs';
 const sessions=new LocalSessions();export const localWorker=new WorkerClient();
 export const authorizeLocalRequest=req=>sessions.authorize(req);
 const send=(res,status,body)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(body))};
@@ -25,6 +25,20 @@ export async function localRoute(req,res,url,mode,services={}){
   if(await audioRoute(req,res,url,services.preparation))return true;
   if(await summaryRoute(req,res,url,localWorker,{keyManager:services.keyManager,summarizer:services.summarizer,speakers:services.resolveSpeakers}))return true;
   if(await libraryRoute(req,res,url,localWorker,services))return true;
+  // Offline update from a signed .monoupdate file (see update-package.mjs).
+  if(url.pathname==='/api/local/update'&&['GET','POST'].includes(req.method)){
+   const home=process.env.MONO_LAUNCHER_HOME,keyFile=process.env.MONO_UPDATE_KEY_FILE||fileURLToPath(new URL('./update-key.pem',import.meta.url));let publicKeyPem=null;try{publicKeyPem=await readFile(keyFile,'utf8')}catch{}
+   const current=services.version||null;
+   if(req.method==='GET'){send(res,200,{version:current,supported:Boolean(home),signed:Boolean(publicKeyPem),...(home?await updateStatus(home):{pending:null,applied:null})});return true}
+   if(!home){req.resume();send(res,409,{code:'NO_LAUNCHER',error:'Обновление из файла доступно в приложении MONO на компьютере'});return true}
+   const dir=path.join(home,'updates');await mkdir(dir,{recursive:true});const incoming=path.join(dir,'incoming.part');
+   const out=await openFile(incoming,'w');let size=0;
+   try{for await(const part of req){size+=part.length;if(size>4*1024**3+64*1024**2){const e=new Error('Файл обновления слишком большой');e.code='TOO_LARGE';throw e}let at=0;while(at<part.length){const {bytesWritten}=await out.write(part,at,part.length-at);at+=bytesWritten}}await out.sync()}finally{await out.close()}
+   try{const result=await stageUpdate(incoming,{home,publicKeyPem,current});send(res,200,{...result,restartNeeded:true})}
+   catch(error){send(res,error.code==='UPDATE_NOT_NEWER'?409:error.code==='UPDATE_KEY_MISSING'?501:400,{code:error.code||'UPDATE_INVALID',error:error.message})}
+   finally{await rm(incoming,{force:true})}
+   return true;
+  }
   // Which window MONO opens: its own (Chromium --app, started by MONO) or the person's browser.
   if(url.pathname==='/api/local/window'&&['GET','POST'].includes(req.method)){
    const home=process.env.MONO_LAUNCHER_HOME,file=home?path.join(home,'ui-engine.json'):null;

@@ -601,11 +601,25 @@ let windowState=null;
 async function loadWindowState(){try{const local=await localLibraryClient();windowState=local?await local.json('/window'):null}catch{windowState=null}return windowState}
 /** Settings read top to bottom by importance: connection and recognition first, the system check and
  * help last; an unfinished archive copy always comes first. */
-const SETTINGS_ORDER=['Незавершённое копирование','Подключение Groq','Распознавание','Обработка аудио','Источники записи','Оформление','Архив и резервные копии','Страховочная дорожка','Расходы','Предполётная проверка','Состояние системы','Как пользоваться MONO'];
+const SETTINGS_ORDER=['Незавершённое копирование','Подключение Groq','Распознавание','Обработка аудио','Источники записи','Оформление','Архив и резервные копии','Обновление','Страховочная дорожка','Расходы','Предполётная проверка','Состояние системы','Как пользоваться MONO'];
 function orderSettings(){
  const grid=$('#view-settings .settings-grid');if(!grid)return;
  for(const card of grid.children){const title=card.querySelector('h2')?.textContent?.trim()||'',index=SETTINGS_ORDER.indexOf(title);card.style.order=String(index<0?SETTINGS_ORDER.length:index)}
  if(!grid.dataset.ordered){grid.dataset.ordered='1';new MutationObserver(orderSettings).observe(grid,{childList:true})} // cards added later (modules, recovery) take their place too
+}
+/** Offline update: the person picks a .monoupdate file; MONO checks its signature and every file's
+ * hash, unpacks it beside the app, and MONO.exe switches to it on the next start. */
+async function renderUpdateCard(){
+ const card=$('#update-card');if(!card)return;let info=null;
+ try{const local=await localLibraryClient();info=local?await local.json('/update'):null}catch{}
+ if(!info?.supported){card.hidden=true;return}card.hidden=false;
+ const status=$('#update-status'),button=$('#update-install');
+ $('#update-summary').textContent=`Установлена версия ${info.version}. Обновление ставится из файла .monoupdate — интернет не нужен.`;
+ status.textContent=info.pending?`Версия ${info.pending} проверена и будет установлена при следующем запуске MONO. Закройте окно MONO и запустите его снова.`:info.applied?.result==='rolled-back'?`Обновление до ${info.applied.version} не удалось применить — MONO вернул прежнюю версию. Попробуйте ещё раз.`:!info.signed?'В этой сборке не настроена подпись обновлений: MONO не примет файл, который нельзя проверить.':'';
+ button.disabled=!info.signed;
+ button.onclick=()=>{const input=$('#update-input');input.value='';input.onchange=async()=>{const file=input.files?.[0];if(!file)return;button.disabled=true;status.textContent=`Проверяем подпись и файлы «${file.name}»…`;
+  try{const local=await localLibraryClient(),result=await local.json('/update',{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream'}});status.textContent=`Готово: версия ${result.version} проверена (${result.files} файлов). Закройте окно MONO и запустите его снова — обновление установится само.`;notify(`Обновление ${result.version} готово к установке при следующем запуске.`)}
+  catch(error){status.textContent=error.message||'Файл обновления не принят.'}finally{button.disabled=false}};input.click()};
 }
 function closeModal(){
   if($('#modal').hidden)return;
@@ -636,7 +650,7 @@ function renderRoute({preserveDrawer=false}={}){
   const [requested,id]=location.hash.slice(1).split('/');
   let view=['dashboard','record','library','jobs','editor','settings'].includes(requested)?requested:'dashboard';
   if(state.view==='settings'&&view!=='settings')credentialForm?.clear();
-  if(view==='settings'&&state.view!=='settings'){void credentialForm?.refresh();orderSettings()}
+  if(view==='settings'&&state.view!=='settings'){void credentialForm?.refresh();orderSettings();void renderUpdateCard()}
   if(view==='editor'){
     if(!id||!state.records.some(r=>r.id===id)){view='library';}
     else if(state.editorId!==id||state.view!=='editor'){state.editorId=id;state.editorPage=0;void renderEditor(id).catch(e=>notify(e.message,'error'))}
