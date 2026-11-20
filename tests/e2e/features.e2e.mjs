@@ -141,6 +141,33 @@ test('a browser channel that cannot open the microphone (NotReadableError) hands
  assert.deepEqual(page.errors,[]);
 });
 
+test('deep diagnostics: when Kaspersky refuses audio to MONO alone, it is named and the own-browser path gives the address',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});
+ const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
+ const context=await browser.newContext();await context.grantPermissions(['microphone','clipboard-read','clipboard-write'],{origin:server.url});
+ await context.addInitScript(()=>{const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async c=>{if(c?.audio)throw new DOMException('Could not start audio source','NotReadableError');return original(c)}});
+ const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
+ // The Windows-only facts (Security Center, who records the microphone) are injected into the real server answer.
+ await page.route('**/api/local/diagnostics',async route=>{const response=await route.fetch(),report=await response.json();
+  const attempts=Object.fromEntries(['event','autoconvert','polling','client3','communications','pcm16'].map(k=>[k,'80070057']));
+  report.capture.probe={available:true,opened:false,step:'initialize',hresult:'80070057',attempts,othersRecording:['Discord'],security:{products:['Kaspersky Endpoint Security'],kaspersky:true}};
+  report.capture.heldBy=['Discord'];
+  await route.fulfill({response,json:report})});
+ await page.goto(server.url+'/');
+ await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();const headers={'Content-Type':'application/json','X-Mono-CSRF':csrf};
+  await fetch('/api/local/library/configure',{method:'POST',headers,body:JSON.stringify({useDefault:true})});
+  await fetch('/api/local/preferences',{method:'PATCH',headers,body:JSON.stringify({onboarding:{completed:true,keySkipped:true,soundTested:true}})})});
+ await page.reload();await page.waitForFunction(()=>document.querySelector('#nav-count'));await page.evaluate(()=>{location.hash='#settings'});
+ await page.waitForSelector('.preflight-deep',{timeout:30000});await page.click('.preflight-deep');
+ await page.waitForSelector('#deep-browser',{timeout:60000});
+ const text=await page.textContent('#modal-text');
+ assert.match(text,/Kaspersky не даёт MONO получать звук микрофона/);assert.match(text,/Discord/);
+ assert.doesNotMatch(text,/занят|Драйвер микрофона/);
+ await page.click('#deep-browser');
+ assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),server.url);
+ assert.match(await page.textContent('#deep-browser-hint'),/Откройте Chrome или Edge сами/);
+ assert.deepEqual(page.errors,[]);
+});
 test('deep diagnostics tells a browser-only fault from a broken microphone: the system module opens it while the window gets NotReadableError',{skip},async t=>{
  const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());

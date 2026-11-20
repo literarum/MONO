@@ -555,8 +555,12 @@ function passedLine(report){
 function showDeepReport(findings,text,report={}){
  const mark={warning:'✖',caution:'▲',advisory:'●'};
  const body=(findings.length?`<p>${findings.some(f=>f.level==='warning')?'Есть проблемы, которые мешают работе:':'Найдено:'}</p><ul class="deep-findings">${findings.map(f=>`<li data-level="${f.level}"><span class="deep-mark" aria-hidden="true">${mark[f.level]||'•'}</span><div><strong>${h(f.title)}</strong>${f.detail?`<span>${h(f.detail)}</span>`:''}${f.action?`<em>${h(f.action)}</em>`:''}</div></li>`).join('')}</ul>`:'<p><strong>Проблем не найдено.</strong></p>')+passedLine(report)+
-  '<p class="field-hint">В отчёте нет названий записей, текста, ключей и путей к файлам. Названия звуковых устройств остаются — по ним видно, какой микрофон проверялся.</p><div class="inline-actions"><button type="button" class="btn btn-primary btn-small" id="deep-copy">Скопировать отчёт</button><button type="button" class="btn btn-outline btn-small" id="deep-save">Сохранить файл</button></div>';
- modal('Глубокая диагностика',body);const close=$('#modal-actions .btn-outline');if(close)close.textContent='Закрыть';
+  '<p class="field-hint">В отчёте нет названий записей, текста, ключей и путей к файлам. Названия звуковых устройств остаются — по ним видно, какой микрофон проверялся.</p><div class="inline-actions"><button type="button" class="btn btn-primary btn-small" id="deep-copy">Скопировать отчёт</button><button type="button" class="btn btn-outline btn-small" id="deep-save">Сохранить файл</button>'+(findings.some(f=>f.browser)?'<button type="button" class="btn btn-outline btn-small" id="deep-browser">Открыть в браузере</button>':'')+'</div><p class="field-hint" id="deep-browser-hint" hidden></p>';
+ modal('Глубокая диагностика',body);
+ // The user's own browser, started by them, is a process the security software already trusts;
+ // a window MONO opens itself would inherit MONO's restrictions — so MONO only gives the address.
+ if($('#deep-browser'))$('#deep-browser').onclick=async()=>{const address=location.origin,hint=$('#deep-browser-hint');let copied=false;try{await navigator.clipboard.writeText(address);copied=true}catch{}
+  hint.hidden=false;hint.textContent=`${copied?'Адрес скопирован':'Адрес MONO'}: ${address}. Откройте Chrome или Edge сами (через меню «Пуск» или панель задач), вставьте адрес и разрешите микрофон. Записи сохраняются в тот же архив. Окно MONO не закрывайте — оно держит запущенным ядро.`};const close=$('#modal-actions .btn-outline');if(close)close.textContent='Закрыть';
  $('#deep-copy').onclick=async()=>{try{await navigator.clipboard.writeText(text);$('#deep-copy').textContent='Скопировано'}catch(e){notify('Не удалось скопировать: '+e.message,'error')}};
  $('#deep-save').onclick=()=>downloadBlob(new Blob([text],{type:'text/plain;charset=utf-8'}),`MONO-диагностика-${new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')}.txt`);
 }

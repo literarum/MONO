@@ -78,3 +78,28 @@ test('root cause: consequences fold into the cause instead of being listed as se
  const offline=consolidate([{level:'caution',title:'Нет связи с Groq'},{level:'caution',title:'Нет сети'}]);assert.deepEqual(offline.map(f=>f.title),['Нет сети']);
  assert.equal(consolidate([{level:'caution',title:'Нет связи с Groq'}]).length,1,'without a known cause nothing is hidden');
 });
+test('security software: Kaspersky is recognised from Windows Security Center or its process; off Windows nothing runs',async()=>{
+ const {parseSecurity,securitySoftware}=await import('../backend/local/diagnostics.mjs');
+ assert.deepEqual(parseSecurity('{"av":"Kaspersky Endpoint Security для Windows","ps":["avp","avpui"]}'),{products:['Kaspersky Endpoint Security для Windows'],kaspersky:true});
+ assert.equal(parseSecurity('{"av":[],"ps":["avp"]}').kaspersky,true);
+ assert.deepEqual(parseSecurity('{"av":["Windows Defender"],"ps":null}'),{products:['Windows Defender'],kaspersky:false});
+ assert.equal(parseSecurity('not json'),null);
+ assert.equal(await securitySoftware({platform:'linux',exec:()=>{throw new Error('must not run')}}),null);
+});
+test('microphone refused to MONO alone: Kaspersky is named (not the driver, not «busy») and the own-browser path is offered',async()=>{
+ const {microphoneFindings}=await import('../public/diagnostics.js');
+ const attempts=Object.fromEntries(['event','autoconvert','polling','client3','communications','pcm16'].map(k=>[k,'80070057']));
+ const paths={raw:{ok:false,error:'NotReadableError'},processed:{ok:false,error:'NotReadableError'}};
+ const probe={available:true,opened:false,step:'initialize',hresult:'80070057',attempts,othersRecording:['Discord'],security:{products:['Kaspersky Endpoint Security'],kaspersky:true}};
+ const [k]=microphoneFindings(paths,probe);
+ assert.equal(k.title,'Kaspersky не даёт MONO получать звук микрофона');assert.equal(k.browser,true);
+ assert.match(k.detail,/Discord/);assert.match(k.detail,/способах открыть поток \(6\)/);assert.match(k.action,/Доверенные/);assert.match(k.action,/Kaspersky Security Center/);
+ assert.doesNotMatch(k.title,/драйвер/i);assert.doesNotMatch(k.title+k.detail+k.action,/занят/i);
+ const [other]=microphoneFindings(paths,{...probe,security:{products:['ESET'],kaspersky:false}});
+ assert.equal(other.title,'Windows отказывает в звуке микрофона именно процессам MONO');assert.match(other.detail,/ESET/);
+ const [plain]=microphoneFindings(paths,{...probe,othersRecording:[],security:null});
+ assert.equal(plain.title,'Windows не даёт открыть микрофон');assert.match(plain.action,/другая программа/);
+ // The backend no longer says «another app may hold the microphone» when every way was refused with E_INVALIDARG.
+ const f=findings({capture:{heldBy:['Discord'],probe:{opened:false,attempts},inputs:[]}});
+ assert.ok(!f.some(x=>/держать другое приложение/.test(x.title)));
+});
