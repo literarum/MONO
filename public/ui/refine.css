@@ -185,3 +185,5 @@ input[type=search]::-webkit-search-cancel-button{appearance:none;width:18px;heig
 .audio-review .review-variants button{white-space:nowrap}
 .audio-review .review-variants{grid-template-columns:none!important}
 .audio-review .review-variants button{flex:0 0 auto;width:auto!important}
+.settings-card .select-wrap,.settings-card textarea,.settings-card input[type=number],.settings-card input[type=text],.settings-card input[type=password]{max-width:560px}
+.settings-card .check-row{font-size:13px}

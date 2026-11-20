@@ -269,7 +269,7 @@ async function initializeNative(local){
   const studio=$('#audio-source').closest('.side-card');studio.replaceChildren();mountCaptureSources(studio,{model:captureSources,onError:error=>notify(error.message,'error'),onNotice:message=>notify(message)});
   const card=document.createElement('article');card.className='glass settings-card';card.innerHTML='<div class="settings-card-icon"><svg><use href="#i-mic"/></svg></div><h2>Источники записи</h2><div class="settings-capture-sources"></div><button type="button" class="btn btn-outline btn-small" id="check-native-sound">Проверить звук</button>';$('#view-settings .settings-grid').prepend(card);mountCaptureSources(card.querySelector('.settings-capture-sources'),{model:captureSources,onError:error=>notify(error.message,'error')});card.querySelector('button#check-native-sound').onclick=()=>void showSetup('sound').catch(error=>notify(error.message,'error'));
   const guide=$('#studio-guide');guide.replaceChildren();mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
-  const safe=document.createElement('article');safe.className='glass settings-card';safe.innerHTML='<div class="settings-card-icon"><svg><use href="#i-shield"/></svg></div><h2>Страховочная дорожка</h2><p>Пока системный модуль пишет микрофон, окно MONO параллельно пишет его копию другим путём (свой кодек и своё хранилище). Если основная запись оборвётся, MONO предложит восстановить встречу из копии. Копия удаляется через сутки после удачной записи (через неделю — после сбоя). Около 14 МБ за час.</p><label class="check-row"><input type="checkbox" id="setting-safety"> Вести страховочную дорожку</label>';$('#view-settings .settings-grid').append(safe);
+  const safe=document.createElement('article');safe.className='glass settings-card';safe.innerHTML='<div class="settings-card-icon"><svg><use href="#i-shield"/></svg></div><h2>Страховочная дорожка</h2><p>Когда запись идёт через модуль Windows, окно параллельно пишет копию микрофона другим путём. Если основная запись оборвётся, MONO восстановит встречу из копии. Копия хранится сутки (после сбоя — неделю), около 14 МБ за час.</p><label class="check-row"><input type="checkbox" id="setting-safety"> Вести страховочную дорожку</label>';$('#view-settings .settings-grid').append(safe);
   $('#setting-safety').checked=safetySettings;$('#setting-safety').onchange=e=>{safetySettings=e.target.checked;try{localStorage.setItem('mono-safety-track',safetySettings?'1':'0')}catch{}};
   const help=document.createElement('article');help.className='glass settings-card';mountHelp(help);$('#view-settings .settings-grid').append(help);
   // Pre-flight check: compact (problems only) in the studio, full in settings.
@@ -599,6 +599,14 @@ function showDeepReport(findings,text,report={}){
  * (Kaspersky passes a parent's restrictions to its children) does not restrict its microphone. */
 let windowState=null;
 async function loadWindowState(){try{const local=await localLibraryClient();windowState=local?await local.json('/window'):null}catch{windowState=null}return windowState}
+/** Settings read top to bottom by importance: connection and recognition first, the system check and
+ * help last; an unfinished archive copy always comes first. */
+const SETTINGS_ORDER=['Незавершённое копирование','Подключение Groq','Распознавание','Обработка аудио','Источники записи','Оформление','Архив и резервные копии','Страховочная дорожка','Расходы','Предполётная проверка','Состояние системы','Как пользоваться MONO'];
+function orderSettings(){
+ const grid=$('#view-settings .settings-grid');if(!grid)return;
+ for(const card of grid.children){const title=card.querySelector('h2')?.textContent?.trim()||'',index=SETTINGS_ORDER.indexOf(title);card.style.order=String(index<0?SETTINGS_ORDER.length:index)}
+ if(!grid.dataset.ordered){grid.dataset.ordered='1';new MutationObserver(orderSettings).observe(grid,{childList:true})} // cards added later (modules, recovery) take their place too
+}
 function closeModal(){
   if($('#modal').hidden)return;
   $('#modal').hidden=true;
@@ -628,7 +636,7 @@ function renderRoute({preserveDrawer=false}={}){
   const [requested,id]=location.hash.slice(1).split('/');
   let view=['dashboard','record','library','jobs','editor','settings'].includes(requested)?requested:'dashboard';
   if(state.view==='settings'&&view!=='settings')credentialForm?.clear();
-  if(view==='settings'&&state.view!=='settings')void credentialForm?.refresh();
+  if(view==='settings'&&state.view!=='settings'){void credentialForm?.refresh();orderSettings()}
   if(view==='editor'){
     if(!id||!state.records.some(r=>r.id===id)){view='library';}
     else if(state.editorId!==id||state.view!=='editor'){state.editorId=id;state.editorPage=0;void renderEditor(id).catch(e=>notify(e.message,'error'))}
