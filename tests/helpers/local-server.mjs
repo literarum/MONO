@@ -1,5 +1,7 @@
 import {spawn} from 'node:child_process';import {mkdtemp,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import path from 'node:path';import net from 'node:net';import {once} from 'node:events';import {fileURLToPath} from 'node:url';
 export async function localServer(t,extraEnv={}){
+ // Windows runners start three suites' cores at once; a test of the timeout itself sets its own deadline.
+ const deadline=Number(extraEnv.MONO_TEST_START_DEADLINE_MS)||(process.platform==='win32'?30000:10000);
  const root=await mkdtemp(path.join(tmpdir(),'mono-consumer-')),listener=net.createServer();listener.listen(0,'127.0.0.1');await once(listener,'listening');const port=listener.address().port;await new Promise(r=>listener.close(r));let child,logs='';
  const url='http://127.0.0.1:'+port;
  // A signal-terminated child has exitCode=null and a non-null signalCode.
@@ -9,7 +11,7 @@ export async function localServer(t,extraEnv={}){
   child=spawn(process.execPath,['server.mjs'],{env:{...process.env,PORT:String(port),MONO_DATA_DIR:path.join(root,'server'),MONO_CONFIG_DIR:path.join(root,'config'),MONO_DEFAULT_LIBRARY_ROOT:path.join(root,'library'),MONO_LAUNCHER:'1',MONO_CORE_EXECUTABLE:'python',MONO_CORE_PACKAGED:'0',MONO_CORE_SCRIPT:fileURLToPath(new URL('../../launcher/local_core/worker.py',import.meta.url)),MONO_STARTUP_TRACE:'1',GROQ_API_KEY:'',GROQ_API_KEY_FILE:'',...extraEnv},stdio:['pipe','pipe','pipe']});
   for(const stream of [child.stdout,child.stderr])stream.on('data',data=>{logs=(logs+data.toString('utf8')).slice(-500000)});
   const started=performance.now();
-  try{await new Promise((resolve,reject)=>{let data='';const timer=setTimeout(()=>reject(new Error('Server startup timeout')),process.platform==='win32'?30000:10000);child.stdout.on('data',b=>{data+=b;if(data.includes('"event":"listening"')){clearTimeout(timer);resolve()}});child.on('error',reject);child.on('exit',()=>{clearTimeout(timer);reject(new Error('Server exited before ready'))})})}
+  try{await new Promise((resolve,reject)=>{let data='';const timer=setTimeout(()=>reject(new Error('Server startup timeout')),deadline);child.stdout.on('data',b=>{data+=b;if(data.includes('"event":"listening"')){clearTimeout(timer);resolve()}});child.on('error',reject);child.on('exit',()=>{clearTimeout(timer);reject(new Error('Server exited before ready'))})})}
   catch(error){
    const elapsedMs=Math.round(performance.now()-started),cleanupStarted=performance.now();
    const allowed=new Set(['worker.begin','worker.end','imports.ready','runtime.ffmpeg.begin','runtime.ffmpeg.end','runtime.ffprobe.begin','runtime.ffprobe.end','directories.begin','directories.end','vault.begin','vault.end','recovery.begin','recovery.end','listening']);
@@ -18,7 +20,7 @@ export async function localServer(t,extraEnv={}){
    // Success deadline, ready packet and teardown deadline stay unchanged.
    try{await stop()}catch(cleanup){throw new AggregateError([error,cleanup],'Private server startup and shutdown failed')}
    const trace=logs.split('\n').filter(line=>line.startsWith('MONO_STARTUP_TRACE ')).map(line=>line.slice('MONO_STARTUP_TRACE '.length)).slice(-1);
-   error.message+='; diagnostics '+JSON.stringify({deadlineMs:process.platform==='win32'?30000:10000,elapsedMs,cleanupMs:Math.round(performance.now()-cleanupStarted),pid:child.pid,exitCode:child.exitCode,signalCode:child.signalCode,outputChars:logs.length,phasesAtFailure,trace});throw error;
+   error.message+='; diagnostics '+JSON.stringify({deadlineMs:deadline,elapsedMs,cleanupMs:Math.round(performance.now()-cleanupStarted),pid:child.pid,exitCode:child.exitCode,signalCode:child.signalCode,outputChars:logs.length,phasesAtFailure,trace});throw error;
   }
  };
  const session=async()=>{const r=await fetch(url+'/api/local/session');const d=await r.json();return {Cookie:r.headers.get('set-cookie').split(';')[0],Origin:url,'X-Mono-CSRF':d.csrf}};

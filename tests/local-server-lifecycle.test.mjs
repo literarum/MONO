@@ -12,7 +12,7 @@ test('private fixture cleanup is idempotent after forced startup termination', {
  await writeFile(worker,'import sys,time,threading\nthreading.Thread(target=lambda:time.sleep(60),daemon=True).start()\nfor line in sys.stdin: pass\n');
  let cleanup,diagnostic;
  const registrar={after(callback){cleanup=callback}};
- await assert.rejects(()=>localServer(registrar,{MONO_CORE_SCRIPT:worker}),error=>{
+ await assert.rejects(()=>localServer(registrar,{MONO_CORE_SCRIPT:worker,MONO_TEST_START_DEADLINE_MS:'10000'}),error=>{
   const match=error.message.match(/diagnostics (\{.*\})$/);assert.ok(match);diagnostic=JSON.parse(match[1]);
   assert.equal(diagnostic.deadlineMs,10000);assert.equal(diagnostic.exitCode,null);assert.equal(diagnostic.signalCode,'SIGKILL');return true;
  });
