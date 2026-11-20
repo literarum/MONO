@@ -34,10 +34,11 @@ export async function localRoute(req,res,url,mode,services={}){
    const dir=path.join(home,'updates');await mkdir(dir,{recursive:true});const incoming=path.join(dir,'incoming.part');
    const out=await openFile(incoming,'w');let size=0;
    try{for await(const part of req){size+=part.length;if(size>4*1024**3+64*1024**2){const e=new Error('Файл обновления слишком большой');e.code='TOO_LARGE';throw e}let at=0;while(at<part.length){const {bytesWritten}=await out.write(part,at,part.length-at);at+=bytesWritten}}await out.sync()}finally{await out.close()}
-   try{const result=await stageUpdate(incoming,{home,publicKeyPem,current});send(res,200,{...result,restartNeeded:true})}
-   catch(error){send(res,error.code==='UPDATE_NOT_NEWER'?409:error.code==='UPDATE_KEY_MISSING'?501:400,{code:error.code||'UPDATE_INVALID',error:error.message})}
-   finally{await rm(incoming,{force:true})}
-   return true;
+   let reply;
+   try{reply=[200,{...await stageUpdate(incoming,{home,publicKeyPem,current}),restartNeeded:true}]}
+   catch(error){reply=[error.code==='UPDATE_NOT_NEWER'?409:error.code==='UPDATE_KEY_MISSING'?501:400,{code:error.code||'UPDATE_INVALID',error:error.message}]}
+   await rm(incoming,{force:true}); // removed before answering: nothing of the upload outlives the request
+   send(res,...reply);return true;
   }
   // Which window MONO opens: its own (Chromium --app, started by MONO) or the person's browser.
   if(url.pathname==='/api/local/window'&&['GET','POST'].includes(req.method)){

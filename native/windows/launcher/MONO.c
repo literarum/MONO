@@ -10,6 +10,8 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <wchar.h>
+#include <stdio.h>
+#include <string.h>
 
 #define LONG_PATH 32768
 
