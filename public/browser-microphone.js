@@ -69,7 +69,7 @@ export class BrowserMicrophoneClient{
  async outputs(){return listDevices(await this.devices.enumerateDevices(),'audiooutput','Динамики')}
  async capabilities(options){
   const value=await this.native.capabilities(options),inputs=this.supported?await this.inputs():[],outputs=this.supported?await this.outputs().catch(()=>[]):[];
-  return {...value,nativeReady:value.ready,supported:value.supported||this.supported,ready:value.ready||this.supported,modes:[...(this.supported?['browser']:[]),...value.modes],browserInputDevices:inputs,browserOutputDevices:outputs};
+  return {...value,nativeReady:value.ready,nativeStarting:!value.ready&&value.supported!==false&&!value.reason&&!value.browserActive,supported:value.supported||this.supported,ready:value.ready||this.supported,modes:[...(this.supported?['browser']:[]),...value.modes],browserInputDevices:inputs,browserOutputDevices:outputs};
  }
  devicesList(){return this.capabilities()}
  checkAccess(){return this.native.checkAccess()}

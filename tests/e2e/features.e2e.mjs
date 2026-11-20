@@ -141,6 +141,26 @@ test('a browser channel that cannot open the microphone (NotReadableError) hands
  assert.deepEqual(page.errors,[]);
 });
 
+test('a browser start that fails while the system module is still launching (12 s) waits for the module instead of giving up',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('slow-boot')});
+ const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
+ const context=await browser.newContext();await context.grantPermissions(['microphone'],{origin:server.url});
+ await context.addInitScript(()=>{const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async c=>{if(c?.audio)throw new DOMException('Could not start audio source','NotReadableError');return original(c)};try{localStorage.setItem('mono-source-migrated-1','1')}catch{}});
+ const page=await context.newPage();page.errors=[];page.on('pageerror',e=>page.errors.push(e.message));
+ await page.goto(server.url+'/');
+ await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();const headers={'Content-Type':'application/json','X-Mono-CSRF':csrf};
+  await fetch('/api/local/library/configure',{method:'POST',headers,body:JSON.stringify({useDefault:true})});
+  await fetch('/api/local/preferences',{method:'PATCH',headers,body:JSON.stringify({onboarding:{completed:true,keySkipped:true,soundTested:true},capture:{mode:'browser'}})})});
+ await page.reload();await page.waitForFunction(()=>document.querySelector('#nav-count'));
+ await page.click('.nav-link[data-view=record]');await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);
+ assert.notEqual(await page.evaluate(async()=>(await (await fetch('/api/local/capture/capabilities')).json()).ready),true,'the module is still launching when Start is pressed');
+ await page.click('#start-record');
+ await page.waitForSelector('.toast:has-text("записывает через системный модуль")',{timeout:40000});
+ await page.waitForFunction(()=>/Подтверждено/.test(document.querySelector('#record-saved').textContent),null,{timeout:20000});
+ await page.click('#stop-record');
+ await until(page,async()=>{const {items}=await (await fetch('/api/local/records?limit=5&q=&trash=false')).json();return items.some(r=>r.status==='saved'&&r.tracks?.some(x=>x.id==='mic'))},null,{timeout:20000});
+ assert.deepEqual(page.errors,[]);
+});
 test('deep diagnostics: when Kaspersky refuses audio to MONO alone, it is named and the own-browser path gives the address',{skip},async t=>{
  const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());

@@ -174,7 +174,21 @@ async function autopilotBeforeStart(selection){
 /** Start failures that a different path can fix: same mode on the default devices, then the
  * browser channel for a microphone-only take. Two attempts per press, then an honest message. */
 const autopilot={selection:null,steps:[],mode:null};
-function arm(selection){autopilot.selection=selection;autopilot.mode=selection.mode;autopilot.inputId=selection.inputId;autopilot.steps=recoverySteps(selection,(captureSources?.capability?.modes||[]).includes('browser'),Boolean(captureSources?.capability?.nativeReady)&&(captureSources?.capability?.modes||[]).includes('mic'))}
+function arm(selection){autopilot.selection=selection;autopilot.mode=selection.mode;autopilot.inputId=selection.inputId;autopilot.steps=recoverySteps(selection,(captureSources?.capability?.modes||[]).includes('browser'),nativeMicState())}
+// A capability never loaded (the first query timed out while the module was still launching)
+// is «starting», not «absent»: the step refreshes it and decides then.
+function nativeMicState(capability=captureSources?.capability){return capability?.nativeReady&&(capability.modes||[]).includes('mic')?true:capability?.nativeStarting||capability&&!('nativeReady' in capability)?'starting':false}
+/** A fallback to the system module that is still launching waits for it (up to 20 s) instead of being lost. */
+async function readyForStep(step){
+ if(!step?.waitNative)return step;
+ notify('Окно не открыло микрофон — ждём, пока запустится системный модуль записи…');
+ for(const deadline=Date.now()+20000;Date.now()<deadline;){
+  try{await captureSources.refresh()}catch{}
+  const now=nativeMicState();if(now===true){const {waitNative,...ready}=step;return ready}if(now===false)return null;
+  await new Promise(resolve=>setTimeout(resolve,700));
+ }
+ return null;
+}
 /** Once: a source pinned to the browser channel by an earlier fault (the reported laptop) moves to the
  * system module when it is ready. On Windows the browser path is the weaker one: Chromium ≥152 opens
  * raw-capable microphones in raw mode with no retry, and it cannot record the computer's sound. */
@@ -198,11 +212,11 @@ async function startWithAutopilotOnce(selection){
  state.footerNote=null;arm(selection);
  for(;;){
   try{captureMode=selection.mode;const started=await nativeController.start(selection);rememberPathSwitch(autopilot.mode,selection.mode);return started}
-  catch(error){const next=AUTOPILOT_RETRY.has(error?.code)?autopilotNext():null;if(!next)throw error;notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));if(next.mode==='browser'&&selection.mode!=='browser')notify('Записываем через запасной канал — окно MONO.');selection=next}
+  catch(error){const next=AUTOPILOT_RETRY.has(error?.code)?await readyForStep(autopilotNext()):null;if(!next)throw error;notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));if(next.mode==='browser'&&selection.mode!=='browser')notify('Записываем через запасной канал — окно MONO.');selection=next}
  }
 }
 async function autopilotRetry(code){
- const next=autopilotNext();if(!next)return false;
+ const next=await readyForStep(autopilotNext());if(!next)return false;
  notify('Переподключаем звук…');await new Promise(resolve=>setTimeout(resolve,800));
  try{if(next.mode==='browser'&&autopilot.mode!=='browser'){notify('Записываем через запасной канал — окно MONO.');healthEvent('BROWSER_FALLBACK')}captureMode=next.mode;await nativeController.start(next);rememberPathSwitch(autopilot.mode,next.mode);return true}
  catch(error){if(AUTOPILOT_RETRY.has(error?.code)&&await autopilotRetry(error.code))return true;void notifyCaptureError(captureErrors[error?.code]||error.message||'Не удалось начать запись.',error?.code||code);return true}

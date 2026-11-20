@@ -10,11 +10,13 @@ export const RETRYABLE=new Set(['START_TIMEOUT','STOP_PENDING','DEVICE_BUSY','BR
  * dissimilar microphone path (system module ⇄ browser channel). At most two steps, never the
  * same step twice. The browser channel and the system module open the microphone through
  * different Windows stacks, so one may succeed where the other gets "device busy". */
+/** nativeMicAvailable: true (module ready), 'starting' (it is still launching: the step waits for it,
+ * as on a first Windows launch where it takes ~12 s), or false. */
 export function recoverySteps(selection,browserAvailable,nativeMicAvailable=false){
  const steps=[];
  if(selection.inputId||selection.outputId)steps.push({...selection,inputId:null,outputId:null});
  if(selection.mode==='mic'&&browserAvailable)steps.push({mode:'browser',inputId:null,outputId:null});
- if(selection.mode==='browser'&&nativeMicAvailable)steps.push({mode:'mic',inputId:null,outputId:null});
+ if(selection.mode==='browser'&&nativeMicAvailable)steps.push({mode:'mic',inputId:null,outputId:null,...(nativeMicAvailable==='starting'?{waitNative:true}:{})});
  if(!steps.length)steps.push({...selection});
  return steps.slice(0,2);
 }
