@@ -69,13 +69,29 @@ function showRecordSource(){
 function syncLevelPreview(){
  showRecordSource();
  const idle=state.view==='record'&&!state.capture&&!captureActive(nativeController?.snapshot)&&!document.hidden;
- if(!idle){state.previewRequested=false;if(levelPreview.wanted){levelPreview.stop();clearTimeout(state.previewTimer);if(!state.capture&&!captureActive(nativeController?.snapshot))setText('#record-caption','ГОТОВО К ЗАПИСИ')}return}
+ if(!idle){if(state.previewRequested||levelPreview.wanted)stopLevelCheck();return}
  const choice=captureSources?.value||{},mode=captureSources?.fallbackMode?.()||choice.mode||'mic';
  if(mode==='system')return levelPreview.stop();
  // The microphone is only listened to, never recorded, and only for 45 s per visit:
  // Windows shows its "microphone in use" indicator while the preview is open.
  if(!state.previewRequested||levelPreview.wanted||state.previewDone===state.viewVisit)return;
- void levelPreview.start(mode==='browser'?choice.browserInputId||null:null).then(ok=>{if(!ok)return;const visit=state.viewVisit;setText('#record-caption','МИКРОФОН ПРОСЛУШИВАЕТСЯ · НЕ ЗАПИСЫВАЕТСЯ');clearTimeout(state.previewTimer);state.previewTimer=setTimeout(()=>{if(state.viewVisit===visit){state.previewDone=visit;state.previewRequested=false;levelPreview.stop();if(!state.capture)setText('#record-caption','ГОТОВО К ЗАПИСИ')}},45000);if(!nativeFrame)nativeFrame=requestAnimationFrame(drawWave)});
+ void levelPreview.start(mode==='browser'?choice.browserInputId||null:null).then(ok=>{if(!ok){stopLevelCheck();return}const visit=state.viewVisit;setText('#record-caption','МИКРОФОН ПРОСЛУШИВАЕТСЯ · НЕ ЗАПИСЫВАЕТСЯ');clearTimeout(state.previewTimer);state.previewUntil=Date.now()+LEVEL_CHECK_MS;state.previewTimer=setTimeout(()=>{if(state.viewVisit===visit)stopLevelCheck()},LEVEL_CHECK_MS);renderLevelCheck();if(!nativeFrame)nativeFrame=requestAnimationFrame(drawWave)});
+}
+/** «Проверить уровень» is a toggle with a visible countdown; it never comes back by itself. */
+const LEVEL_CHECK_MS=45000;
+function stopLevelCheck(){
+ state.previewRequested=false;state.previewDone=state.viewVisit;state.previewUntil=0;clearTimeout(state.previewTimer);
+ if(levelPreview.wanted||levelPreview.active)levelPreview.stop();
+ if(!state.capture&&!captureActive(nativeController?.snapshot))setText('#record-caption','ГОТОВО К ЗАПИСИ');
+ renderLevelCheck();
+}
+function renderLevelCheck(){
+ const button=$('#level-check');if(!button)return;clearTimeout(state.levelTick);
+ const left=Math.max(0,Math.ceil(((state.previewUntil||0)-Date.now())/1000)),on=left>0&&(levelPreview.active||levelPreview.wanted);
+ button.classList.toggle('is-on',on);button.setAttribute('aria-pressed',String(on));
+ button.textContent=on?`Остановить проверку · 0:${String(left).padStart(2,'0')}`:'Проверить уровень';
+ button.title=on?'Микрофон слушается только для шкалы и не записывается':'Микрофон откроется на 45 секунд только для шкалы — без записи';
+ if(on)state.levelTick=setTimeout(renderLevelCheck,250);
 }
 function pauseAudition(){audioReview?.player.pause();if(mediaInterlock)mediaInterlock.pauseAll();else document.querySelectorAll('audio,video').forEach(media=>media.pause())}
 function canAudition(){if(storageDetails().local&&(!nativeController?.snapshot.connected||captureActive(nativeController.snapshot))){notify('Завершите запись перед прослушиванием, чтобы звук плеера не попал в неё.','error');return false}return true}
@@ -141,7 +157,7 @@ function onNativeState(value){
  $('#start-record').hidden=active;$('#start-record').disabled=false;
  $('#pause-record').hidden=!active||value.state==='requesting';$('#level-check').hidden=active;$('#stop-record').hidden=!active;$('#mark-record').hidden=!active;$('.studio-buttons').classList.toggle('is-recording',active);
  watchDisk(active);
- if(active){saveClock.observe(value.sessionId||value.recordId,value.duration);if(!battery.active){battery.active=true;battery.reset()}void battery.check();levelPreview.stop()}else battery.active=false;
+ if(active){saveClock.observe(value.sessionId||value.recordId,value.duration);if(!battery.active){battery.active=true;battery.reset()}void battery.check();stopLevelCheck()}else battery.active=false;
  $('#pause-record').disabled=!value.connected||Boolean(value.pendingAction)||!['recording','paused'].includes(value.state);
  $('#stop-record').disabled=value.state==='stopping';$('#pause-record').innerHTML=icon(value.state==='paused'?'play':'pause')+(value.state==='paused'?' Продолжить':' Пауза');
  setText('#record-saved',!value.connected?(active?'Связь потеряна. Остановка и сохранение не подтверждены.':'Подключаемся к модулю записи…'+(nativeController?.lastError?.code?` (${nativeController.lastError.code})`:'')):value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве '+(value.state==='recording'?saveClock.text():'')+captureHealthHint(value):state.footerNote?state.footerNote:value.errorCode?captureFailureMessage(value):'Аудио сохраняется в выбранной папке');
@@ -544,7 +560,7 @@ async function runDeepDiagnostics(){
  const recording=captureActive(nativeController?.snapshot)||Boolean(state.capture);
  modal('Глубокая диагностика','<p class="deep-progress" role="status">Проверяем ядро, архив, звук, Groq и окно — около 10 секунд.'+(recording?'':' Скажите что-нибудь в микрофон.')+'</p>');
  try{
-  const local=await localLibraryClient();if(!recording)levelPreview.stop();
+  const local=await localLibraryClient();if(!recording)stopLevelCheck();
   const [server,windowInfo,microphone]=await Promise.all([
    local?local.json('/diagnostics',{signal:AbortSignal.timeout(45000)}).catch(error=>({error:error.code||error.message})):Promise.resolve(null),
    windowProbe().catch(()=>null),
@@ -1488,9 +1504,9 @@ function wire(){
  });
  $('#theme-toggle').onclick=()=>{settings.theme=document.body.dataset.theme==='dark'?'light':'dark';saveSettings();applyTheme();$('#setting-theme').value=settings.theme;syncControls()};
  for(const id of ['hero-import','record-import','library-import'])$('#'+id).onclick=()=>withInput(importFile);
- $('#start-record').onclick=()=>{levelPreview.stop();return beginRecord()};$('#mark-record').onclick=markMoment;
+ $('#start-record').onclick=()=>{stopLevelCheck();return beginRecord()};$('#mark-record').onclick=markMoment;
  document.addEventListener('visibilitychange',syncLevelPreview);
- $('#level-check').onclick=()=>{state.previewRequested=true;state.previewDone=null;syncLevelPreview()};
+ $('#level-check').onclick=()=>{if(state.previewUntil>Date.now()||levelPreview.wanted){stopLevelCheck();return}state.previewRequested=true;state.previewDone=null;syncLevelPreview()};
  document.addEventListener('keydown',e=>{if(e.key!=='?'||e.ctrlKey||e.metaKey||!$('#modal').hidden||e.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;e.preventDefault();showShortcuts()});
  document.addEventListener('keydown',e=>{if(e.defaultPrevented||e.ctrlKey||e.metaKey||e.altKey||e.repeat||e.code!=='KeyB'||!state.capture)return;if(e.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;e.preventDefault();markMoment()});$('#pause-record').onclick=pauseRecord;$('#stop-record').onclick=endRecord;
  let searchTimer=0;$('#library-search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(renderLibrary,220)}); // one query per pause in typing

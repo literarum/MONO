@@ -100,6 +100,23 @@ test('autopilot: the browser channel is still the fallback when the module never
  assert.deepEqual(page.errors,[]);
 });
 
+test('level check: a toggle with a countdown that never comes back by itself after a take',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});const page=await open(t,server,'browser');
+ await page.click('.nav-link[data-view=record]');await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);
+ await page.click('#level-check');
+ await page.waitForFunction(()=>/Остановить проверку · 0:4\d/.test(document.querySelector('#level-check').textContent),null,{timeout:10000});
+ await page.waitForTimeout(2300);assert.match(await page.textContent('#level-check'),/0:4[0-3]/,'the countdown moves');
+ await page.click('#level-check');
+ await page.waitForFunction(()=>document.querySelector('#level-check').textContent==='Проверить уровень',null,{timeout:5000});
+ // On again, then a take: after the take the check stays off.
+ await page.click('#level-check');await page.waitForFunction(()=>document.querySelector('#level-check').classList.contains('is-on'),null,{timeout:10000});
+ await page.click('#start-record');await page.waitForFunction(()=>/Подтверждено/.test(document.querySelector('#record-saved').textContent),null,{timeout:20000});
+ await page.click('#stop-record');await page.waitForFunction(()=>!document.querySelector('#level-check').hidden,null,{timeout:20000});
+ await page.waitForTimeout(2500);
+ assert.equal(await page.textContent('#level-check'),'Проверить уровень');assert.equal(await page.evaluate(()=>document.querySelector('#level-check').classList.contains('is-on')),false);
+ assert.deepEqual(page.errors,[]);
+});
+
 test('the window survives a core restart: banner, then automatic reconnect with a working session',{skip:!playwright&&'playwright is not installed'},async t=>{
  const server=await localServer(t);const page=await open(t,server,'mic');
  await server.restart();
