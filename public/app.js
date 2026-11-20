@@ -758,13 +758,16 @@ async function fileDuration(file){
 }
 async function importFile(file){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
- if(!file||!(/\.(wav|mp3|mp4|m4a|ogg|opus|webm|flac|aac)$/i.test(file.name)||file.type.startsWith('audio/'))){notify('Выберите аудиофайл поддерживаемого формата.','error');return}
+ const video=Boolean(file)&&(file.type.startsWith('video/')||/\.(m4v|mov|mkv|avi|wmv|flv|ts|mts|m2ts|3gp|mpg|mpeg|ogv)$/i.test(file.name)||/\.mp4$/i.test(file.name)&&!file.type.startsWith('audio/'));
+ if(!file||!(video||/\.(wav|mp3|m4a|ogg|opus|webm|flac|aac|wma|aiff?|amr)$/i.test(file.name)||file.type.startsWith('audio/'))){notify('Выберите аудио- или видеофайл.','error');return}
  const importLimit=storageDetails().local?32*1024**3:1024**3;
  if(file.size>importLimit){notify(`Файл больше ${storageDetails().local?'32':'1'} ГБ. Разбейте его перед импортом.`,'error');return}
- const id=crypto.randomUUID(),duration=await fileDuration(file);
+ const id=crypto.randomUUID(),duration=video?0:await fileDuration(file);
  const rec={id,title:file.name.replace(/\.[^.]+$/,'').slice(0,130),createdAt:new Date().toISOString(),
-  duration,mime:file.type||mimeForName(file.name),size:file.size,source:'Импорт файла',chunkCount:0,status:'saved'};
- try{await saveImportedRecording(rec,file);await refresh();notify('Аудиофайл сохранён на устройстве.');go('library')}
+  duration,mime:video?(file.type||'video/mp4'):(file.type||mimeForName(file.name)),size:file.size,source:video?'Видео':'Импорт файла',chunkCount:0,status:'saved',...(video?{video:true}:{})};
+ if(video&&!storageDetails().local){notify('Видео обрабатывается только в приложении MONO на компьютере.','error');return}
+ if(video)notify(`Извлекаем звук из видео «${rec.title}»… Длинное видео может занять несколько минут; окно можно не держать открытым на этом разделе.`,'info');
+ try{await saveImportedRecording(rec,file);await refresh();notify(video?'Звук из видео сохранён — его можно расшифровать.':'Аудиофайл сохранён.');go('library')}
  catch(e){await removeRecording(id).catch(()=>{});notify('Ошибка сохранения файла: '+e.message,'error')}
 }
 function mimeForName(name){const ext=name.split('.').pop().toLowerCase();return {'mp3':'audio/mpeg','m4a':'audio/mp4','mp4':'audio/mp4','wav':'audio/wav','ogg':'audio/ogg','opus':'audio/ogg','flac':'audio/flac','aac':'audio/aac','webm':'audio/webm'}[ext]||'audio/webm'}

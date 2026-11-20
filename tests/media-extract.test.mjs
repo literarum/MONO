@@ -1,0 +1,23 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {execFileSync} from 'node:child_process';import {mkdtemp,rm,stat} from 'node:fs/promises';import {tmpdir} from 'node:os';import path from 'node:path';
+import {extractionPlan,extractAudio,probeAudio} from '../backend/local/media-extract.mjs';
+const have=tool=>{try{execFileSync(tool,['-version'],{stdio:'ignore'});return true}catch{return false}};
+const skip=!(have('ffmpeg')&&have('ffprobe'))&&'ffmpeg is not installed';
+
+test('the audio stream is copied when the browser plays it as is, re-encoded otherwise',()=>{
+ assert.deepEqual(extractionPlan('aac'),{format:'ipod',mime:'audio/mp4',args:['-c:a','copy','-movflags','+faststart']});
+ assert.equal(extractionPlan('opus').mime,'audio/webm');assert.equal(extractionPlan('mp3').mime,'audio/mpeg');
+ assert.deepEqual(extractionPlan('pcm_s16le').args,['-c:a','libopus','-b:a','96k']);
+});
+test('a real video becomes its audio track; a silent video is refused clearly',{skip},async t=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'mono-video-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+ const video=path.join(dir,'talk.mp4'),silent=path.join(dir,'silent.mp4'),out=path.join(dir,'out');
+ execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','testsrc=size=160x120:rate=10','-f','lavfi','-i','sine=frequency=440:sample_rate=44100','-t','3','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-shortest',video]);
+ execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','testsrc=size=160x120:rate=10','-t','1','-c:v','libx264','-pix_fmt','yuv420p',silent]);
+ const result=await extractAudio({ffmpeg:'ffmpeg',ffprobe:'ffprobe',input:video,output:out});
+ assert.equal(result.mime,'audio/mp4');assert.equal(result.copied,true);assert.ok(result.duration>2.5&&result.duration<3.6,String(result.duration));
+ const probed=await probeAudio('ffprobe',out);assert.equal(probed.codec,'aac');
+ const streams=execFileSync('ffprobe',['-v','error','-show_entries','stream=codec_type','-of','csv=p=0',out]).toString().trim().split(/\s+/);
+ assert.deepEqual(streams,['audio'],'no video stream is kept');
+ assert.ok((await stat(out)).size<(await stat(video)).size);
+ await assert.rejects(extractAudio({ffmpeg:'ffmpeg',ffprobe:'ffprobe',input:silent,output:out}),error=>error.code==='NO_AUDIO');
+});

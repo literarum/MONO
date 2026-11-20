@@ -117,6 +117,20 @@ test('level check: a toggle with a countdown that never comes back by itself aft
  assert.deepEqual(page.errors,[]);
 });
 
+test('a video file of any length is imported as its audio track and can be played',{skip},async t=>{
+ const dir=mkdtempSync(path.join(tmpdir(),'mono-video-')),video=path.join(dir,'meeting.mp4');
+ const {execFileSync}=await import('node:child_process');
+ try{execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','testsrc=size=160x120:rate=10','-f','lavfi','-i','sine=frequency=330:sample_rate=48000','-t','4','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-shortest',video])}catch{t.skip('ffmpeg cannot make a test video');return}
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});const page=await open(t,server,'browser');
+ await page.click('.nav-link[data-view=library]');const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.click('#library-import')]);await chooser.setFiles(video);
+ await page.waitForSelector('.toast:has-text("Звук из видео сохранён")',{timeout:60000});
+ const [take]=await records(page);
+ assert.equal(take.title,'meeting');assert.equal(take.mime,'audio/mp4');assert.equal(take.source,'Видео');assert.ok(take.duration>3&&take.duration<5,String(take.duration));
+ const audio=await page.evaluate(async id=>{const r=await fetch(`/api/local/records/${id}/audio`);return {status:r.status,type:r.headers.get('content-type'),bytes:(await r.arrayBuffer()).byteLength}},take.id);
+ assert.equal(audio.status,200);assert.ok(audio.bytes>1000);
+ assert.deepEqual(page.errors,[]);
+});
+
 test('the window survives a core restart: banner, then automatic reconnect with a working session',{skip:!playwright&&'playwright is not installed'},async t=>{
  const server=await localServer(t);const page=await open(t,server,'mic');
  await server.restart();
