@@ -19,6 +19,7 @@ import {SafetyTrack} from './safety-track.js';
 import {LevelPreview,addBookmark,SaveClock,BatteryWatch,DEFAULT_TITLE,suggestTitle} from './studio-extras.js';import {PlayerWave} from './waveform.js';
 import {speakerFor,SPEAKER_NAMES} from './speakers.js';
 import {paragraphs,isDoubtful,nextDoubtful,silenceSkips,skipTarget,savedSeconds,cleanText,transcriptStats,learnTerms,rememberTerms,promptWithTerms} from './intelligence.js';
+import {guardSingleWindow} from './window-guard.js';
 import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -381,9 +382,17 @@ function showShortcuts(){
  modal('Сочетания клавиш','<dl class="shortcut-list">'+rows.map(([k,v])=>`<dt><kbd>${h(k)}</kbd></dt><dd>${h(v)}</dd>`).join('')+'</dl>');
 }
 /** Ctrl+Alt+R anywhere in Windows (registered by the launcher) starts or stops recording. */
+/** A second MONO window that the browser did not let close: say so plainly, offer to work here. */
+function showDuplicateWindow(takeOver){
+ const veil=document.createElement('div');veil.className='duplicate-window';veil.setAttribute('role','alertdialog');veil.setAttribute('aria-modal','true');veil.setAttribute('aria-labelledby','duplicate-title');
+ veil.innerHTML='<div class="duplicate-panel glass"><div class="duplicate-mark"><svg><use href="#i-grid"/></svg></div><h2 id="duplicate-title">MONO уже открыт</h2><p>Он работает в другом окне — переключитесь на него. Это окно можно закрыть.</p><div class="modal-actions"><button type="button" class="btn btn-primary">Работать в этом окне</button><button type="button" class="btn btn-outline">Закрыть окно</button></div></div>';
+ document.body.append(veil);const [here,close]=veil.querySelectorAll('button');here.focus();
+ here.onclick=()=>{takeOver();veil.remove()};close.onclick=()=>{try{window.close()}catch{}};
+}
 function listenForLauncherEvents(){
  if(!storageDetails().local||typeof EventSource!=='function')return;
  const source=new EventSource('/api/local/events');
+ source.addEventListener('focus',()=>{try{window.focus()}catch{}document.body.classList.add('window-called');setTimeout(()=>document.body.classList.remove('window-called'),900)});
  source.addEventListener('hotkey',()=>{
   const recording=captureActive(nativeController?.snapshot)||Boolean(state.capture);
   if(recording){void endRecord();notify('Запись остановлена (Ctrl+Alt+R).')}
@@ -1689,6 +1698,7 @@ function wire(){
  matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(settings.theme==='system')applyTheme()});
 }
 async function init(){
+ guardSingleWindow({onFocus:()=>{try{window.focus()}catch{}document.body.classList.add('window-called');setTimeout(()=>document.body.classList.remove('window-called'),900)},onDuplicate:showDuplicateWindow});
  applyTheme();wire();enhanceUI();await openDB();
  const local=await localLibraryClient();if(local)credentialForm=mountCredentials($('#groq-credentials'),{client:new CredentialsClient(local),onChange:value=>{$('#resume-transcription').hidden=!value.configured||!pendingTranscriptionId;void checkHealth()}});else $('#groq-settings-card').hidden=true;
  $('#resume-transcription').onclick=async()=>{const id=pendingTranscriptionId;if(!id)return;await checkHealth();const rec=state.records.find(r=>r.id===id);if(rec){pendingTranscriptionId=null;$('#resume-transcription').hidden=true;go('editor',id);void startTranscription(rec)}};

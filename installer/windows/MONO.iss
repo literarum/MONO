@@ -5,7 +5,7 @@
 
 #define AppName "MONO Transcribe"
 #ifndef AppVersion
-  #define AppVersion "0.9.0"
+  #define AppVersion "0.10.0"
 #endif
 #ifndef Stage
   #define Stage "..\..\.build\installer-stage"
@@ -20,7 +20,6 @@ AppPublisher=MONO
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-DisableDirPage=auto
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
@@ -28,6 +27,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
 WizardStyle=modern
 WizardSizePercent=110
+DisableReadyPage=yes
+DisableDirPage=yes
+ShowLanguageDialog=no
 SetupIconFile=..\..\launcher\assets\MONO.ico
 UninstallDisplayIcon={app}\app\launcher\assets\MONO.ico
 UninstallDisplayName={#AppName}
@@ -42,21 +44,19 @@ RestartApplications=no
 Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [CustomMessages]
-ru.WelcomeLabel2=Будет установлено приложение [name/ver].%n%nMONO записывает встречи и голос и превращает их в текст. Всё нужное для работы — звук, обработка, локальный сервер — устанавливается вместе с приложением; права администратора не требуются.%n%nЗакройте MONO, если он запущен, и нажмите «Далее».
-ru.FinishedLabel=MONO установлен. Запускайте его ярлыком «{#AppName}» на рабочем столе или в меню «Пуск».%n%nПри первом запуске приложение предложит выбрать папку для записей и подключить Groq для расшифровки.
+ru.WelcomeLabel2=MONO записывает встречи и голос и превращает их в текст.%n%nЧто произойдёт после нажатия «Установить»:%n  •  MONO установится на этот компьютер (права администратора не нужны);%n  •  на рабочем столе появится значок MONO — им вы будете запускать приложение;%n  •  MONO сразу откроется сам.%n%nВсё нужное для работы уже внутри — ничего дополнительно скачивать не придётся.
+ru.FinishedLabel=Готово — MONO уже открывается.%n%nВ следующий раз запускайте его значком «{#AppName}» на рабочем столе.
 
-[Tasks]
-Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Ярлыки:"
 
 [Files]
 Source: "{#Stage}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\MONO.exe"; WorkingDir: "{app}"; IconFilename: "{app}\app\launcher\assets\MONO.ico"; Comment: "Запись и расшифровка речи"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\MONO.exe"; WorkingDir: "{app}"; IconFilename: "{app}\app\launcher\assets\MONO.ico"; Comment: "Запись и расшифровка речи"; Tasks: desktopicon
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\MONO.exe"; WorkingDir: "{app}"; IconFilename: "{app}\app\launcher\assets\MONO.ico"; Comment: "Запись и расшифровка речи"
 
 [Run]
-Filename: "{app}\MONO.exe"; WorkingDir: "{app}"; Description: "Запустить {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\MONO.exe"; WorkingDir: "{app}"; Description: "Запустить {#AppName}"; Flags: nowait skipifsilent runasoriginaluser
 
 [UninstallDelete]
 ; Byte-code caches written at run time. User data lives in %LOCALAPPDATA%\MONO Transcribe

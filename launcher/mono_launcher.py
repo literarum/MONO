@@ -543,9 +543,9 @@ def browser_window_command(url: str, browser: tuple[str, str] | None) -> list[st
         return None
     kind, executable = browser
     if kind == "chromium":
-        return [executable, f"--app={url}/"]
+        return [executable, f"--app={url}/?window=mono"]
     if kind == "firefox":
-        return [executable, "-new-window", f"{url}/"]
+        return [executable, "-new-window", f"{url}/?window=mono"]
     return None
 
 
@@ -558,7 +558,7 @@ def open_in_browser(url: str, browser=None) -> None:
     command = browser_window_command(url, (browser or default_browser)())
     if command is None and sys.platform != "win32":
         chrome = discover_chromium()
-        command = [chrome, f"--app={url}/"] if chrome else None
+        command = [chrome, f"--app={url}/?window=mono"] if chrome else None
     if command is not None:
         with _external_browser_environment() as environment:
             extra = {"env": environment} if environment is not None else {}
@@ -569,6 +569,20 @@ def open_in_browser(url: str, browser=None) -> None:
         os.startfile(url + "/")  # noqa: S606 — ShellExecute of an http URL opens the default browser
     else:
         webbrowser.open_new(url + "/")
+
+
+SECOND_INSTANCE_WAIT = 20.0
+
+
+def focus_window(url: str, token: str, timeout: float = 2.0) -> bool:
+    """Ask the open MONO window to come forward. True when at least one window received it."""
+    request = urllib.request.Request(url + "/api/launcher/focus", data=b"", method="POST",
+                                     headers={"X-Mono-Launcher-Token": token})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return int(json.loads(response.read(4096)).get("pages", 0)) > 0
+    except (OSError, ValueError, TypeError, urllib.error.URLError, http.client.HTTPException):
+        return False
 
 
 def browser_clients(url: str, token: str, timeout: float = 2.0) -> tuple[int, int] | None:
@@ -754,22 +768,33 @@ def stop_backend(child: subprocess.Popen, logger: logging.Logger) -> None:
 
 def handle_second_instance(folder: Path, logger: logging.Logger) -> int:
     global PORT, URL
+    """A second click while MONO runs (or is still starting): never a second window. If a MONO window
+    is open it is brought forward; if MONO is still starting, the first launch opens the window."""
     session_file=folder / "session.json"
-    try:
-        session=json.loads(session_file.read_text(encoding="utf-8"))
-        instance_id=session["instanceId"]
-        url=session.get("url") or URL
-        match=re.fullmatch(rf"http://{re.escape(HOST)}:(\d+)",url)
-        if match:  # the running instance may be on an alternate port
-            PORT=int(match.group(1)); URL=url
-    except (OSError, ValueError, KeyError):
-        raise LaunchError("MONO уже запускается. Подождите несколько секунд и повторите.")
-    if not healthy(instance_id=instance_id):
-        raise LaunchError("Другой экземпляр MONO уже запускается или завершает работу. "
-                          "Подождите несколько секунд и повторите двойной щелчок.")
+    session=None
+    for _ in range(int(SECOND_INSTANCE_WAIT / .25)):
+        try:
+            session=json.loads(session_file.read_text(encoding="utf-8"))
+            if healthy(instance_id=session["instanceId"]):
+                break
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        session=None
+        time.sleep(.25)
+    if session is None:
+        logger.info("Second invocation while MONO is starting or stopping: nothing to do")
+        return 0
+    url=session.get("url") or URL
+    match=re.fullmatch(rf"http://{re.escape(HOST)}:(\d+)",url)
+    if match:  # the running instance may be on an alternate port
+        PORT=int(match.group(1)); URL=url
     if current_engine(folder) != "native":
+        token=session.get("token") or ""
+        if token and focus_window(URL, token):
+            logger.info("Second invocation: brought the open MONO window forward")
+            return 0
         open_in_browser(URL)
-        logger.info("Second invocation: opened another MONO window in the person's browser")
+        logger.info("Second invocation: no MONO window was open; opened one")
         return 0
     # Never try to start another backend on the same storage.
     raise LaunchError("MONO уже запущен. Переключитесь на открытое окно приложения.")
@@ -845,7 +870,7 @@ def _run_session(*, dev: bool, smoke: bool, preferred_ui: str, smoke_hold: float
         child = None
         try:
             child = spawn()
-            session_file.write_text(json.dumps({"instanceId": instance_id, "url": URL}), encoding="utf-8")
+            session_file.write_text(json.dumps({"instanceId": instance_id, "url": URL, "token": hotkey_token}), encoding="utf-8")
             if os.name != "nt":
                 session_file.chmod(0o600)
             logger.info("Backend verified on %s", URL)

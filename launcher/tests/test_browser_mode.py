@@ -81,6 +81,20 @@ class BrowserModeTests(unittest.TestCase):
                 self.assertEqual(mono.handle_second_instance(Path(folder),LOG),0)
             opened.assert_called_once()
 
+    def test_second_click_brings_the_open_window_forward_instead_of_opening_another(self):
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder,"ui-engine.json").write_text(json.dumps({"engine":"browser"}),encoding="utf-8")
+            Path(folder,"session.json").write_text(json.dumps({"instanceId":"x","url":"http://127.0.0.1:4173","token":"t"}),encoding="utf-8")
+            with patch.object(mono,"healthy",return_value=True),patch.object(mono,"focus_window",return_value=True) as focused,patch.object(mono,"open_in_browser") as opened:
+                self.assertEqual(mono.handle_second_instance(Path(folder),LOG),0)
+            focused.assert_called_once_with("http://127.0.0.1:4173","t");opened.assert_not_called()
+
+    def test_second_click_while_mono_is_still_starting_opens_nothing_and_shows_no_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.object(mono,"SECOND_INSTANCE_WAIT",.5),patch.object(mono.time,"sleep"),patch.object(mono,"open_in_browser") as opened:
+                self.assertEqual(mono.handle_second_instance(Path(folder),LOG),0)
+            opened.assert_not_called()
+
     def test_pages_answer_is_read_with_the_launcher_token(self):
         seen={}
         class Response:
@@ -96,8 +110,8 @@ class BrowserModeTests(unittest.TestCase):
 
     def test_a_window_of_the_default_browser_in_its_own_profile(self):
         self.assertEqual(mono._command_executable('"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --single-argument %1'),"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe")
-        self.assertEqual(mono.browser_window_command("http://127.0.0.1:4173",("chromium","C:/chrome.exe")),["C:/chrome.exe","--app=http://127.0.0.1:4173/"])
-        self.assertEqual(mono.browser_window_command("http://127.0.0.1:4173",("firefox","C:/firefox.exe")),["C:/firefox.exe","-new-window","http://127.0.0.1:4173/"])
+        self.assertEqual(mono.browser_window_command("http://127.0.0.1:4173",("chromium","C:/chrome.exe")),["C:/chrome.exe","--app=http://127.0.0.1:4173/?window=mono"])
+        self.assertEqual(mono.browser_window_command("http://127.0.0.1:4173",("firefox","C:/firefox.exe")),["C:/firefox.exe","-new-window","http://127.0.0.1:4173/?window=mono"])
         self.assertIsNone(mono.browser_window_command("http://127.0.0.1:4173",("other","C:/x.exe")))
         for command in [mono.browser_window_command("http://x",("chromium","c"))]:
             self.assertFalse(any(a.startswith("--user-data-dir") for a in command),"the person's own profile, not a MONO profile")
