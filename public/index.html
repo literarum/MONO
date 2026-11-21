@@ -21,6 +21,7 @@
 <link rel="stylesheet" href="/ui/glass.css">
 <link rel="stylesheet" href="/ui/refine.css">
 <link rel="stylesheet" href="/ui/system.css">
+<link rel="stylesheet" href="/ui/aurora.css">
 </head>
 <body data-theme="dark">
 <svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -58,12 +59,12 @@
 
 <div class="app-shell" id="app">
 <aside class="sidebar glass" id="sidebar">
- <a href="#dashboard" class="brand" aria-label="MONO — главная"><span class="brand-mark"><i></i><i></i><i></i><i></i><i></i></span><span class="brand-type">MONO</span></a>
+ <a href="#dashboard" class="brand" aria-label="MONO — главная"><span class="brand-mark"><i></i><i></i><i></i><i></i><i></i></span><span class="brand-type">MONO</span></a><p class="brand-dedication"><span class="dedication-heart" aria-hidden="true"></span>С любовью, для Иры</p>
  <nav class="nav" aria-label="Основное меню">
   <button aria-label="Обзор" class="nav-link selected" data-view="dashboard"><svg><use href="#i-grid"/></svg><span class="nav-long">Обзор</span><span class="nav-short" aria-hidden="true">Обзор</span></button>
   <button aria-label="Библиотека" class="nav-link" data-view="library"><svg><use href="#i-library"/></svg><span class="nav-long">Библиотека</span><span class="nav-short" aria-hidden="true">Записи</span><span id="nav-count" class="nav-count">0</span></button>
   <button aria-label="Расшифровка" class="nav-link" data-view="jobs"><svg><use href="#i-activity"/></svg><span class="nav-long">Расшифровка</span><span class="nav-short" aria-hidden="true">Текст</span></button>
-  <button aria-label="Запись" class="nav-link" data-view="record"><svg><use href="#i-mic"/></svg><span class="nav-long">Запись</span><span class="nav-short" aria-hidden="true">Запись</span></button>
+  <button aria-label="Запись" class="nav-link" data-view="record"><svg><use href="#i-mic"/></svg><span class="nav-long">Запись</span><span class="nav-short" aria-hidden="true">Запись</span><span class="nav-rec-badge" id="nav-rec-badge" hidden aria-hidden="true"></span></button>
  </nav>
  <div class="sidebar-bottom">
   <button aria-label="Настройки" class="nav-link" data-view="settings"><svg><use href="#i-settings"/></svg><span class="nav-long">Настройки</span><span class="nav-short" aria-hidden="true">Настройки</span></button>
@@ -99,9 +100,9 @@
  <div class="page-heading"><div><h1 id="record-heading">Запись</h1></div><button class="btn btn-subtle" id="record-import" type="button"><svg><use href="#i-upload"/></svg> Загрузить готовый файл</button></div>
  <div id="studio-guide" class="glass side-card studio-guide" hidden></div>
  <div class="studio-layout">
-  <div class="studio-panel glass"><div class="studio-panel-head"><span id="record-state" class="state-pill"><span class="tiny-dot"></span> Ожидание</span></div>
+  <div class="studio-panel glass"><div class="studio-panel-head"><span id="record-state" class="state-pill"><span class="tiny-dot"></span> Ожидание</span><div class="record-countdown" id="record-countdown" hidden aria-live="assertive"></div></div>
    <div class="studio-display"><div class="display-overline" id="record-caption">ГОТОВО К ЗАПИСИ</div><div class="record-source" id="record-source" aria-live="polite"></div><div class="studio-timer" id="record-timer">00:00:00</div><div class="studio-wave"><canvas id="record-wave" width="960" height="168" aria-label="Визуализация уровня звука"></canvas><div class="wave-baseline"></div></div><div class="input-level"><button type="button" class="btn btn-subtle btn-small level-check" id="level-check" aria-pressed="false">Проверить уровень</button><div class="level-track"><div id="level-fill"></div></div><span id="level-num">−∞ dB</span></div></div>
-   <div class="studio-buttons"><button id="start-record" class="btn btn-primary btn-large"><svg><use href="#i-mic"/></svg> Начать запись</button><button id="pause-record" class="btn btn-outline" hidden><svg><use href="#i-pause"/></svg> Пауза</button><button id="mark-record" class="btn btn-outline" hidden title="Отметить важный момент (B)" aria-keyshortcuts="B">★ Важно</button><button id="stop-record" class="btn btn-outline" hidden><svg><use href="#i-stop"/></svg> Завершить</button></div>
+   <div class="studio-buttons"><button id="start-record" class="btn btn-primary btn-large"><svg><use href="#i-mic"/></svg> Начать запись</button><button id="pause-record" class="btn btn-outline" hidden><svg><use href="#i-pause"/></svg> Пауза</button><button id="mark-record" class="btn btn-outline" hidden title="Отметить важный момент (B)" aria-keyshortcuts="B">★ Важно</button><button id="stop-record" class="btn btn-outline" hidden><svg><use href="#i-stop"/></svg> Завершить</button><button id="new-record" class="btn btn-outline" hidden title="Текущая запись сохранится в библиотеке, начнётся новая"><svg><use href="#i-plus"/></svg> Создать новую запись</button></div>
    <div class="studio-panel-foot"><span id="record-saved"></span></div>
   </div>
   <div class="studio-side" role="group" aria-label="Источник записи"><div class="glass side-card"><label for="audio-source" class="field-label">Что записывать</label><select id="audio-source" class="select"><option value="browser">Микрофон</option></select></div></div>

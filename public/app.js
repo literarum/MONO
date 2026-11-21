@@ -21,6 +21,7 @@ import {speakerFor,SPEAKER_NAMES} from './speakers.js';
 import {paragraphs,isDoubtful,nextDoubtful,silenceSkips,skipTarget,savedSeconds,cleanText,transcriptStats,learnTerms,rememberTerms,promptWithTerms} from './intelligence.js';
 import {guardSingleWindow} from './window-guard.js';
 import {prefs,PREF_DEFAULTS,ACCENTS,applyVisualPrefs} from './prefs.js';
+import {FloatingRecorder} from './floating-recorder.js';
 import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -45,7 +46,8 @@ const state={records:[],view:'dashboard',recorder:null,recordingId:null,capture:
   editorId:null,editorPage:0,playerURL:null,pollBusy:false,recordBusy:false,pendingEdits:new Map(),failedEdits:new Map(),visibleSegments:new Map()};
 let credentialForm=null,pendingTranscriptionId=null,groqConfigured=null;
 let nativeController=null,captureSources=null,nativeCompleted=null,nativeFrame=0,nativeInitializing=null,setupWindow=null,setupOpening=null;
-let mediaInterlock=null,audioReview=null,preflight=null;
+let mediaInterlock=null,audioReview=null,preflight=null,studioGuidance=null,permissionAsked=false;
+const floatingRecorder=new FloatingRecorder({onOpen:()=>go('record'),onPause:()=>pauseRecord(),onStop:()=>void endRecord(),enabled:()=>prefs.get('floatingRecorder'),inStudio:()=>state.view==='record'&&!document.hidden});
 const levelPreview=new LevelPreview(),saveClock=new SaveClock(),battery=new BatteryWatch({onWarn:message=>notify(message,'error')});
 const takeMarks={id:null,marks:[]};
 /** Bookmark the current moment of the take ("Важно", key B). Saved with the record when it ends. */
@@ -130,12 +132,21 @@ async function silenceRepair(value){
 }
 /** The taskbar shows the state too: «● 00:12 · Запись — MONO» and a red dot on the icon. */
 const baseTitle=document.title;let iconState='';
+/** Paused with something recorded: the main button says «Продолжить запись», «Создать новую запись»
+ * appears beside it, and the studio, its timer and the sidebar pulse calmly so the pause is obvious. */
+function reflectPaused(paused,hasAudio){
+ const pause=$('#pause-record');pause.innerHTML=icon(paused?'play':'pause')+(paused?' Продолжить запись':' Пауза');pause.classList.toggle('btn-primary',paused);pause.classList.toggle('btn-large',paused);pause.classList.toggle('btn-outline',!paused);
+ $('#new-record').hidden=!(paused&&hasAudio);$('.studio-panel')?.classList.toggle('is-paused',paused);
+ const state=$('#record-state');if(state&&paused)state.innerHTML='<span class="tiny-dot"></span> На паузе';
+}
 function reflectRecordingInChrome(active,value){
  const paused=value?.state==='paused';
+ const badge=$('#nav-rec-badge');if(badge){badge.hidden=!active;badge.dataset.state=paused?'paused':'recording';badge.title=paused?'Запись на паузе':'Идёт запись';badge.closest('.nav-link')?.classList.toggle('is-live',active)}
+ floatingRecorder.update(active,value);
  document.title=active?`${paused?'❚❚':'●'} ${durationText(value?.duration||0)} · ${paused?'Пауза':'Запись'} — MONO`:baseTitle;
  const want=active?(paused?'paused':'recording'):'';if(want===iconState)return;iconState=want;
  const link=document.querySelector('link[rel=icon]');if(!link)return;
- if(!want){link.href='/icon.svg';return}
+ if(!want){link.href=link.dataset.idle||'/favicon.ico';return}link.dataset.idle??=link.getAttribute('href');
  const svg=`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='#111'/><g fill='#fff'><rect x='14' y='22' width='4' height='20' rx='2'/><rect x='22' y='16' width='4' height='32' rx='2'/><rect x='30' y='24' width='4' height='16' rx='2'/></g><circle cx='46' cy='18' r='12' fill='${want==='paused'?'#ff9f0a':'#ff453a'}'/></svg>`;
  link.href='data:image/svg+xml,'+encodeURIComponent(svg);
 }
@@ -164,10 +175,10 @@ function onNativeState(value){
  watchDisk(active);
  if(active){saveClock.observe(value.sessionId||value.recordId,value.duration);if(!battery.active){battery.active=true;battery.reset()}void battery.check();stopLevelCheck()}else battery.active=false;
  $('#pause-record').disabled=!value.connected||Boolean(value.pendingAction)||!['recording','paused'].includes(value.state);
- $('#stop-record').disabled=value.state==='stopping';$('#pause-record').innerHTML=icon(value.state==='paused'?'play':'pause')+(value.state==='paused'?' Продолжить':' Пауза');
+ $('#stop-record').disabled=value.state==='stopping';reflectPaused(active&&value.state==='paused',Number(value.duration)>0);
  setText('#record-saved',!value.connected?(active?'Связь потеряна. Остановка и сохранение не подтверждены.':'Подключаемся к модулю записи…'+(nativeController?.lastError?.code?` (${nativeController.lastError.code})`:'')):value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве '+(value.state==='recording'?saveClock.text():'')+captureHealthHint(value):state.footerNote?state.footerNote:value.errorCode?captureFailureMessage(value):'');
  updateRecordUI();
- if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId)).then(()=>applyTitleTemplate(value.recordId));syncLevelPreview();
+ if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId)).then(()=>applyTitleTemplate(value.recordId));if(wasActive&&prefs.get('checkSoundEveryTime'))studioGuidance?.reopen('first-mic');syncLevelPreview();
   if(wasActive&&value.state==='interrupted')markRecoveredSeen(value.recordId);
   if(wasActive&&value.errorCode)healthEvent('CAPTURE_ERROR',[value.errorCode,value.failureDetails?.stage,value.failureDetails?.nativeCode].filter(Boolean).join(' ')); // the journal sees module failures too
   // A start that never captured audio leaves an empty «Прервано · 0 с» record: it is noise, not a meeting.
@@ -273,7 +284,11 @@ async function initializeNative(local){
   nativeController=new NativeCaptureController(client,{onState:onNativeState,onError:error=>notify(error.message,'error',fixFor(error.code)),onIntent:async options=>{if(levelPreview.active||levelPreview.wanted){levelPreview.stop();await new Promise(resolve=>setTimeout(resolve,250))}return mediaInterlock.beforeCapture(options)}});
   const studio=$('#audio-source').closest('.side-card');studio.replaceChildren();mountCaptureSources(studio,{model:captureSources,onError:error=>notify(error.message,'error'),onNotice:message=>notify(message)});
   const card=document.createElement('article');card.className='glass settings-card';card.innerHTML='<div class="settings-card-icon"><svg><use href="#i-mic"/></svg></div><h2>Источники записи</h2><div class="settings-capture-sources"></div><button type="button" class="btn btn-outline btn-small" id="check-native-sound">Проверить звук</button>';$('#view-settings .settings-grid').prepend(card);mountCaptureSources(card.querySelector('.settings-capture-sources'),{model:captureSources,onError:error=>notify(error.message,'error')});card.querySelector('button#check-native-sound').onclick=()=>void showSetup('sound').catch(error=>notify(error.message,'error'));
-  const guide=$('#studio-guide');guide.replaceChildren();mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
+  // The one consent MONO cannot give itself: when the browser has not yet let it hear the
+  // microphone, ask once in a modal (with the browser prompt behind the button), not with a lasting button.
+  captureSources.subscribe(model=>{if(permissionAsked||!model.activeDevices?.().needsPermission||model.busy)return;if(!['record','settings'].includes(state.view))return;permissionAsked=true;
+   modal('Разрешите MONO слышать микрофон','<p>Браузер спросит разрешение один раз — нажмите в его окне <b>«Разрешить»</b>. После этого MONO сам увидит микрофоны и будет обновлять их список.</p>',[{text:'Разрешить доступ',primary:true,run:async()=>{try{await model.refresh({requestAccess:true})}catch(error){notify(error.message,'error')}}}])});
+  const guide=$('#studio-guide');guide.replaceChildren();studioGuidance=mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
   const safe=document.createElement('article');safe.className='glass settings-card';safe.innerHTML='<div class="settings-card-icon"><svg><use href="#i-shield"/></svg></div><h2>Страховочная дорожка</h2><p>Когда запись идёт через модуль Windows, окно параллельно пишет копию микрофона другим путём. Если основная запись оборвётся, MONO восстановит встречу из копии. Копия хранится сутки (после сбоя — неделю), около 14 МБ за час.</p><label class="check-row"><input type="checkbox" id="setting-safety"> Вести страховочную дорожку</label>';$('#view-settings .settings-grid').append(safe);
   $('#setting-safety').checked=safetySettings;$('#setting-safety').onchange=e=>{safetySettings=e.target.checked;try{localStorage.setItem('mono-safety-track',safetySettings?'1':'0')}catch{}};
   const help=document.createElement('article');help.className='glass settings-card';mountHelp(help);$('#view-settings .settings-grid').append(help);
@@ -866,6 +881,7 @@ function renderRoute({preserveDrawer=false}={}){
   }
  if(state.view==='editor'&&view!=='editor'){if(audioReview){audioReview.player.pause();void audioReview.cancel(true).catch(e=>notify(e.message,'error'))}else $('#audio-element').pause()}
   const prior=state.view;state.view=view;try{if(view!=='editor')localStorage.setItem('mono-last-view',view)}catch{}
+  floatingRecorder.update(floatingRecorder.active,floatingRecorder.value);
   if(prior!==view||(view==='editor'&&session.read()?.id!==state.editorId))session.save({view,id:view==='editor'?state.editorId:null,scroll:0,time:0});
   if(view==='settings')document.querySelectorAll('.archive-recovery-notice').forEach(notice=>notice.remove());
   $$('.view').forEach(el=>el.classList.toggle('active',el.id==='view-'+view));
@@ -1030,10 +1046,29 @@ function chosenMime(){
  const opts=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'];
  return opts.find(t=>MediaRecorder.isTypeSupported(t))||'';
 }
+/** Settings → «Запись» → «Обратный отсчёт»: 3-2-1 over the timer; any click or Esc cancels. */
+async function countdownBeforeRecording(){
+ const seconds=Number(prefs.get('countdown'))||0;if(!seconds)return true;
+ const box=$('#record-countdown');box.hidden=false;let cancelled=false;const cancel=()=>{cancelled=true};
+ addEventListener('keydown',cancel,{once:true});box.onclick=cancel;
+ try{for(let n=seconds;n>0&&!cancelled;n--){box.textContent=String(n);box.classList.remove('tick');void box.offsetWidth;box.classList.add('tick');await new Promise(r=>setTimeout(r,1000))}}
+ finally{box.hidden=true;removeEventListener('keydown',cancel)}
+ if(cancelled)notify('Запись не начата.');return !cancelled;
+}
+/** Settings → «Проверять звук перед каждой записью»: five seconds of level, then the take starts. */
+async function soundCheckBeforeRecording(){
+ return await new Promise(resolve=>{
+  modal('Проверка звука','<p>Скажите несколько слов: шкала ниже должна двигаться.</p><div class="level-track modal-level"><div id="modal-level-fill"></div></div><p class="field-hint" id="modal-level-hint">Слушаем 5 секунд…</p>',[{text:'Звук есть — начать',primary:true,run:()=>done(true)}]);
+  let settled=false,timer=0;const done=value=>{if(settled)return;settled=true;clearInterval(timer);stopLevelCheck();resolve(value)};
+  $('#modal-actions').firstElementChild.onclick=()=>{closeModal();done(false)};
+  state.previewRequested=true;state.previewDone=null;syncLevelPreview();const started=Date.now();let heard=false;
+  timer=setInterval(()=>{const fill=$('#level-fill'),target=$('#modal-level-fill');if(!target){done(false);return}target.style.width=fill?.style.width||'0%';if(parseFloat(fill?.style.width||'0')>25)heard=true;const left=Math.max(0,5-Math.floor((Date.now()-started)/1000));setText('#modal-level-hint',heard?'Звук есть ✓':left?`Слушаем ${left} с…`:'Звук не слышен — проверьте микрофон в «Источниках записи».')},120);
+ });
+}
 async function beginRecord(){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
  if(storageDetails().local&&!storageDetails().libraryConfigured&&!await ensureArchive('record'))return;
- if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');if(!nativeController.snapshot.connected){try{await nativeController.connect()}catch(error){notify(`Модуль записи не отвечает${error?.code?' ('+error.code+')':''}. Откройте «Настройки → Предполётная проверка».`,'error');void preflight?.run({force:true}).catch(()=>{});return}}const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}await startWithAutopilot(await autopilotBeforeStart(await captureSources.selection()))}catch(error){if(error?.name!=='AbortError')void notifyCaptureError(error.message||'Не удалось начать запись.',error.code)}return}
+ if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');if(!nativeController.snapshot.connected){try{await nativeController.connect()}catch(error){notify(`Модуль записи не отвечает${error?.code?' ('+error.code+')':''}. Откройте «Настройки → Предполётная проверка».`,'error');void preflight?.run({force:true}).catch(()=>{});return}}const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}if(prefs.get('checkSoundEveryTime')&&!await soundCheckBeforeRecording())return;if(!await countdownBeforeRecording())return;await startWithAutopilot(await autopilotBeforeStart(await captureSources.selection()))}catch(error){if(error?.name!=='AbortError')void notifyCaptureError(error.message||'Не удалось начать запись.',error.code)}return}
  if(state.recordBusy||state.capture)return;
  state.recordBusy=true;
  let capture=null;
@@ -1746,8 +1781,10 @@ function wire(){
  });
 
  for(const id of ['hero-import','record-import','library-import'])$('#'+id).onclick=()=>withInput(importFile);
- $('#start-record').onclick=()=>{stopLevelCheck();return beginRecord()};$('#mark-record').onclick=markMoment;
- document.addEventListener('visibilitychange',syncLevelPreview);
+ $('#start-record').onclick=()=>{stopLevelCheck();return beginRecord()};
+ // Paused with audio: keep this take in the library and start a fresh one.
+ $('#new-record').onclick=async()=>{const button=$('#new-record');button.disabled=true;try{await endRecord();for(let i=0;i<150&&(captureActive(nativeController?.snapshot)||state.capture);i++)await new Promise(r=>setTimeout(r,100));notify('Первая запись сохранена в библиотеке. Начинаем новую.');await beginRecord()}finally{button.disabled=false}};$('#mark-record').onclick=markMoment;
+ document.addEventListener('visibilitychange',syncLevelPreview);document.addEventListener('visibilitychange',()=>floatingRecorder.update(floatingRecorder.active,floatingRecorder.value));
  $('#level-check').onclick=()=>{if(state.previewUntil>Date.now()||levelPreview.wanted){stopLevelCheck();return}state.previewRequested=true;state.previewDone=null;syncLevelPreview()};
  document.addEventListener('keydown',e=>{if(e.key!=='?'||e.ctrlKey||e.metaKey||!$('#modal').hidden||e.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;e.preventDefault();showShortcuts()});
  document.addEventListener('keydown',e=>{if(e.defaultPrevented||e.ctrlKey||e.metaKey||e.altKey||e.repeat||e.code!=='KeyB'||!state.capture)return;if(e.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;e.preventDefault();markMoment()});$('#pause-record').onclick=pauseRecord;$('#stop-record').onclick=endRecord;
