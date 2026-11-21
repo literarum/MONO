@@ -1,7 +1,7 @@
 import {open,unlink,statfs} from 'node:fs/promises';import path from 'node:path';
 import {analyzeAudio} from './analyze.mjs';import {getProfile,recommendProfile,PREPARATION_PIPELINE} from './profiles.mjs';import {runAudio,audioError} from './process.mjs';
-export async function prepareAudio(input,{output,profile='gentle',originalAnalysis=null,signal,onProgress,ffmpeg='ffmpeg',ffprobe='ffprobe'}={}){
- let preset=getProfile(profile),choice=null;if(signal?.aborted)throw audioError('CANCELLED');
+export async function prepareAudio(input,{output,profile='gentle',preset:givenPreset=null,originalAnalysis=null,signal,onProgress,ffmpeg='ffmpeg',ffprobe='ffprobe'}={}){
+ let preset=givenPreset||getProfile(profile),choice=null;if(signal?.aborted)throw audioError('CANCELLED');
  if(typeof output!=='string'||!path.isAbsolute(output)||path.resolve(input)===path.resolve(output))throw audioError('INVALID_AUDIO_OUTPUT');
  let owned=false;
  const stage=name=>seconds=>onProgress?.({stage:name,seconds});
@@ -9,11 +9,11 @@ export async function prepareAudio(input,{output,profile='gentle',originalAnalys
   const handle=await open(output,'wx',0o600);await handle.close();owned=true;
   const original=originalAnalysis||await analyzeAudio(input,{signal,onProgress:stage('analyzing'),ffmpeg,ffprobe}),frames=Math.round(original.duration*48000);
   if(!Number.isSafeInteger(frames)||frames<1)throw audioError('INVALID_AUDIO_INPUT');
-  if(profile==='auto'){choice=recommendProfile(original);preset=getProfile(choice.profile)}
+  if(profile==='auto'){choice=recommendProfile(original);preset=choice.preset||getProfile(choice.profile)}
   const space=await statfs(path.dirname(output));if(Number(space.bavail)*Number(space.bsize)<frames*original.channels*4+32*1024**2)throw audioError('DISK_FULL');
   const filters=preset.preFilter?[preset.preFilter]:[];
   if(preset.normalize){
-   const measured=await analyzeAudio(input,{analysisProfile:preset.id,signal,onProgress:stage('measuring'),ffmpeg,ffprobe});
+   const measured=await analyzeAudio(input,{analysisProfile:preset.id==='smart'?'original':preset.id,...(preset.id==='smart'?{preFilter:preset.preFilter,outputRate:preset.outputRate||null}:{}),signal,onProgress:stage('measuring'),ffmpeg,ffprobe});
    if(measured.loudness.valid){
     const {integrated,range,threshold}=measured.loudness;
     if([integrated,range,threshold,measured.truePeak].every(Number.isFinite))filters.push(`loudnorm=I=-19:TP=-2:LRA=11:measured_I=${integrated}:measured_TP=${measured.truePeak}:measured_LRA=${range}:measured_thresh=${threshold}:linear=true`);

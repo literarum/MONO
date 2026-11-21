@@ -10,7 +10,16 @@ def sha(value):return isinstance(value,str) and re.fullmatch('[a-f0-9]{64}',valu
 def fingerprint(value):return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode('utf-8')).hexdigest()
 def valid_analysis(value):
     keys={'schema','analysisVersion','duration','frames','sampleRate','channels','format','peak','rms','truePeak','clipping','silence','noiseHeuristic','loudness'}
-    if not isinstance(value,dict) or set(value)!=keys or value['schema']!=1 or value['analysisVersion']!='audio-analysis-1' or value['noiseHeuristic'] is not None:return False
+    # audio-analysis-2 adds the defect measurement (DC offset, mains hum, noise floor, speech share)
+    if isinstance(value,dict) and value.get('analysisVersion')=='audio-analysis-2':
+        keys=keys|{'defects'}
+        defects=value.get('defects')
+        if not isinstance(defects,dict) or set(defects)!={'schema','dcOffset','hum','noise','speechFraction'} or defects['schema']!=1:return False
+        hum=defects['hum']
+        if hum is not None and (not isinstance(hum,dict) or set(hum)!={'hz','strengthDb','harmonics'} or hum['hz'] not in [50,60]):return False
+        if not isinstance(defects['noise'],dict) or set(defects['noise'])!={'floorDbFS','speechDbFS','snrDb','heuristic'}:return False
+    elif isinstance(value,dict) and value.get('analysisVersion')!='audio-analysis-1':return False
+    if not isinstance(value,dict) or set(value)!=keys or value['schema']!=1 or value['noiseHeuristic'] is not None:return False
     nested={'format':{'codec','container'},'clipping':{'samples','fraction','threshold','heuristic'},'silence':{'seconds','fraction','thresholdDbFS','windowMs','heuristic'},'loudness':{'valid','integrated','range','threshold','reason'}}
     if any(not isinstance(value[key],dict) or set(value[key])!=fields for key,fields in nested.items()):return False
     def safe(item):
@@ -64,7 +73,7 @@ class AudioVersions:
     def _metadata(self,meta):
         keys={'id','sourceHash','pipelineVersion','profile','parametersHash','frames','sampleRate','channels','mime'}
         if not isinstance(meta,dict) or set(meta) not in [keys,keys|{'analysisJson','analysisHash'}] or any(not sha(meta[key]) for key in ['id','sourceHash','parametersHash']):fail('INVALID_AUDIO_VERSION')
-        if not isinstance(meta['pipelineVersion'],str) or not re.fullmatch('[a-z0-9.-]{1,100}',meta['pipelineVersion']) or meta['profile'] not in ['original','gentle','level','quiet','speech','denoise'] or meta['mime']!='audio/flac':fail('INVALID_AUDIO_VERSION')
+        if not isinstance(meta['pipelineVersion'],str) or not re.fullmatch('[a-z0-9.-]{1,100}',meta['pipelineVersion']) or meta['profile'] not in ['original','gentle','level','quiet','speech','denoise','smart'] or meta['mime']!='audio/flac':fail('INVALID_AUDIO_VERSION')
         for key,minimum,maximum in [('frames',1,2**53-1),('sampleRate',8000,384000),('channels',1,64)]:
             if type(meta[key]) is not int or not minimum<=meta[key]<=maximum:fail('INVALID_AUDIO_VERSION')
         identity=[meta[key] for key in ['sourceHash','pipelineVersion','profile','parametersHash']]

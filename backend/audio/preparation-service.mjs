@@ -8,6 +8,7 @@ export class AudioPreparation{
  prune(){for(const [key,job] of this.jobs)if(this.jobs.size>=64&&terminal(job)&&job.settled&&(job.state!=='canceled'||Date.now()-job.finishedAt>=600000))this.jobs.delete(key)}
  async create(recordId,{profile='gentle',start,duration=20,preview=false,requestId=randomUUID()}={}){
   if(typeof requestId!=='string'||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(requestId))throw audioError('INVALID_PREPARATION');
+  if(profile==='smart')profile='auto'; // the smart chain exists only as the measured answer of «Авто»
   const signature=hash([recordId,profile,preview?{start,duration}:null]),existing=()=>{const previous=this.jobs.get(requestId);if(previous&&previous.signature&&previous.signature!==signature)throw audioError('PREPARATION_CONFLICT');return previous};
   getProfile(profile);const old=existing();if(old)return this.snapshot(old);
   getProfile(profile);if(this.closed)throw audioError('CANCELLED');if([...this.jobs.values()].filter(job=>!terminal(job)).length>=8)throw audioError('PREPARATION_BUSY');
@@ -29,7 +30,7 @@ export class AudioPreparation{
    for(const file of parts){const digest=createHash('sha256');let bytes=0;for await(const chunk of createReadStream(file.path)){check();bytes+=chunk.length;digest.update(chunk)}if(bytes!==file.size||digest.digest('hex')!==file.sha256)throw audioError('AUDIO_DAMAGED')}
    const original=await this.original.ensure(job.recordId,{signal});check();
    if(!this.runtime)this.runtime=runAudio('ffmpeg',['-version']).then(hash).catch(error=>{this.runtime=null;throw error});
-   const runtime=await this.runtime,identify=profile=>{const parametersHash=hash({analysis:ANALYSIS_VERSION,runtime,preset:getProfile(profile),rate:48000,bits:24});return {parametersHash,versionId:hash([source.sourceHash,PREPARATION_PIPELINE,profile,parametersHash])}};
+   const runtime=await this.runtime,identify=(profile,preset=null)=>{const parametersHash=hash({analysis:ANALYSIS_VERSION,runtime,preset:preset||getProfile(profile),rate:48000,bits:24});return {parametersHash,versionId:hash([source.sourceHash,PREPARATION_PIPELINE,profile,parametersHash])}};
    // «Авто» is resolved from the measurement of this record's original, then stored as the concrete
    // profile it chose (so the version, its cache and its timeline are those of a real profile).
    const auto=job.profile==='auto';let {parametersHash,versionId}=auto?{}:identify(job.profile);check();
@@ -44,11 +45,11 @@ export class AudioPreparation{
     let measured=null;
     if(auto){
      job.stage='analyzing';measured=await analyzeAudio(input,{signal,onProgress:seconds=>{if(!terminal(job))job.seconds=seconds}});check();
-     const choice=recommendProfile(measured);job.profile=choice.profile;job.reason=choice.reason;({parametersHash,versionId}=identify(job.profile));
+     const choice=recommendProfile(measured);job.profile=choice.profile;job.preset=choice.preset||null;job.reason=choice.reason;({parametersHash,versionId}=identify(job.profile,job.preset));
      job.stage='checking-cache';const cached=await this.worker.call('records.version.get',{id:job.recordId,versionId,sourceHash:source.sourceHash},{timeoutMs:600000});if(cached)return cached;
     }
     stage=await this.worker.call('stage.allocate');await unlink(stage.path);check();
-    const result=await prepareAudio(input,{output:stage.path,profile:job.profile,originalAnalysis:measured,signal,onProgress:value=>{if(!terminal(job)){job.stage=value.stage;job.seconds=value.seconds}}});check();
+    const result=await prepareAudio(input,{output:stage.path,profile:job.profile,preset:job.preset||null,originalAnalysis:measured,signal,onProgress:value=>{if(!terminal(job)){job.stage=value.stage;job.seconds=value.seconds}}});check();
     const digest=createHash('sha256');for await(const bytes of createReadStream(stage.path)){check();digest.update(bytes)}
     const analysisJson=JSON.stringify(result.analysis),{analysis,...metadata}=result;delete metadata.profile;
     return this.worker.call('records.version.commit',{id:job.recordId,stagingId:stage.id,sha256:digest.digest('hex'),metadata:{...metadata,id:versionId,sourceHash:source.sourceHash,profile:job.profile,parametersHash,analysisJson,analysisHash:hash(analysisJson)}},{timeoutMs:600000});
