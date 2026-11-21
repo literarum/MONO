@@ -511,3 +511,20 @@ input[type=search]::-webkit-search-decoration{-webkit-appearance:none}
 .app-shell-guarded img,.app-shell-guarded svg,.app-shell-guarded a{-webkit-user-drag:none;user-drag:none}
 .app-shell-guarded :is(input,textarea,[contenteditable]:not([contenteditable="false"]),#editor-segments,.transcript-paragraph,.summary-body,[data-selectable]){-webkit-user-select:text;user-select:text}
 .app-shell-guarded #main{overscroll-behavior:contain}
+/* tour: changing sections behind a haze, never a jump */
+.tour-veil{transition:clip-path var(--au-slow) var(--au-ease),background var(--au-slow) var(--au-ease),backdrop-filter var(--au-slow) var(--au-ease),-webkit-backdrop-filter var(--au-slow) var(--au-ease)!important}
+.tour.is-hazy .tour-veil{clip-path:none!important;background:color-mix(in srgb,#020610 78%,transparent);-webkit-backdrop-filter:blur(14px) saturate(120%);backdrop-filter:blur(14px) saturate(120%)}
+body[data-theme=light] .tour.is-hazy .tour-veil{background:color-mix(in srgb,#0b1d44 52%,transparent)}
+.tour-ring{transition:opacity var(--au-med) var(--au-ease)!important}
+.tour-card{transition:opacity var(--au-med) var(--au-ease),transform var(--au-med) var(--au-ease)!important}
+.tour-card.is-out{opacity:0;transform:translateY(8px) scale(.98)!important;animation:none!important}
+.tour-count{margin:10px 0 0;font-size:11.5px;font-weight:600;color:var(--dim);letter-spacing:.02em}
+.tour-card h2{margin-top:4px!important}
+.tour-bar{flex:1;height:4px;border-radius:2px;background:color-mix(in srgb,var(--text) 14%,transparent);overflow:hidden}
+.tour-bar b{display:block;height:100%;width:0;background:var(--tint);border-radius:inherit;transition:width var(--au-slow) var(--au-ease)}
+.tour-art[data-art=done]::before{content:"";position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:var(--tint) center/26px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7.5'/%3E%3C/svg%3E");box-shadow:0 0 40px color-mix(in srgb,var(--tint) 70%,transparent);animation:au-pop var(--au-slow) var(--au-spring) both}
+.tour-full{margin-right:2px}
+.tour-actions{flex-wrap:wrap;row-gap:8px}
+.tour-actions .btn{min-width:0!important;padding:0 14px!important}
+.tour-card:has(.tour-full) .tour-skip{order:9;margin-left:auto}
+.tour-card:has(.tour-full) .tour-spacer{display:none}

@@ -22,7 +22,7 @@ import {paragraphs,isDoubtful,nextDoubtful,silenceSkips,skipTarget,savedSeconds,
 import {guardSingleWindow,closeIfOrphaned,fitLauncherWindow} from './window-guard.js';
 import {prefs,PREF_DEFAULTS,ACCENTS,applyVisualPrefs} from './prefs.js';
 import {FloatingRecorder} from './floating-recorder.js';
-import {runTour} from './tour.js';
+import {runTour,TOUR_STEPS,FULL_TOUR_STEPS} from './tour.js';
 import {guardAppShell} from './app-shell-guard.js';
 import {collectEntries,search as searchSettings,scrollToCentre} from './settings-nav.js';
 import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
@@ -1573,7 +1573,10 @@ function renderInsight(rec){
  smart.setAttribute('aria-pressed',String(smartSpeed));smart.textContent=smartSpeed?`Без пауз · −${shortTime(saved)}`:'Без пауз';
 }
 let tourOpen=false;
-function startTour(){if(tourOpen)return;tourOpen=true;closeModal();document.querySelectorAll('#toast-area .toast').forEach(toast=>{if(/тур/.test(toast.textContent))toast.remove()});runTour({go,reduceMotion:()=>document.body.classList.contains('reduce-motion')||matchMedia('(prefers-reduced-motion: reduce)').matches,onDone:()=>{tourOpen=false;prefs.set('tourDone',true)}})}
+function startTour(full=false){if(tourOpen)return;tourOpen=true;closeModal();document.querySelectorAll('#toast-area .toast').forEach(toast=>{if(/тур/.test(toast.textContent))toast.remove()});
+ const first=state.records.find(r=>!r.trashed);
+ runTour({steps:full?FULL_TOUR_STEPS:TOUR_STEPS,go:view=>view==='editor'?(first&&go('editor',first.id)):go(view),pane:id=>spotlightSetting(id),hasRecord:()=>Boolean(first),reduceMotion:reducedMotion,offerFull:full?null:()=>setTimeout(()=>startTour(true),350),
+  onDone:({finished})=>{tourOpen=false;prefs.set('tourDone',true);if(!finished)notify('Тур можно пройти снова: Настройки → О MONO. Там же — подробный тур по каждой функции.')}})}
 /** Settings → Расходы: MONO's server keeps the Bank of Russia rate fresh (every 6 h); the window
  * takes it while «Обновлять курс автоматически» is on. */
 async function updateRate(refresh=false){
@@ -1897,7 +1900,7 @@ function wire(){
 
  for(const id of ['hero-import','record-import','library-import'])$('#'+id).onclick=()=>withInput(importFile);
  $('#start-record').onclick=()=>{stopLevelCheck();return beginRecord()};
- $('#start-tour')?.addEventListener('click',startTour);
+ $('#start-tour')?.addEventListener('click',()=>startTour(false));$('#start-full-tour')?.addEventListener('click',()=>startTour(true));
  $('#library-select-mode').onclick=()=>setSelecting(!selection.active);$('#bulk-done').onclick=()=>setSelecting(false);
  $('#bulk-all').onclick=()=>{if(selection.ids.size&&selection.ids.size===libraryVisible.length)selection.ids.clear();else libraryVisible.forEach(id=>selection.ids.add(id));state.librarySignature=null;void renderLibrary();reflectSelection()};
  $('#bulk-transcribe').onclick=()=>void bulkTranscribe();$('#bulk-rename').onclick=()=>void bulkRename();$('#bulk-export').onclick=()=>void bulkExport();$('#bulk-delete').onclick=bulkDelete;
