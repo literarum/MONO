@@ -381,3 +381,14 @@ test('round 4: floating recorder and pause state, sidebar badge, library selecti
  await page.waitForFunction(()=>!document.querySelector('.tour'));assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('mono-prefs-1')).tourDone),true);
  assert.deepEqual(page.errors,[]);
 });
+
+test('the USD→RUB rate is taken automatically and shown with its source; a typed rate turns it off',{skip,timeout:90000},async t=>{
+ const http=await import('node:http');const rateServer=http.createServer((req,res)=>{res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({rate:79.5,date:'21.11.2026'}))});
+ await new Promise(r=>rateServer.listen(0,'127.0.0.1',r));t.after(()=>rateServer.close());
+ const server=await localServer(t,{MONO_RATE_SOURCES:'on',MONO_RATE_URL:`http://127.0.0.1:${rateServer.address().port}/rate`});const page=await open(t,server);
+ await page.click('.nav-link[data-view=settings]');await page.click('#settings-index a[title="Расходы"]');
+ await page.waitForFunction(()=>document.querySelector('#setting-rate').value==='79.5',null,{timeout:20000});
+ assert.match(await page.textContent('#rate-source'),/79,50 ₽ на 21\.11\.2026/);
+ await page.fill('#setting-rate','90');await page.press('#setting-rate','Tab');
+ await page.waitForFunction(()=>!document.querySelector('[data-pref=rateAuto]').checked);assert.deepEqual(page.errors,[]);
+});

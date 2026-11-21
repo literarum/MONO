@@ -9,6 +9,7 @@ import {fileURLToPath} from 'node:url';
 import {randomUUID, timingSafeEqual,createHash} from 'node:crypto';
 import {USD_PER_HOUR,planSegments,normalizeSegments,estimateCostSeconds,alignToSilence,parseSilences,contextPrompt,isHallucination,rateLimitWait} from './core.mjs';
 import {localRoute,localWorker,authorizeLocalRequest} from './backend/local/routes.mjs';
+import {ExchangeRate} from './backend/local/exchange-rate.mjs';
 import {systemAccent} from './backend/local/appearance.mjs';
 import {checkUpdate} from './backend/local/updates.mjs';
 import {KeyManager} from './backend/groq/key-manager.mjs';
@@ -288,6 +289,9 @@ async function reapExpiredJobs(){
 // for at least 10 s). It outlives the records, so the all-time total survives deleting them. Only
 // numbers and identifiers are written — never titles or text. Deltas make a resumed job count once.
 const USAGE_FILE=path.join(storage,'usage.jsonl');
+// Settings → Расходы: the official USD→RUB rate, refreshed every 6 hours (MONO_RATE_SOURCES=off disables it).
+const exchangeRate=new ExchangeRate({file:path.join(storage,'exchange-rate.json'),...(process.env.MONO_RATE_URL?{sources:[{name:'test',url:process.env.MONO_RATE_URL,parse:text=>{const v=JSON.parse(text);return {rate:v.rate,date:v.date}}}]}:{})});
+if(DEPLOY_MODE==='local'&&process.env.MONO_RATE_SOURCES!=='off')exchangeRate.start();
 // Settings → «Работа в фоне», read by the launcher on every poll (cached for 15 s).
 let backgroundCache={at:0,value:{lingerSeconds:10,finishWork:true,keepAwake:true}};
 async function backgroundPreferences(){
@@ -533,6 +537,11 @@ async function route(req,res){
     const denied=authorizeLocalRequest(req);if(denied){req.resume();fail(res,denied,'Доступ отклонён');return}
   }
   if(pathname.startsWith('/api/')){
+    if(req.method==='GET'&&pathname==='/api/rate'){
+      if(DEPLOY_MODE==='local'){const denied=authorizeLocalRequest(req);if(denied){fail(res,denied,'Доступ отклонён');return}}
+      const value=url.searchParams.get('refresh')==='1'?await exchangeRate.refresh({force:true}):exchangeRate.value||await exchangeRate.load();
+      json(res,200,value||{usdRub:null});return;
+    }
     if(req.method==='GET'&&pathname==='/api/usage'){
       if(DEPLOY_MODE==='local'){const denied=authorizeLocalRequest(req);if(denied){fail(res,denied,'Доступ отклонён');return}}
       json(res,200,await usageSummary());return;
@@ -662,7 +671,7 @@ async function main(){
     console.log(JSON.stringify({event:'shutdown',signal}));
     activeControllers.forEach(controller=>controller.abort());
     activeChildren.forEach(child=>child.kill('SIGTERM'));
-    clearInterval(reaper);
+    clearInterval(reaper);exchangeRate.stop();
     const timeout=setTimeout(()=>{console.error('Завершение по тайм-ауту');process.exit(1)},20000);
     timeout.unref();
     for(const client of eventClients)client.end();eventClients.clear();

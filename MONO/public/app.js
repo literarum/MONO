@@ -1572,6 +1572,17 @@ function renderInsight(rec){
 }
 let tourOpen=false;
 function startTour(){if(tourOpen)return;tourOpen=true;closeModal();document.querySelectorAll('#toast-area .toast').forEach(toast=>{if(/тур/.test(toast.textContent))toast.remove()});runTour({go,reduceMotion:()=>document.body.classList.contains('reduce-motion')||matchMedia('(prefers-reduced-motion: reduce)').matches,onDone:()=>{tourOpen=false;prefs.set('tourDone',true)}})}
+/** Settings → Расходы: MONO's server keeps the Bank of Russia rate fresh (every 6 h); the window
+ * takes it while «Обновлять курс автоматически» is on. */
+async function updateRate(refresh=false){
+ if(!prefs.get('rateAuto'))return;let value=null;
+ try{const response=await fetch('/api/rate'+(refresh?'?refresh=1':''),{cache:'no-store'});if(response.ok)value=await response.json()}catch{}
+ const hint=$('#rate-source');
+ if(!value?.usdRub){if(hint)hint.textContent='Официальный курс Банка России, раз в 6 часов. Сейчас нет связи — используется последний известный курс.';return}
+ settings.rate=value.usdRub;saveSettings();const input=$('#setting-rate');if(input&&document.activeElement!==input)input.value=String(value.usdRub);
+ if(hint){const at=new Date(value.fetchedAt);hint.textContent=`${value.source}: ${money(value.usdRub)} ₽ на ${value.date||'сегодня'} · обновлено ${at.toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}`}
+ renderDashboard();void renderUsage();
+}
 function plural(n,one,few,many){const a=n%10,b=n%100;return a===1&&b!==11?one:a>=2&&a<=4&&(b<12||b>14)?few:many}
 /** Smart Speed: while playing, a long pause between phrases is jumped over (keeps 0.45 s of air). */
 function smartSkip(time){
@@ -1916,7 +1927,8 @@ function wire(){
  {const prompt=$('#setting-prompt'),count=$('#setting-prompt-count'),update=()=>{count.textContent=`${prompt.value.length} / ${prompt.maxLength}`};prompt.addEventListener('input',update);update()}
  $('#setting-profile').value=settings.profile;$('#setting-profile').onchange=e=>{settings.profile=e.target.value;saveSettings()};
  $('#setting-prompt').value=settings.prompt;$('#setting-prompt').dispatchEvent(new Event('input'));$('#setting-prompt').oninput=e=>{settings.prompt=e.target.value;saveSettings()};
- $('#setting-rate').value=settings.rate;$('#setting-rate').onchange=e=>{settings.rate=Math.max(1,Math.min(1000,Number(e.target.value)||83.0784));saveSettings();renderDashboard()};
+ $('#setting-rate').value=settings.rate;$('#setting-rate').onchange=e=>{settings.rate=Math.max(1,Math.min(1000,Number(e.target.value)||83.0784));saveSettings();if(prefs.get('rateAuto'))prefs.set('rateAuto',false);renderDashboard();void renderUsage()};
+ prefs.subscribe(key=>{if(key==='rateAuto'&&prefs.get('rateAuto'))void updateRate(true)});void updateRate();setInterval(()=>void updateRate(),30*60*1000);
  $('#refresh-health').onclick=checkHealth;
  $('#export-library').onclick=()=>{void exportPortableLibrary()};
  $('#import-library').onclick=()=>{void importPortableLibrary()};
