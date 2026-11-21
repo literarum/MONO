@@ -373,7 +373,9 @@ test('round 4: floating recorder and pause state, sidebar badge, library selecti
  await page.click('#bulk-done');assert.ok(await page.isHidden('#bulk-bar'));
  // settings: the index spotlights a card
  await page.click('.nav-link[data-view=settings]');await page.waitForSelector('#settings-index a');await page.click('#settings-index a[data-target="groq-settings-card"]');
- await page.waitForFunction(()=>document.querySelector('#groq-settings-card').classList.contains('is-spotlit')&&document.querySelector('#view-settings .settings-grid').classList.contains('has-spotlight'));
+ await page.waitForFunction(()=>!document.querySelector('#groq-settings-card').classList.contains('pane-hidden')&&[...document.querySelectorAll('#view-settings .settings-grid>.settings-card')].filter(c=>!c.classList.contains('pane-hidden')).length===1);
+ await page.click('#settings-index a[title="О MONO"]');await page.waitForFunction(()=>document.querySelector('#settings-index a.active')?.title==='О MONO'&&!document.querySelector('#about-card').classList.contains('pane-hidden'));
+ await page.fill('#settings-search','курс');await page.waitForSelector('.settings-result');await page.keyboard.press('Enter');await page.waitForFunction(()=>document.querySelector('#settings-index a.active')?.title==='Расходы');
  // the tour runs to the end and is remembered
  await page.click('#start-tour');await page.waitForSelector('.tour');for(let i=0;i<9;i++){await page.click('.tour-next');await page.waitForTimeout(150)}
  await page.waitForFunction(()=>!document.querySelector('.tour'));assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('mono-prefs-1')).tourDone),true);

@@ -23,6 +23,7 @@ import {guardSingleWindow,closeIfOrphaned} from './window-guard.js';
 import {prefs,PREF_DEFAULTS,ACCENTS,applyVisualPrefs} from './prefs.js';
 import {FloatingRecorder} from './floating-recorder.js';
 import {runTour} from './tour.js';
+import {collectEntries,search as searchSettings,scrollToCentre} from './settings-nav.js';
 import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -711,26 +712,69 @@ function mountSegmented(){
 let settingsSpy=null,spotlightTimer=0;
 /** Bring one settings card forward: it scrolls into view, the others dim for a moment and the card
  * glows, so the eye lands exactly where the person asked to go. A hint can be shown above it. */
-function spotlightSetting(id,{hint=null}={}){
- const run=()=>{const card=document.getElementById(id);if(!card)return;const grid=card.parentElement;
-  card.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches||document.body.classList.contains('reduce-motion')?'auto':'smooth',block:'start'});
-  for(const other of grid.querySelectorAll('.is-spotlit'))other.classList.remove('is-spotlit');grid.classList.add('has-spotlight');void card.offsetWidth;card.classList.add('is-spotlit');
-  card.querySelector(':scope>.spotlight-hint')?.remove();if(hint){const box=document.createElement('div');box.className='spotlight-hint';box.setAttribute('role','note');box.innerHTML=hint;card.querySelector(':scope>h2')?.after(box)}
-  clearTimeout(spotlightTimer);spotlightTimer=setTimeout(()=>{grid.classList.remove('has-spotlight');card.classList.remove('is-spotlit')},hint?6000:2400);
-  const end=()=>{clearTimeout(spotlightTimer);grid.classList.remove('has-spotlight');card.classList.remove('is-spotlit');removeEventListener('pointerdown',end,true)};addEventListener('pointerdown',end,true);
+const reducedMotion=()=>document.body.classList.contains('reduce-motion')||matchMedia('(prefers-reduced-motion: reduce)').matches;
+let activePane=null;
+/** Show one settings pane (macOS System Settings): the others step aside with a short cross-fade.
+ * With `row`, that row is brought to the middle of the window and softly lit; with `hint`, a plain
+ * explanation appears under the pane title. */
+function spotlightSetting(id,{hint=null,row=null}={}){
+ const run=async()=>{
+  const card=document.getElementById(id);if(!card)return;const grid=card.parentElement;
+  if(activePane!==card){
+   const previous=activePane;activePane=card;
+   for(const link of $('#settings-index').querySelectorAll('a'))link.classList.toggle('active',link.dataset.target===id);
+   if(previous&&!reducedMotion()){previous.classList.add('pane-leaving');await new Promise(r=>setTimeout(r,140));previous.classList.remove('pane-leaving')}
+   for(const other of grid.children)other.classList.toggle('pane-hidden',other!==card);
+   card.classList.remove('pane-entering');void card.offsetWidth;card.classList.add('pane-entering');
+   $('#main').scrollTo({top:0,behavior:'auto'});
+  }
+  card.querySelector(':scope>.spotlight-hint')?.remove();
+  if(hint){const box=document.createElement('div');box.className='spotlight-hint';box.setAttribute('role','note');box.innerHTML=hint;card.querySelector(':scope>h2')?.after(box)}
+  const target=row||null;
+  if(target){
+   const details=target.closest('details');if(details&&!details.open)details.open=true;
+   await new Promise(r=>setTimeout(r,reducedMotion()?0:180));
+   await scrollToCentre($('#main'),target,{reduce:reducedMotion()});
+   target.classList.remove('is-found');void target.offsetWidth;target.classList.add('is-found');setTimeout(()=>target.classList.remove('is-found'),2600);
+  }
  };
- if(state.view!=='settings'){go('settings');requestAnimationFrame(()=>requestAnimationFrame(run))}else run();
+ if(state.view!=='settings'){go('settings');requestAnimationFrame(()=>requestAnimationFrame(()=>void run()))}else void run();
 }
 function renderSettingsIndex(){
  const index=$('#settings-index'),grid=$('#view-settings .settings-grid');if(!index||!grid)return;
  const cards=[...grid.children].filter(card=>!card.hidden&&card.querySelector('h2')).sort((a,b)=>Number(a.style.order||0)-Number(b.style.order||0));
  const slug=text=>'set-'+text.toLowerCase().replace(/[^a-zа-яё0-9]+/gi,'-').replace(/^-|-$/g,'');
- index.replaceChildren(...cards.map(card=>{const title=card.querySelector('h2').textContent.trim();card.id||=slug(title);const link=document.createElement('a');link.href='#settings';link.dataset.target=card.id;link.dataset.tone=card.dataset.tone||'';
+ const links=cards.map(card=>{const title=card.querySelector('h2').textContent.trim();card.id||=slug(title);const link=document.createElement('a');link.href='#settings';link.dataset.target=card.id;link.dataset.tone=card.dataset.tone||'';
   const icon=card.querySelector('.settings-card-icon svg use')?.getAttribute('href')||'#i-settings';link.innerHTML=`<span class="settings-index-icon"><svg><use href="${icon}"/></svg></span><span></span>`;link.lastElementChild.textContent=SETTINGS_SHORT[title]||title;link.title=title;
-  link.onclick=event=>{event.preventDefault();spotlightSetting(card.id);mark(card.id)};return link}));
- const mark=id=>{for(const link of index.children)link.classList.toggle('active',link.dataset.target===id)};
- settingsSpy?.disconnect();settingsSpy=new IntersectionObserver(entries=>{const visible=entries.filter(entry=>entry.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top)[0];if(visible)mark(visible.target.id)},{root:$('#main'),rootMargin:'-10% 0px -70% 0px'});
- for(const card of cards)settingsSpy.observe(card);if(cards[0])mark(cards[0].id);
+  link.onclick=event=>{event.preventDefault();spotlightSetting(card.id);link.blur()};return link});
+ const list=index.querySelector('.settings-index-list')||Object.assign(document.createElement('div'),{className:'settings-index-list'});list.replaceChildren(...links);
+ if(!index.querySelector('.settings-search'))index.prepend(settingsSearchBox());index.append(list);
+ // the pane on screen stays; on first show it is the first section
+ const keep=activePane&&cards.includes(activePane)?activePane:cards[0];
+ // shown in place, without navigating (this runs while the Settings view itself is being opened)
+ if(keep){activePane=keep;for(const other of grid.children)other.classList.toggle('pane-hidden',other!==keep);for(const link of links)link.classList.toggle('active',link.dataset.target===keep.id)}
+}
+/** Search across all settings: synonyms, partial words and one typo are understood. */
+function settingsSearchBox(){
+ const box=document.createElement('div');box.className='settings-search';
+ box.innerHTML='<label class="search-control"><svg><use href="#i-search"/></svg><input type="search" id="settings-search" placeholder="Поиск в настройках" aria-label="Поиск в настройках" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-controls="settings-results"></label><div class="settings-results glass" id="settings-results" role="listbox" hidden></div>';
+ const input=box.querySelector('input'),results=box.querySelector('.settings-results');let found=[],cursor=0;
+ const close=()=>{results.hidden=true;input.setAttribute('aria-expanded','false')};
+ const open=entry=>{close();input.value='';spotlightSetting(entry.card.id,{row:entry.kind==='row'?entry.el:null})};
+ const render=()=>{
+  const query=input.value.trim();if(!query){close();return}
+  found=searchSettings(collectEntries($('#view-settings .settings-grid')),query);cursor=0;
+  results.replaceChildren(...(found.length?found.map((entry,i)=>{const item=document.createElement('button');item.type='button';item.className='settings-result'+(i===0?' is-current':'');item.setAttribute('role','option');
+   const icon=entry.card.querySelector('.settings-card-icon svg use')?.getAttribute('href')||'#i-settings';item.innerHTML=`<span class="settings-index-icon" style="--tone:${getComputedStyle(entry.card).getPropertyValue('--tone')}"><svg><use href="${icon}"/></svg></span><span class="settings-result-text"><strong></strong><span></span></span>`;
+   item.querySelector('strong').textContent=entry.title;item.querySelector('.settings-result-text span').textContent=entry.kind==='row'?entry.section:'Раздел';item.onclick=()=>open(entry);return item}):[Object.assign(document.createElement('p'),{className:'settings-results-empty',textContent:'Ничего не нашлось. Попробуйте другое слово: «микрофон», «ключ», «тема»…'})]));
+  results.hidden=false;input.setAttribute('aria-expanded','true');
+ };
+ input.addEventListener('input',render);input.addEventListener('focus',render);
+ input.addEventListener('keydown',event=>{const items=[...results.querySelectorAll('.settings-result')];
+  if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();if(!items.length)return;cursor=(cursor+(event.key==='ArrowDown'?1:-1)+items.length)%items.length;items.forEach((item,i)=>item.classList.toggle('is-current',i===cursor));items[cursor].scrollIntoView({block:'nearest'})}
+  else if(event.key==='Enter'){event.preventDefault();if(found[cursor])open(found[cursor])}else if(event.key==='Escape'){input.value='';close()}});
+ document.addEventListener('pointerdown',event=>{if(!box.contains(event.target))close()});
+ return box;
 }
 /** The status light in the top bar, like a master caution: MONO checks its systems at start, every
  * five minutes, when the window comes back and when a device is plugged in; one glance says whether a

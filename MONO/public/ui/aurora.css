@@ -480,3 +480,28 @@ input[type=search]::-webkit-search-decoration{-webkit-appearance:none}
 .unit-field input:not(#_),.unit-field input:not(#_):hover,.unit-field input:not(#_):focus,
 .seg-custom-field input:not(#_):hover,.seg-custom-field input:not(#_):focus{background:transparent!important;box-shadow:none!important;border:0!important;outline:none!important}
 .seg-custom-field input:not(#_){background:color-mix(in srgb,var(--text) 10%,transparent)!important;border:0!important;box-shadow:none!important}
+
+/* —— Settings: one pane at a time, search, the found row lit ——————————————— */
+.settings-grid>.pane-hidden{display:none!important}
+.settings-grid>.pane-entering{animation:au-pane var(--au-slow) var(--au-ease) both}
+.settings-grid>.pane-leaving{animation:au-pane-out 140ms var(--au-ease) both}
+@keyframes au-pane{from{opacity:0;transform:translateY(10px);filter:blur(3px)}to{opacity:1;transform:none;filter:none}}
+@keyframes au-pane-out{to{opacity:0;transform:translateY(-6px);filter:blur(2px)}}
+.settings-grid.has-spotlight>.settings-card:not(.is-spotlit){opacity:1!important;filter:none!important}
+.settings-index{gap:8px!important}
+.settings-index-list{display:flex;flex-direction:column;gap:2px}
+.settings-search{position:relative}
+.settings-search .search-control{min-height:38px!important;padding:0 6px 0 12px!important}
+.settings-search .search-control input{height:36px!important;font-size:13px!important}
+.settings-results{position:absolute;left:0;top:calc(100% + 6px);z-index:30;width:min(360px,calc(100vw - 48px));max-height:60vh;overflow:auto;padding:6px!important;border-radius:16px!important;
+ background:color-mix(in srgb,var(--surface) 92%,transparent)!important;-webkit-backdrop-filter:blur(22px) saturate(160%);backdrop-filter:blur(22px) saturate(160%);box-shadow:0 24px 60px -20px rgba(0,8,30,.7)!important;animation:au-pop var(--au-med) var(--au-ease) both}
+.settings-results[hidden]{display:none}
+.settings-result{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border:0;border-radius:10px;background:none;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.settings-result:hover,.settings-result.is-current{background:color-mix(in srgb,var(--tint) 16%,transparent)}
+.settings-result-text{display:flex;flex-direction:column;min-width:0}
+.settings-result-text strong{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.settings-result-text span{font-size:11.5px;color:var(--muted)}
+.settings-results-empty{margin:0;padding:10px;font-size:12.5px;color:var(--muted)}
+.is-found{animation:au-found 2.6s var(--au-ease) both;border-radius:12px}
+@keyframes au-found{0%{background:color-mix(in srgb,var(--tint) 0%,transparent)}15%{background:color-mix(in srgb,var(--tint) 26%,transparent)}100%{background:color-mix(in srgb,var(--tint) 0%,transparent)}}
+@media (max-width:1100px){.settings-index{display:flex!important;position:static!important;flex-direction:column}.settings-index-list{flex-direction:row;overflow-x:auto;gap:6px;padding-bottom:4px;scrollbar-width:none}.settings-index-list a{flex:0 0 auto}.settings-layout{grid-template-columns:1fr!important}}
