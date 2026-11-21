@@ -1,7 +1,7 @@
 /* MONO refine layer — the last word on layout, controls and rhythm.
    Principles: one accent (the system tint) used sparingly, an 8-pt rhythm, controls of three heights
    (34 / 44 / 52), glass with a soft inner rim and a faint blue light, motion that is short and calm. */
-:root{
+:root,body,body[data-theme]{
  --rf-radius:14px;--rf-radius-lg:22px;--rf-gap:16px;--rf-gap-lg:24px;
  --rf-control:44px;--rf-control-sm:34px;--rf-control-lg:52px;
  --rf-ease:cubic-bezier(.2,.8,.2,1);--rf-fast:140ms;--rf-med:220ms;

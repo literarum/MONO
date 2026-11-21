@@ -20,3 +20,9 @@ test('capture rejection cannot leave a second playing branch, null LUFS does not
 test('seek immediately after a variant click applies to the newly requested branch',async t=>{
  const {player,original,prepared}=make(t);await player.play();const switching=player.switchVariant('prepared').catch(error=>assert.equal(error.name,'AbortError'));await player.seek(6);await switching;assert.equal(player.snapshot.variant,'prepared');assert.equal(prepared.currentTime,6);assert.equal(prepared.paused,false);assert.equal(original.paused,true);
 });
+test('Play after the end starts the record over instead of sitting on the last frame',async t=>{
+ const {player,original}=make(t);await player.play();await player.seek(10);original.ended=true;original.pause();original.dispatchEvent(new Event('ended'));
+ await player.play();assert.equal(original.currentTime,0);assert.equal(original.paused,false);
+ original.ended=false;await player.seek(9.9);player.pause();await player.play();assert.equal(original.currentTime,0,'a pause in the last quarter-second counts as the end');
+ await player.seek(5);player.pause();await player.play();assert.equal(original.currentTime,5,'a pause in the middle resumes where it was');
+});

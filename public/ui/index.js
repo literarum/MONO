@@ -25,7 +25,7 @@ export function enhanceUI(){
  const scan=()=>{
   for(const [node,c] of controls)if(!node.isConnected){c.destroy();controls.delete(node)}
   for(const [node,c] of scrolls)if(!node.isConnected){c.destroy();scrolls.delete(node)}
-  document.querySelectorAll('select').forEach(el=>{if(!controls.has(el))controls.set(el,mountSelect(el))});
+  document.querySelectorAll('select:not(.is-shadow)').forEach(el=>{if(!controls.has(el))controls.set(el,mountSelect(el))});
   document.querySelectorAll('textarea,.modal-panel,.setup-panel').forEach(el=>{if(!scrolls.has(el))scrolls.set(el,mountScrollArea(el))});
   // Icon-only controls and the short tab-bar labels get the full name as a tooltip.
   document.querySelectorAll('.icon-btn[aria-label]:not([title]),.nav-link[aria-label]:not([title]),.play-btn[aria-label]:not([title])').forEach(el=>{el.title=el.getAttribute('aria-label')});

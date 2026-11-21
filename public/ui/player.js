@@ -37,7 +37,8 @@ export class ReviewPlayer{
  setRate(value){if(!finite(value)||value<.5||value>2)throw new RangeError('Invalid playback rate');this.rate=value;for(const media of Object.values(this.elements))media.playbackRate=value;this.emit()}
  setVolume(value){if(!finite(value)||value<0||value>1)throw new RangeError('Invalid playback volume');this.volume=value;this.gains();this.emit()}
  async audioContext(){if(!this.context){this.context=this.contextFactory();this.nodes={};for(const [name,media] of Object.entries(this.elements)){const source=this.context.createMediaElementSource(media),node=this.context.createGain();node.gain.setValueAtTime(0,this.context.currentTime);source.connect(node);node.connect(this.context.destination);this.nodes[name]=node}}await this.context.resume()}
- play(){this.wantPlaying=true;return this.transition(this.requestedVariant||this.variant,this.time)}
+ /** At the end, Play starts over (as every media player does), not a no-op on the last frame. */
+ play(){this.wantPlaying=true;const duration=this.active.duration;let at=this.time;if(this.active.ended||(finite(duration)&&duration>0&&at>=duration-.25)){at=0;this.position=0}return this.transition(this.requestedVariant||this.variant,at)}
  switchVariant(name){if(!['original','prepared'].includes(name)||!this.elements[name].src)return Promise.reject(new Error('Сначала подготовьте вариант для сравнения.'));return this.transition(name,this.time)}
  seek(seconds){if(!finite(seconds))return Promise.reject(new RangeError('Invalid seek'));const time=Math.max(0,Math.min(seconds,this.snapshot.duration||seconds));return this.transition(this.requestedVariant||this.variant,time)}
  transition(name,time){
