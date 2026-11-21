@@ -1,6 +1,6 @@
 """Browser mode: MONO opens as a tab in the person's own browser and lives while a page is open."""
 import importlib.util
-import json
+import json,time
 import logging
 from pathlib import Path
 import tempfile
@@ -88,6 +88,23 @@ class BrowserModeTests(unittest.TestCase):
             with patch.object(mono,"healthy",return_value=True),patch.object(mono,"focus_window",return_value=True) as focused,patch.object(mono,"open_in_browser") as opened:
                 self.assertEqual(mono.handle_second_instance(Path(folder),LOG),0)
             focused.assert_called_once_with("http://127.0.0.1:4173","t");opened.assert_not_called()
+
+    def test_a_double_click_while_the_first_window_is_arriving_opens_no_second_window(self):
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder,"ui-engine.json").write_text(json.dumps({"engine":"browser"}),encoding="utf-8")
+            Path(folder,"session.json").write_text(json.dumps({"instanceId":"x","url":"http://127.0.0.1:4173","token":"t","windowOpenedAt":time.time()}),encoding="utf-8")
+            answers=iter([False,False,True])
+            with patch.object(mono,"healthy",return_value=True),patch.object(mono,"focus_window",side_effect=lambda *a:next(answers,True)),patch.object(mono.time,"sleep"),patch.object(mono,"open_in_browser") as opened:
+                self.assertEqual(mono.handle_second_instance(Path(folder),LOG),0)
+            opened.assert_not_called()
+
+    def test_a_window_opened_long_ago_and_closed_is_reopened_by_the_next_click(self):
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder,"ui-engine.json").write_text(json.dumps({"engine":"browser"}),encoding="utf-8")
+            Path(folder,"session.json").write_text(json.dumps({"instanceId":"x","url":"http://127.0.0.1:4173","token":"t","windowOpenedAt":time.time()-3600}),encoding="utf-8")
+            with patch.object(mono,"healthy",return_value=True),patch.object(mono,"focus_window",return_value=False),patch.object(mono,"open_in_browser") as opened:
+                self.assertEqual(mono.handle_second_instance(Path(folder),LOG),0)
+            opened.assert_called_once()
 
     def test_second_click_while_mono_is_still_starting_opens_nothing_and_shows_no_error(self):
         with tempfile.TemporaryDirectory() as folder:

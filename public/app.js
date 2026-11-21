@@ -19,7 +19,7 @@ import {SafetyTrack} from './safety-track.js';
 import {LevelPreview,addBookmark,SaveClock,BatteryWatch,DEFAULT_TITLE,suggestTitle} from './studio-extras.js';import {PlayerWave} from './waveform.js';
 import {speakerFor,SPEAKER_NAMES} from './speakers.js';
 import {paragraphs,isDoubtful,nextDoubtful,silenceSkips,skipTarget,savedSeconds,cleanText,transcriptStats,learnTerms,rememberTerms,promptWithTerms} from './intelligence.js';
-import {guardSingleWindow} from './window-guard.js';
+import {guardSingleWindow,closeIfOrphaned} from './window-guard.js';
 import {prefs,PREF_DEFAULTS,ACCENTS,applyVisualPrefs} from './prefs.js';
 import {FloatingRecorder} from './floating-recorder.js';
 import {runTour} from './tour.js';
@@ -1915,6 +1915,7 @@ function wire(){
  matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(settings.theme==='system')applyTheme()});
 }
 async function init(){
+ void closeIfOrphaned();
  guardSingleWindow({onFocus:()=>{try{window.focus()}catch{}document.body.classList.add('window-called');setTimeout(()=>document.body.classList.remove('window-called'),900)},onDuplicate:showDuplicateWindow});
  applyTheme();wire();enhanceUI();await openDB();
  const local=await localLibraryClient();if(local)credentialForm=mountCredentials($('#groq-credentials'),{client:new CredentialsClient(local),onChange:value=>{$('#resume-transcription').hidden=!value.configured||!pendingTranscriptionId;groqConfigured=Boolean(value.configured||value.managed);const guide=$('#groq-guide');if(guide&&!guide.dataset.touched)guide.open=!groqConfigured;void checkHealth()}});else $('#groq-settings-card').hidden=true;

@@ -31,3 +31,10 @@ export function guardSingleWindow({onDuplicate=()=>{},onFocus=()=>{},Channel=glo
  channel.postMessage({type:'hello',id,started});
  return {release(){channel.close()}};
 }
+/** A MONO window the browser brought back from its last session while MONO itself is not running
+ * (the page comes from the offline shell): it closes itself instead of showing a dead window. */
+export async function closeIfOrphaned({fetchHealth=()=>fetch('/api/health',{cache:'no-store',signal:AbortSignal.timeout(4000)}),close=()=>globalThis.close(),storage=globalThis.sessionStorage}={}){
+ try{if(storage.getItem(FLAG)!=='1')return false}catch{return false}
+ for(let attempt=0;attempt<3;attempt++){try{const response=await fetchHealth();if(response.ok)return false}catch{}await new Promise(r=>setTimeout(r,1500))}
+ try{close()}catch{}return true;
+}

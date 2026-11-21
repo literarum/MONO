@@ -572,6 +572,7 @@ def open_in_browser(url: str, browser=None) -> None:
 
 
 SECOND_INSTANCE_WAIT = 20.0
+WINDOW_ARRIVAL_WAIT = 15.0
 
 
 def focus_window(url: str, token: str, timeout: float = 2.0) -> bool:
@@ -659,6 +660,17 @@ def launch_native(folder: Path, url: str) -> None:
     webview.start(debug=False, private_mode=False, storage_path=str(session))
 
 
+def mark_window_opened(folder: Path) -> None:
+    """Note in session.json when this instance asked the browser for its window (see handle_second_instance)."""
+    session_file = folder / "session.json"
+    try:
+        session = json.loads(session_file.read_text(encoding="utf-8"))
+        session["windowOpenedAt"] = time.time()
+        session_file.write_text(json.dumps(session), encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+
+
 def launch_window(folder: Path, url: str, logger: logging.Logger,
                   preferred: str = "auto", pages=None) -> None:
     """MONO opens in a separate window of the person's own browser (their usual profile). The older
@@ -688,6 +700,7 @@ def launch_window(folder: Path, url: str, logger: logging.Logger,
         except OSError:
             pass
     logger.info("GUI: a window of the person's own browser")
+    mark_window_opened(folder)
     open_in_browser(url)
     serve_browser(url, logger, pages or (lambda: None), linger=lambda: BACKGROUND["lingerSeconds"])
 
@@ -801,8 +814,20 @@ def handle_second_instance(folder: Path, logger: logging.Logger) -> int:
         PORT=int(match.group(1)); URL=url
     if current_engine(folder) != "native":
         token=session.get("token") or ""
-        if token and focus_window(URL, token):
-            logger.info("Second invocation: brought the open MONO window forward")
+        # The first launch may still be opening its window (a cold browser start takes seconds, and a
+        # slow double-click starts MONO twice): wait for that window and bring it forward instead of
+        # opening a second one. Only a window that was opened and then closed is reopened.
+        opened_at=float(session.get("windowOpenedAt") or 0)
+        deadline=time.monotonic()+(WINDOW_ARRIVAL_WAIT if time.time()-opened_at<WINDOW_ARRIVAL_WAIT*4 else 0)
+        while True:
+            if token and focus_window(URL, token):
+                logger.info("Second invocation: brought the open MONO window forward")
+                return 0
+            if time.monotonic()>=deadline:
+                break
+            time.sleep(.5)
+        if opened_at and time.time()-opened_at<WINDOW_ARRIVAL_WAIT*4:
+            logger.info("Second invocation: the first window is still arriving; not opening another")
             return 0
         open_in_browser(URL)
         logger.info("Second invocation: no MONO window was open; opened one")

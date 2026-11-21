@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {markLauncherWindow,guardSingleWindow} from '../public/window-guard.js';
+import {markLauncherWindow,guardSingleWindow,closeIfOrphaned} from '../public/window-guard.js';
 class Bus{constructor(){this.members=new Set()}}
 const bus=new Bus();
 class Channel{constructor(){this.onmessage=null;bus.members.add(this)}postMessage(data){for(const member of bus.members)if(member!==this)queueMicrotask(()=>member.onmessage?.({data}))}close(){bus.members.delete(this)}}
@@ -18,4 +18,10 @@ test('of two MONO windows the newer one closes and the older comes forward; a re
  assert.equal(focused,1);assert.equal(closedNew,1);assert.equal(closedOld,0);assert.equal(typeof duplicate,'function','the window stayed open, so it offers to work here');
  duplicate();await new Promise(r=>setTimeout(r,30));assert.equal(closedOld,1,'taking over retires the other window');
  for(const [k,v] of Object.entries(saved))Object.defineProperty(g,k,{value:v,configurable:true});
+});
+test('a restored MONO window with no MONO running closes itself; an ordinary page or a live MONO stays',async()=>{
+ const store=new Map([['mono-launcher-window','1']]),storage={getItem:k=>store.get(k)??null};let closed=0;
+ assert.equal(await closeIfOrphaned({storage,close:()=>closed++,fetchHealth:async()=>({ok:true})}),false);assert.equal(closed,0);
+ assert.equal(await closeIfOrphaned({storage:{getItem:()=>null},close:()=>closed++,fetchHealth:async()=>{throw new Error('down')}}),false);assert.equal(closed,0);
+ const timer=globalThis.setTimeout;globalThis.setTimeout=fn=>timer(fn,0);try{assert.equal(await closeIfOrphaned({storage,close:()=>closed++,fetchHealth:async()=>{throw new Error('down')}}),true)}finally{globalThis.setTimeout=timer}assert.equal(closed,1);
 });
