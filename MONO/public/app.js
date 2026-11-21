@@ -23,6 +23,7 @@ import {guardSingleWindow,closeIfOrphaned} from './window-guard.js';
 import {prefs,PREF_DEFAULTS,ACCENTS,applyVisualPrefs} from './prefs.js';
 import {FloatingRecorder} from './floating-recorder.js';
 import {runTour} from './tour.js';
+import {guardAppShell} from './app-shell-guard.js';
 import {collectEntries,search as searchSettings,scrollToCentre} from './settings-nav.js';
 import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
 
@@ -1982,6 +1983,7 @@ function wire(){
 }
 async function init(){
  void closeIfOrphaned();
+ guardAppShell({onFind:()=>{const field=$({editor:'#editor-search',library:'#library-search',settings:'#settings-search'}[state.view]||'');if(field){field.focus();field.select?.()}else if(state.view!=='settings'){go('library');requestAnimationFrame(()=>$('#library-search')?.focus())}}});
  guardSingleWindow({onFocus:()=>{try{window.focus()}catch{}document.body.classList.add('window-called');setTimeout(()=>document.body.classList.remove('window-called'),900)},onDuplicate:showDuplicateWindow});
  applyTheme();wire();enhanceUI();await openDB();
  const local=await localLibraryClient();if(local)credentialForm=mountCredentials($('#groq-credentials'),{client:new CredentialsClient(local),onChange:value=>{$('#resume-transcription').hidden=!value.configured||!pendingTranscriptionId;groqConfigured=Boolean(value.configured||value.managed);const guide=$('#groq-guide');if(guide&&!guide.dataset.touched)guide.open=!groqConfigured;void checkHealth()}});else $('#groq-settings-card').hidden=true;

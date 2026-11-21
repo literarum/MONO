@@ -505,3 +505,9 @@ input[type=search]::-webkit-search-decoration{-webkit-appearance:none}
 .is-found{animation:au-found 2.6s var(--au-ease) both;border-radius:12px}
 @keyframes au-found{0%{background:color-mix(in srgb,var(--tint) 0%,transparent)}15%{background:color-mix(in srgb,var(--tint) 26%,transparent)}100%{background:color-mix(in srgb,var(--tint) 0%,transparent)}}
 @media (max-width:1100px){.settings-index{display:flex!important;position:static!important;flex-direction:column}.settings-index-list{flex-direction:row;overflow-x:auto;gap:6px;padding-bottom:4px;scrollbar-width:none}.settings-index-list a{flex:0 0 auto}.settings-layout{grid-template-columns:1fr!important}}
+
+/* —— An application, not a page: no text selection, image dragging or tap flashes outside fields ——— */
+.app-shell-guarded body{-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;-webkit-touch-callout:none}
+.app-shell-guarded img,.app-shell-guarded svg,.app-shell-guarded a{-webkit-user-drag:none;user-drag:none}
+.app-shell-guarded :is(input,textarea,[contenteditable]:not([contenteditable="false"]),#editor-segments,.transcript-paragraph,.summary-body,[data-selectable]){-webkit-user-select:text;user-select:text}
+.app-shell-guarded #main{overscroll-behavior:contain}
