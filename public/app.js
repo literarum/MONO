@@ -22,6 +22,7 @@ import {paragraphs,isDoubtful,nextDoubtful,silenceSkips,skipTarget,savedSeconds,
 import {guardSingleWindow} from './window-guard.js';
 import {prefs,PREF_DEFAULTS,ACCENTS,applyVisualPrefs} from './prefs.js';
 import {FloatingRecorder} from './floating-recorder.js';
+import {runTour} from './tour.js';
 import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -305,7 +306,7 @@ async function initializeNative(local){
 }
 async function showSetup(initialStep=null){
  if(setupWindow)return;if(setupOpening){await setupOpening;if(initialStep&&!setupWindow)return showSetup(initialStep);return}setupOpening=(async()=>{const local=await localLibraryClient();if(!local)return;
- const opened=await openOnboarding({library:local,storage:storageDetails,configure:configureLibrary,choose:chooseLibraryFolder,ensureNative:()=>initializeNative(local),onArchive:async()=>{updateStorageSettings();await refresh()},onComplete:()=>{setupWindow=null;void credentialForm?.refresh();void ensureArchive('setup').then(()=>offerLegacyImport())},onError:error=>notify(error.message,'error'),helpTemplate:$('#groq-settings-card .setup-details'),initialStep,canPlay:canAudition,playAudio:audio=>mediaInterlock.play(audio)});setupWindow=opened&&!opened.closed?opened:null;
+ const opened=await openOnboarding({library:local,storage:storageDetails,configure:configureLibrary,choose:chooseLibraryFolder,ensureNative:()=>initializeNative(local),onArchive:async()=>{updateStorageSettings();await refresh()},onComplete:()=>{setupWindow=null;void credentialForm?.refresh();void ensureArchive('setup').then(()=>offerLegacyImport()).then(()=>{if(!prefs.get('tourDone'))setTimeout(startTour,600)})},onError:error=>notify(error.message,'error'),helpTemplate:$('#groq-settings-card .setup-details'),initialStep,canPlay:canAudition,playAudio:audio=>mediaInterlock.play(audio)});setupWindow=opened&&!opened.closed?opened:null;
  })().finally(()=>{setupOpening=null});return setupOpening;
 }
 /** Transcriber controls: Ctrl+Space / F9 / Space play–pause (pausing steps back 2 s), Alt+←/→ seek ±5 s. */
@@ -1515,6 +1516,8 @@ function renderInsight(rec){
  const smart=$('#smart-speed'),saved=savedSeconds(view?.skips);smart.hidden=saved<5;
  smart.setAttribute('aria-pressed',String(smartSpeed));smart.textContent=smartSpeed?`Без пауз · −${shortTime(saved)}`:'Без пауз';
 }
+let tourOpen=false;
+function startTour(){if(tourOpen)return;tourOpen=true;closeModal();document.querySelectorAll('#toast-area .toast').forEach(toast=>{if(/тур/.test(toast.textContent))toast.remove()});runTour({go,reduceMotion:()=>document.body.classList.contains('reduce-motion')||matchMedia('(prefers-reduced-motion: reduce)').matches,onDone:()=>{tourOpen=false;prefs.set('tourDone',true)}})}
 function plural(n,one,few,many){const a=n%10,b=n%100;return a===1&&b!==11?one:a>=2&&a<=4&&(b<12||b>14)?few:many}
 /** Smart Speed: while playing, a long pause between phrases is jumped over (keeps 0.45 s of air). */
 function smartSkip(time){
@@ -1827,6 +1830,7 @@ function wire(){
 
  for(const id of ['hero-import','record-import','library-import'])$('#'+id).onclick=()=>withInput(importFile);
  $('#start-record').onclick=()=>{stopLevelCheck();return beginRecord()};
+ $('#start-tour')?.addEventListener('click',startTour);
  $('#library-select-mode').onclick=()=>setSelecting(!selection.active);$('#bulk-done').onclick=()=>setSelecting(false);
  $('#bulk-all').onclick=()=>{if(selection.ids.size&&selection.ids.size===libraryVisible.length)selection.ids.clear();else libraryVisible.forEach(id=>selection.ids.add(id));state.librarySignature=null;void renderLibrary();reflectSelection()};
  $('#bulk-transcribe').onclick=()=>void bulkTranscribe();$('#bulk-rename').onclick=()=>void bulkRename();$('#bulk-export').onclick=()=>void bulkExport();$('#bulk-delete').onclick=bulkDelete;
@@ -1931,6 +1935,7 @@ async function init(){
  if(local)await showSetup();
  if(local&&!setupWindow&&storageDetails().libraryAvailable)void offerLegacyImport();
  if(local&&!setupWindow)void remindGroq(local);
+ if(local&&!setupWindow&&!prefs.get('tourDone'))setTimeout(()=>notifyLater('В MONO много нового — посмотрите короткий тур.','info',{text:'Показать тур',run:startTour}),2500);
  announceRecovered();
  if(storage.transfer?.state==='running')void runLibraryTransfer(null,storage.transfer);
  else if(state.view!=='settings'&&(storage.transfer||storage.transferRecoveryError)){

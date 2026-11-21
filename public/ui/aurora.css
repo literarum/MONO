@@ -60,10 +60,8 @@ main{padding-top:28px!important}
 /* —— Dedication under the logo ——————————————————————————————————— */
 .brand{margin-bottom:6px!important}
 .brand-dedication{display:flex;align-items:center;gap:7px;margin:0 12px 30px;font-size:12px;font-weight:500;letter-spacing:.01em;color:var(--muted);font-style:italic}
-.dedication-heart{width:9px;height:9px;flex:none;background:linear-gradient(135deg,#ff6b8b,#ff2d55);transform:rotate(45deg);border-radius:2px 0 2px 0;position:relative;margin:0 3px 0 2px;animation:au-heart 2.6s var(--au-ease) infinite}
-.dedication-heart::before,.dedication-heart::after{content:"";position:absolute;width:9px;height:9px;border-radius:50%;background:inherit}
-.dedication-heart::before{left:-4.5px;top:0}.dedication-heart::after{left:0;top:-4.5px}
-@keyframes au-heart{0%,70%,100%{transform:rotate(45deg) scale(1)}78%{transform:rotate(45deg) scale(1.18)}86%{transform:rotate(45deg) scale(.98)}}
+.dedication-heart{width:13px;height:13px;flex:none;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23ff3b66' d='M12 21s-7.5-4.6-9.6-9.3C.9 8.3 3 4.5 6.6 4.5c2.1 0 3.6 1.2 4.4 2.6.8-1.4 2.3-2.6 4.4-2.6 3.6 0 5.7 3.8 4.2 7.2C19.5 16.4 12 21 12 21Z'/%3E%3C/svg%3E") center/contain no-repeat;animation:au-heart 2.6s var(--au-ease) infinite}
+@keyframes au-heart{0%,70%,100%{transform:scale(1)}78%{transform:scale(1.22)}86%{transform:scale(.96)}}
 
 /* —— Motion on every interaction ————————————————————————————————————— */
 .btn,.text-link,.back-link,.btn-plain,.icon-btn,.nav-link,.segmented button,.accent-dot,.select-control,.select-option,.settings-index a,.record-card,.metric-card,.drop-zone,.fr-btn,.preflight-item.is-actionable,details>summary,.switch,.check-row input,.usage-tile,.guide-step,.lib-check,.view-toggle button{
@@ -360,3 +358,32 @@ body.window-called .app-shell{animation:au-called 900ms var(--au-ease)}
 .record-card-meta strong{font-family:inherit!important}
 .library-list[data-view=list] .record-card-meta{border:0!important;padding:0!important}
 .bulk-bar{bottom:auto!important;top:10px;margin:0 0 14px!important}
+
+/* —— Feature tour ——————————————————————————————————————————————————— */
+.tour{position:fixed;inset:0;z-index:400}
+.tour-veil{position:absolute;inset:0;background:color-mix(in srgb,#020610 66%,transparent);-webkit-backdrop-filter:blur(3px) saturate(120%);backdrop-filter:blur(3px) saturate(120%);animation:au-fade var(--au-slow) both;transition:clip-path var(--au-slow) var(--au-ease)}
+.tour:not(.has-target) .tour-veil{clip-path:none!important}
+body[data-theme=light] .tour-veil{background:color-mix(in srgb,#0b1d44 38%,transparent)}
+.tour-ring{position:absolute;border-radius:20px;pointer-events:none;opacity:0;box-shadow:0 0 0 2px var(--tint),0 0 0 8px color-mix(in srgb,var(--tint) 22%,transparent),0 0 40px color-mix(in srgb,var(--tint) 45%,transparent);transition:left var(--au-slow) var(--au-ease),top var(--au-slow) var(--au-ease),width var(--au-slow) var(--au-ease),height var(--au-slow) var(--au-ease),opacity var(--au-med)}
+.tour.has-target .tour-ring{opacity:1;animation:au-tour-ring 2.4s ease-in-out infinite}
+@keyframes au-tour-ring{50%{box-shadow:0 0 0 2px var(--tint),0 0 0 12px color-mix(in srgb,var(--tint) 12%,transparent),0 0 56px color-mix(in srgb,var(--tint) 55%,transparent)}}
+.tour-card{position:absolute;left:50%;top:50%;width:min(420px,calc(100vw - 32px));transform:translate(-50%,-50%);padding:24px!important;border-radius:24px!important;
+ background:color-mix(in srgb,var(--surface) 84%,transparent)!important;-webkit-backdrop-filter:blur(24px) saturate(170%);backdrop-filter:blur(24px) saturate(170%);
+ transition:left var(--au-slow) var(--au-ease),top var(--au-slow) var(--au-ease)}
+.tour.has-target .tour-card{transform:none}
+.tour-card.is-in{animation:au-tour-card var(--au-slow) var(--au-spring) both}
+@keyframes au-tour-card{from{opacity:0;translate:0 12px;scale:.96}to{opacity:1;translate:0 0;scale:1}}
+.tour-card h2{margin:12px 0 8px;font-size:21px;letter-spacing:-.025em}
+.tour-text{margin:0 0 20px;font-size:14.5px;line-height:1.6;color:var(--muted)}
+.tour-progress{display:flex;gap:5px}
+.tour-progress i{height:4px;flex:1;border-radius:2px;background:color-mix(in srgb,var(--text) 14%,transparent);transition:background var(--au-med) var(--au-ease)}
+.tour-progress i.on{background:var(--tint)}
+.tour-actions{display:flex;align-items:center;gap:8px}
+.tour-spacer{flex:1}
+.tour-art{height:120px;margin:-6px -6px 10px;border-radius:18px;position:relative;overflow:hidden;background:radial-gradient(260px 140px at 30% 0%,color-mix(in srgb,var(--tint) 55%,transparent),transparent 70%),radial-gradient(220px 140px at 90% 100%,rgba(120,80,255,.45),transparent 70%),linear-gradient(160deg,#0b1834,#060b18)}
+.tour-art[hidden]{display:none}
+.tour-art[data-art=wave]::before{content:"";position:absolute;inset:30px 26px;background:repeating-linear-gradient(90deg,rgba(255,255,255,.9) 0 4px,transparent 4px 11px);-webkit-mask:linear-gradient(90deg,transparent,#000 15%,#000 85%,transparent);mask:linear-gradient(90deg,transparent,#000 15%,#000 85%,transparent);clip-path:polygon(0 50%,5% 30%,10% 60%,15% 20%,20% 70%,25% 35%,30% 55%,35% 10%,40% 80%,45% 30%,50% 60%,55% 15%,60% 75%,65% 40%,70% 55%,75% 25%,80% 65%,85% 35%,90% 55%,95% 45%,100% 50%,100% 52%,95% 57%,90% 47%,85% 67%,80% 37%,75% 77%,70% 47%,65% 62%,60% 27%,55% 87%,50% 42%,45% 72%,40% 22%,35% 92%,30% 47%,25% 67%,20% 32%,15% 82%,10% 42%,5% 72%,0 52%);animation:au-wave 2.4s ease-in-out infinite alternate}
+@keyframes au-wave{to{transform:scaleY(.6)}}
+.tour-art[data-art=heart]::before{content:"";position:absolute;left:50%;top:50%;width:64px;height:64px;margin:-32px 0 0 -32px;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff7a95'/%3E%3Cstop offset='1' stop-color='%23ff2d55'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath fill='url(%23g)' d='M12 21s-7.5-4.6-9.6-9.3C.9 8.3 3 4.5 6.6 4.5c2.1 0 3.6 1.2 4.4 2.6.8-1.4 2.3-2.6 4.4-2.6 3.6 0 5.7 3.8 4.2 7.2C19.5 16.4 12 21 12 21Z'/%3E%3C/svg%3E") center/contain no-repeat;filter:drop-shadow(0 0 24px rgba(255,45,85,.65));animation:au-beat 1.4s ease-in-out infinite}
+@keyframes au-beat{0%,100%{transform:scale(1)}15%{transform:scale(1.14)}30%{transform:scale(.98)}45%{transform:scale(1.08)}}
+.tour.is-leaving{animation:au-leave 260ms var(--au-ease) both}
