@@ -306,7 +306,7 @@ async function initializeNative(local){
 }
 async function showSetup(initialStep=null){
  if(setupWindow)return;if(setupOpening){await setupOpening;if(initialStep&&!setupWindow)return showSetup(initialStep);return}setupOpening=(async()=>{const local=await localLibraryClient();if(!local)return;
- const opened=await openOnboarding({library:local,storage:storageDetails,configure:configureLibrary,choose:chooseLibraryFolder,ensureNative:()=>initializeNative(local),onArchive:async()=>{updateStorageSettings();await refresh()},onComplete:()=>{setupWindow=null;void credentialForm?.refresh();void ensureArchive('setup').then(()=>offerLegacyImport()).then(()=>{if(!prefs.get('tourDone'))setTimeout(startTour,600)})},onError:error=>notify(error.message,'error'),helpTemplate:$('#groq-settings-card .setup-details'),initialStep,canPlay:canAudition,playAudio:audio=>mediaInterlock.play(audio)});setupWindow=opened&&!opened.closed?opened:null;
+ const opened=await openOnboarding({library:local,storage:storageDetails,configure:configureLibrary,choose:chooseLibraryFolder,ensureNative:()=>initializeNative(local),onArchive:async()=>{updateStorageSettings();await refresh()},onComplete:()=>{setupWindow=null;void credentialForm?.refresh();void ensureArchive('setup').then(()=>offerLegacyImport()).then(()=>{if(!prefs.get('tourDone')&&!navigator.webdriver)setTimeout(startTour,600)})},onError:error=>notify(error.message,'error'),helpTemplate:$('#groq-settings-card .setup-details'),initialStep,canPlay:canAudition,playAudio:audio=>mediaInterlock.play(audio)});setupWindow=opened&&!opened.closed?opened:null;
  })().finally(()=>{setupOpening=null});return setupOpening;
 }
 /** Transcriber controls: Ctrl+Space / F9 / Space play–pause (pausing steps back 2 s), Alt+←/→ seek ±5 s. */
@@ -1111,8 +1111,8 @@ async function soundCheckBeforeRecording(){
 }
 async function beginRecord(){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
- if(storageDetails().local&&!storageDetails().libraryConfigured&&!await ensureArchive('record'))return;
- if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');if(!nativeController.snapshot.connected){try{await nativeController.connect()}catch(error){notify(`Модуль записи не отвечает${error?.code?' ('+error.code+')':''}. Откройте «Настройки → Предполётная проверка».`,'error');void preflight?.run({force:true}).catch(()=>{});return}}const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}if(prefs.get('checkSoundEveryTime')&&!await soundCheckBeforeRecording())return;if(!await countdownBeforeRecording())return;await startWithAutopilot(await autopilotBeforeStart(await captureSources.selection()))}catch(error){if(error?.name!=='AbortError')void notifyCaptureError(error.message||'Не удалось начать запись.',error.code)}return}
+ if(storageDetails().local&&(!storageDetails().libraryConfigured||!storageDetails().libraryAvailable)&&!await ensureArchive('record'))return;
+ if(storageDetails().local){try{if(!nativeController)await initializeNative(await localLibraryClient());if(!nativeController)throw new Error('Модуль записи не запустился. Откройте «Настройки → Проверка».');if(!nativeController.snapshot.connected){try{await nativeController.connect()}catch(error){notify(`Модуль записи не отвечает${error?.code?' ('+error.code+')':''}. Откройте «Настройки → Предполётная проверка».`,'error');void preflight?.run({force:true}).catch(()=>{});return}}const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}if(prefs.get('checkSoundEveryTime')&&!await soundCheckBeforeRecording())return;if(!await countdownBeforeRecording())return;await startWithAutopilot(await autopilotBeforeStart(await captureSources.selection()))}catch(error){if(error?.name!=='AbortError')void notifyCaptureError(error.message||'Не удалось начать запись.',error.code)}return}
  if(state.recordBusy||state.capture)return;
  state.recordBusy=true;
  let capture=null;
@@ -1965,14 +1965,26 @@ function announceRecovered(){
  * person closes the assistant or presses Record without choosing, MONO uses Documents itself
  * and says where — never a dead end. An archive that exists but is unreachable is not
  * replaced silently: that could split someone's recordings across two folders. */
-async function ensureArchive(reason){
- const storage=storageDetails();if(!storage.local||storage.libraryConfigured)return true;
- try{await configureLibrary({useDefault:true});updateStorageSettings();await refresh();
-  const full=storageDetails().libraryPath||'',parts=full.split(/[\\/]/).filter(Boolean),where=parts.length?'«'+parts.slice(-2).join(' › ')+'»':'«Документы»';
-  notify(`Записи сохраняются в ${where}.`+(reason==='setup'?' Папку можно изменить в настройках.':''),'info',{text:'Изменить',run:()=>{go('settings');showLibrarySetup()}});
-  await initializeNative(await localLibraryClient()).catch(()=>{});void backgroundAudioCare('device');
-  return true}
- catch(error){notify('Не удалось создать папку для записей в «Документах»: '+error.message,'error',fixFor('LIBRARY_NOT_CONFIGURED'));return false}
+/** No archive yet: MONO asks where to keep the recordings (never a bare notice) and, once there is
+ * one, continues what the person was doing. Resolves true when an archive is ready. */
+function ensureArchive(reason){
+ const storage=storageDetails();if(!storage.local||(storage.libraryConfigured&&storage.libraryAvailable))return Promise.resolve(true);
+ if(reason==='setup')return Promise.resolve(false); // closing setup is «later», not «put it anywhere»
+ return new Promise(resolve=>{
+  const done=async options=>{try{await configureLibrary(options);await archiveChanged();resolve(true)}catch(error){notify(error.message,'error');resolve(false)}};
+  const purpose=reason==='record'?'Чтобы начать запись, выберите, где MONO будет хранить аудио и расшифровки.':reason==='import'?'Чтобы добавить файл, выберите, где MONO будет хранить аудио и расшифровки.':'Выберите, где MONO будет хранить аудио и расшифровки.';
+  modal(storage.libraryConfigured?'Подключите папку с записями':'Где сохранять записи?',`<p>${storage.libraryConfigured?'Папка с архивом сейчас недоступна — например, отключён диск. Подключите его или выберите другую папку.':purpose}</p><p class="field-hint">Файлы остаются на этом компьютере. Папку можно поменять в настройках.</p>`,[
+   {text:'Выбрать папку',run:async()=>{try{const choice=await chooseLibraryFolder('create');if(choice.cancelled){resolve(false);return}await done({choiceId:choice.choiceId})}catch(error){notify(error.message,'error');resolve(false)}}},
+   ...(!storage.libraryConfigured?[{text:'Использовать «Документы»',primary:true,run:()=>done({useDefault:true})}]:[])]);
+  const cancel=$('#modal-actions').firstElementChild;if(cancel)cancel.addEventListener('click',()=>resolve(false),{once:true});
+ });
+}
+/** After the archive changed (chosen, moved, reconnected): every part that holds it reconnects. */
+async function archiveChanged(){
+ await refreshStorageStatus().catch(()=>{});updateStorageSettings();await refresh().catch(()=>{});
+ const local=await localLibraryClient();if(!local)return;
+ try{if(nativeController){await nativeController.connect();await captureSources?.load()}else await initializeNative(local)}catch(error){notify(error.message,'error',fixFor(error.code))}
+ void preflight?.run({force:true}).catch(()=>{});void backgroundAudioCare('device');
 }
 /** One-button import of the pre-desktop browser library, offered once after setup. */
 async function offerLegacyImport(){
@@ -2037,9 +2049,8 @@ async function runLibraryTransfer(kind,existing=null){
 }
 function showLibrarySetup(){
  const storage=storageDetails();
- modal(storage.libraryConfigured?'Подключите ваш архив':'Место для ваших записей',storage.libraryConfigured?'Папка архива сейчас недоступна. Подключите диск или выберите папку, в которой уже хранятся ваши записи.':'MONO сохраняет аудио и расшифровки в обычной папке на компьютере. Оставьте папку «Документы / MONO Library» или выберите свою.',[
-  {text:'Выбрать папку',run:async()=>{const choice=await chooseLibraryFolder(storage.libraryConfigured?'open':'create');if(choice.cancelled)return;await configureLibrary({choiceId:choice.choiceId});updateStorageSettings();await refresh();await initializeNative(await localLibraryClient());notify('Архив подключён')}},
-  ...(!storage.libraryConfigured?[{text:'Использовать «Документы»',primary:true,run:async()=>{await configureLibrary({useDefault:true});updateStorageSettings();await refresh();await initializeNative(await localLibraryClient());notify('Папка для записей готова')}}]:[])
- ]);
+ if(!storage.libraryConfigured||!storage.libraryAvailable){void ensureArchive('settings');return}
+ modal('Другая папка для архива','<p>Выберите папку. Если в ней уже есть архив MONO — он подключится; если нет — там начнётся новый архив.</p><p class="field-hint">Записи в нынешней папке остаются на месте. Чтобы перенести их, используйте «Перенести архив».</p>',[
+  {text:'Выбрать папку',primary:true,run:async()=>{const choice=await chooseLibraryFolder('create');if(choice.cancelled)return;await configureLibrary({choiceId:choice.choiceId});await archiveChanged();notify('Архив подключён: '+(storageDetails().libraryPath||''))}}]);
 }
 init().catch(e=>{notify('Ошибка инициализации: '+e.message,'error');console.error(e)});

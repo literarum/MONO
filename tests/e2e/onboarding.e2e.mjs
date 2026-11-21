@@ -50,3 +50,31 @@ test('reconnecting a missing archive closes setup instead of leaving an empty pa
  assert.equal(status.libraryAvailable,true);assert.match(status.libraryPath,/Новое место$/);
  assert.deepEqual(errors,[]);
 });
+
+test('no folder at first launch: «Начать запись» offers to choose one, the chosen folder works, and recording starts; choosing another folder later switches to it',{skip:!playwright&&'playwright is not installed',timeout:120000},async t=>{
+ const server=await localServer(t,{MONO_CORE_SCRIPT:FOLDER_WORKER});
+ const first=path.join(server.root,'Первая папка'),second=path.join(server.root,'Вторая папка');
+ writeFileSync(path.join(server.root,'test-picker.json'),JSON.stringify({create:first,open:first}));
+ const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
+ const context=await browser.newContext();await context.grantPermissions(['microphone'],{origin:server.url});
+ const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(server.url+'/');await page.waitForSelector('.setup-panel');
+ await page.click('.setup-close');await page.waitForSelector('.setup-panel',{state:'detached'});
+ await page.click('.nav-link[data-view=record]');await page.click('#start-record');
+ // an offer, not a notice: the person picks the place right here
+ await page.waitForSelector('#modal:not([hidden])');assert.match(await page.textContent('#modal-title'),/сохранять записи/);
+ await page.click('#modal-actions button:has-text("Выбрать папку")');
+ await page.waitForFunction(()=>!document.querySelector('#stop-record').hidden,null,{timeout:45000});
+ let status=await page.evaluate(async()=>(await fetch('/api/local/status')).json());assert.equal(status.libraryAvailable,true);assert.match(status.libraryPath,/Первая папка$/);
+ assert.deepEqual(await page.evaluate(()=>[...document.querySelectorAll('.toast.error')].map(t=>t.textContent)),[]);
+ await page.click('#stop-record');await page.waitForFunction(()=>!document.querySelector('#start-record').hidden,null,{timeout:20000});
+ // later, Settings → another folder: it is used, no «недоступна»
+ writeFileSync(path.join(server.root,'test-picker.json'),JSON.stringify({create:second,open:second}));
+ await page.click('.nav-link[data-view=settings]');await page.click('#request-persistence');await page.waitForSelector('#modal:not([hidden])');
+ await page.click('#modal-actions button:has-text("Выбрать папку")');
+ await page.waitForFunction(()=>/Вторая папка/.test(document.querySelector('#storage-persistence')?.textContent||''),null,{timeout:30000});
+ status=await page.evaluate(async()=>(await fetch('/api/local/status')).json());assert.equal(status.libraryAvailable,true);assert.match(status.libraryPath,/Вторая папка$/);
+ await page.click('.nav-link[data-view=record]');await page.click('#start-record');await page.waitForFunction(()=>!document.querySelector('#stop-record').hidden,null,{timeout:30000});
+ await page.click('#stop-record');
+ const toasts=await page.evaluate(()=>[...document.querySelectorAll('.toast.error')].map(t=>t.textContent));assert.deepEqual(toasts,[]);assert.deepEqual(errors,[]);
+});
