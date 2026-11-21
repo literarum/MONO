@@ -100,7 +100,7 @@ export async function collect({worker,runtime,keyManager,journal,health=()=>({})
  const slow={usb:usb().catch(()=>null),disks:disks().catch(()=>null),security:security().catch(()=>null)};
  const report={generatedAt:new Date().toISOString(),app:{},system:{},core:{},archive:{},capture:{},groq:{},jobs:{},journal:[]};
  const h=health();
- report.app={version:h.version,mode:h.mode,uptimeSeconds:h.uptimeSeconds,launcher:Boolean(env.MONO_LAUNCHER),node:process.version,startsLastHour:journal?.starts(3600e3)??null,startsLastDay:journal?.starts(86400e3)??null};
+ report.app={version:h.version,mode:h.mode,uptimeSeconds:h.uptimeSeconds,launcher:Boolean(env.MONO_LAUNCHER),executable:env.MONO_CORE_EXECUTABLE?path.basename(env.MONO_CORE_EXECUTABLE):null,node:process.version,startsLastHour:journal?.starts(3600e3)??null,startsLastDay:journal?.starts(86400e3)??null};
  report.system={os:`${os.type()} ${os.release()}`,arch:os.arch(),cpu:os.cpus()[0]?.model?.trim()||null,cores:os.cpus().length,memoryGB:+(os.totalmem()/1024**3).toFixed(1),freeMemoryGB:+(os.freemem()/1024**3).toFixed(1),processMB:Math.round(process.memoryUsage().rss/1024**2),systemUptimeHours:+(os.uptime()/3600).toFixed(1)};
  const tools=await settle(runtime,15000);
  report.tools={ffmpeg:tools.ok?Boolean(tools.value.ffmpeg):false,ffprobe:tools.ok?Boolean(tools.value.ffprobe):false,ffmpegVersion:await toolVersion().catch(()=>null)};
@@ -133,7 +133,7 @@ export async function collect({worker,runtime,keyManager,journal,health=()=>({})
  report.groq=await probeGroq({keyManager,base:groqBase,fetch});
  report.power={usbSelectiveSuspend:await slow.usb};report.disks=await slow.disks;report.security=await slow.security;
  // The probe result travels to the window's verdict: who else records and what may block MONO.
- if(report.capture.probe&&typeof report.capture.probe==='object')Object.assign(report.capture.probe,{othersRecording:report.capture.heldBy||[],security:report.security});
+ if(report.capture.probe&&typeof report.capture.probe==='object')Object.assign(report.capture.probe,{othersRecording:report.capture.heldBy||[],security:report.security,executable:report.app.executable});
  report.trends=trends(journal?.rows);
  const list=jobs();const by={};for(const j of list)by[j.status]=(by[j.status]||0)+1;
  report.jobs={counts:by,recentErrors:list.filter(j=>j.error).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0,5).map(j=>({status:j.status,stage:scrub(j.stage),error:scrub(j.error),attempts:j.attempts||0}))};
@@ -164,16 +164,14 @@ export function findings(r){
  if(c.inputs&&!active.length)out.push(F('warning','Windows не видит рабочего микрофона',inputs.length?`Устройства есть, но они ${[...new Set(inputs.map(d=>d.state))].join(', ')}.`:'Ни одного входа звука.','Подключите микрофон или включите его: Параметры → Система → Звук.'));
  if(main?.muted)out.push(F('caution','Микрофон выключен в Windows',`«${main.name}».`,'MONO включит его при записи или нажмите «Исправить» в предполётной проверке.'));
  else if(main&&typeof main.volume==='number'&&main.volume<10)out.push(F('caution','Громкость микрофона почти 0',`«${main.name}»: ${main.volume} %.`,'MONO поднимет её при записи.'));
- if(c.source==='browser'&&c.module?.ready&&(c.module.modes||[]).includes('mic'))out.push(F('caution','Источник записи — окно браузера, хотя системный модуль готов','Системный модуль надёжнее: он открывает микрофон в общем режиме Windows с повтором через встроенный конвертер.','Студия → «Что записывать» → «Микрофон (системный модуль)». Если окно не откроет микрофон, MONO переключится сам.'));
  if(inputs.some(d=>/voicemeeter/i.test(d.name||''))&&c.heldBy!==null)out.push(F('advisory','Установлен Voicemeeter','Если ваш микрофон выбран в Voicemeeter аппаратным входом, он может забирать его у остальных программ.','При ошибке «микрофон занят» уберите микрофон из Voicemeeter на время записи.'));
  // When every way to open the stream fails with E_INVALIDARG, other programs keep recording: the
  // microphone is not "held", MONO's processes are refused — this hint would mislead.
  const refused=c.probe&&!c.probe.opened&&Object.values(c.probe.attempts||{}).length>0&&Object.values(c.probe.attempts).every(v=>v==='80070057');
- if(c.heldBy?.length&&!c.probe?.opened&&!refused)out.push(F('advisory','Микрофон может держать другое приложение',c.heldBy.join(', ')+'.','Если запись не начинается — закройте его.'));
- if(c.module?.error)out.push(F('caution','Системный модуль записи не ответил',`Код: ${c.module.error}.`,'Микрофон пишется через окно; звук компьютера недоступен.'));
- else if(c.module&&!c.module.ready&&['HELPER_UNAVAILABLE','HELPER_MISSING'].includes(c.module.reason))out.push(F('advisory','Системный модуль записи не установлен','Микрофон пишется через окно; звук компьютера недоступен.',/^Windows/.test(r.system?.os||'')?'Переустановите MONO, если нужен звук компьютера.':'Звук компьютера записывается только в версии MONO для Windows.'));
- else if(c.module&&!c.module.ready&&c.module.reason==='NOT_SUPPORTED')out.push(F('caution','Windows не сообщает звуковых устройств','Модуль записи работает, но не видит ни входов, ни выходов.','Подключите микрофон или наушники.'));
- else if(c.module&&!c.module.ready&&c.module.reason)out.push(F('caution','Системный модуль записи не готов',`Код: ${c.module.reason}.`,'MONO перезапустит его сам; при повторе пришлите отчёт.'));
+ if(c.heldBy?.length&&!c.probe?.opened&&!refused&&c.source!=='browser')out.push(F('advisory','Микрофон может держать другое приложение',c.heldBy.join(', ')+'.','Если запись не начинается — закройте его.'));
+ if(c.source!=='browser'&&c.module?.error)out.push(F('caution','Системный модуль записи не ответил',`Код: ${c.module.error}.`,'Микрофон пишется через окно; звук компьютера недоступен.'));
+ else if(c.source!=='browser'&&c.module&&!c.module.ready&&c.module.reason==='NOT_SUPPORTED')out.push(F('caution','Windows не сообщает звуковых устройств','Модуль записи работает, но не видит ни входов, ни выходов.','Подключите микрофон или наушники.'));
+ else if(c.source!=='browser'&&c.module&&!c.module.ready&&c.module.reason)out.push(F('caution','Системный модуль записи не готов',`Код: ${c.module.reason}.`,'MONO перезапустит его сам; при повторе пришлите отчёт.'));
  const g=r.groq||{};
  if(g.configured===false)out.push(F('advisory','Groq не подключён','Записывать можно, расшифровка — после подключения ключа.'));
  else if(g.http===401)out.push(F('warning','Ключ Groq не принят','Groq ответил 401.','Создайте новый ключ на console.groq.com и подключите его снова.'));

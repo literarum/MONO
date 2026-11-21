@@ -2,11 +2,11 @@ import test from 'node:test';import assert from 'node:assert/strict';import {mkd
 import {preflight} from '../backend/local/preflight.mjs';import {Preflight,windowChecks} from '../public/preflight.js';
 const worker=(status,capture={ready:false,supported:false,modes:[]})=>({call:async method=>method==='status'?status:method==='capture.capabilities'?capture:null});
 const key={status:async()=>({configured:false})};
-test('a missing archive folder is a blocking warning; Groq and native capture only degrade',async()=>{
+test('a missing archive folder is a blocking warning; Groq only degrades, a missing module is not reported',async()=>{
  const result=await preflight({worker:worker({libraryConfigured:false}),runtime:()=>({ffmpeg:true,ffprobe:true}),keyManager:key});
  assert.equal(result.canRecord,false);assert.equal(result.level,'warning');
  assert.equal(result.checks.find(c=>c.id==='library').level,'warning');
- assert.equal(result.checks.find(c=>c.id==='groq').level,'caution');assert.equal(result.checks.find(c=>c.id==='capture').level,'advisory');
+ assert.equal(result.checks.find(c=>c.id==='groq').level,'caution');assert.equal(result.checks.find(c=>c.id==='capture'),undefined,'a missing module is not a fault: the microphone records through the window');
 });
 test('a healthy writable archive with free space can record',async()=>{
  const folder=await mkdtemp(path.join(tmpdir(),'mono-preflight-'));

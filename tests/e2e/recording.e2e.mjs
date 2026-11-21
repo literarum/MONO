@@ -15,7 +15,7 @@ try{playwright=await import('playwright')}catch{try{playwright=createRequire(imp
 test('default studio settings record, pause, resume, stop and play back from the archive',{skip:!playwright&&'playwright is not installed'},async t=>{
  const server=await localServer(t);
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream',...(REAL?[]:['--use-fake-device-for-media-stream'])]});t.after(()=>browser.close());
- const context=await browser.newContext();await context.grantPermissions(['microphone'],{origin:server.url});
+ const context=await browser.newContext();await context.addInitScript(()=>{try{localStorage.setItem('mono-source-browser-1','1')}catch{}});await context.grantPermissions(['microphone'],{origin:server.url});
  const page=await context.newPage();const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.goto(server.url+'/');
  // Same API the onboarding uses; keep the saved capture mode at its default.

@@ -25,3 +25,6 @@ native/windows/tests/obj/
 .build/
 .playwright-cli/
 .build-smoke-data-*/
+native/windows/launcher/*.exe
+native/windows/launcher/*.obj
+native/windows/launcher/*.res

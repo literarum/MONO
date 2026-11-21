@@ -3,7 +3,7 @@ import copy,re
 from local_core.paths import atomic_json
 from local_core.protocol import CoreError
 
-DEFAULTS={'version':1,'onboarding':{'completed':False,'keySkipped':False,'soundTested':False},'capture':{'mode':'mic','inputId':None,'outputId':None},'dismissedHints':[]}
+DEFAULTS={'version':1,'onboarding':{'completed':False,'keySkipped':False,'soundTested':False},'capture':{'mode':'browser','inputId':None,'outputId':None},'dismissedHints':[]}
 def invalid():raise CoreError('INVALID_PREFERENCES','Проверьте настройки приложения')
 class Preferences:
     def __init__(self,config):self.config=config

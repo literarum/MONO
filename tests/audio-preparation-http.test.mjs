@@ -22,3 +22,12 @@ test('known client request identity makes lost-response cancellation and duplica
  const server=await localServer(t),client=await clientFor(server),record=await client.import({title:'Cancel before response',mime:'audio/wav',duration:.1},new Blob([wavFixture()])),requestId=crypto.randomUUID();await client.json(`/preparations/${requestId}/cancel`,{method:'POST',body:{}});const canceled=await client.json(`/records/${record.id}/prepare`,{method:'POST',body:{profile:'original',requestId}});assert.equal(canceled.id,requestId);assert.equal(canceled.state,'canceled');assert.equal(canceled.result,undefined);
  const next=crypto.randomUUID(),a=await client.json(`/records/${record.id}/prepare`,{method:'POST',body:{profile:'original',requestId:next}}),b=await client.json(`/records/${record.id}/prepare`,{method:'POST',body:{profile:'original',requestId:next}});assert.equal(a.id,b.id);await assert.rejects(client.json(`/records/${record.id}/prepare`,{method:'POST',body:{profile:'level',requestId:next}}),error=>error.status===409);await ready(client,next);
 });
+test('«Авто»: a quiet recording is measured, gets «Тихий голос» with a reason, and is stored as that profile (cached)',async t=>{
+ const {execFileSync}=await import('node:child_process');let bytes;
+ try{bytes=execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','sine=frequency=220:sample_rate=48000','-af','volume=0.01','-t','4','-f','wav','-'])}catch{t.skip('ffmpeg is not installed');return}
+ const server=await localServer(t),client=await clientFor(server),record=await client.import({title:'Quiet voice',mime:'audio/wav',duration:4},new Blob([bytes]));
+ const created=await client.json(`/records/${record.id}/prepare`,{method:'POST',body:{profile:'auto'}}),job=await ready(client,created.id);
+ assert.equal(job.profile,'quiet');assert.match(job.reason,/тихий/i);assert.equal(job.result.profile,'quiet');
+ const again=await client.json(`/records/${record.id}/prepare`,{method:'POST',body:{profile:'auto'}}),cached=await ready(client,again.id);
+ assert.equal(cached.result.versionId,job.result.versionId,'the chosen version is reused');
+});

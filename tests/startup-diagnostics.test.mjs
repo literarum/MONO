@@ -27,7 +27,7 @@ test('startup failure retains the original deadline and captures phases before c
  t.after(()=>rm(fixture,{recursive:true,force:true}));
  const worker=path.join(fixture,'delayed.py');
  await writeFile(worker,'import json,sys,time\ntime.sleep(12)\nprint(json.dumps({"event":"ready","protocol":1}),flush=True)\nfor line in sys.stdin:\n value=json.loads(line)\n print(json.dumps({"v":1,"id":value["id"],"result":{"configured":False,"verified":False,"masked":None}}),flush=True)\n');
- await assert.rejects(()=>localServer(t,{MONO_STARTUP_TRACE:'1',MONO_CORE_SCRIPT:worker,MONO_DIAGNOSTIC_CANARY:canary}),error=>{
+ await assert.rejects(()=>localServer(t,{MONO_STARTUP_TRACE:'1',MONO_CORE_SCRIPT:worker,MONO_DIAGNOSTIC_CANARY:canary,MONO_TEST_START_DEADLINE_MS:'10000'}),error=>{
   assert.match(error.message,/Server startup timeout/);
   const match=error.message.match(/diagnostics (\{.*\})$/);assert.ok(match);
   const diagnostic=JSON.parse(match[1]);assert.equal(diagnostic.deadlineMs,10000);

@@ -16,7 +16,7 @@ import {captureSelection,selectionKey} from './transcription-selection.js';
 import {Preflight,mountPreflight,remember,recentErrors} from './preflight.js';
 import {windowProbe,microphonePaths,windowFindings,microphoneFindings,formatReport,consolidate} from './diagnostics.js';
 import {SafetyTrack} from './safety-track.js';
-import {LevelPreview,addBookmark,SaveClock,BatteryWatch,DEFAULT_TITLE,suggestTitle} from './studio-extras.js';
+import {LevelPreview,addBookmark,SaveClock,BatteryWatch,DEFAULT_TITLE,suggestTitle} from './studio-extras.js';import {PlayerWave} from './waveform.js';
 import {speakerFor,SPEAKER_NAMES} from './speakers.js';
 import {paragraphs,isDoubtful,nextDoubtful,silenceSkips,skipTarget,savedSeconds,cleanText,transcriptStats,learnTerms,rememberTerms,promptWithTerms} from './intelligence.js';
 import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
@@ -69,13 +69,29 @@ function showRecordSource(){
 function syncLevelPreview(){
  showRecordSource();
  const idle=state.view==='record'&&!state.capture&&!captureActive(nativeController?.snapshot)&&!document.hidden;
- if(!idle){state.previewRequested=false;if(levelPreview.wanted){levelPreview.stop();clearTimeout(state.previewTimer);if(!state.capture&&!captureActive(nativeController?.snapshot))setText('#record-caption','ГОТОВО К ЗАПИСИ')}return}
+ if(!idle){if(state.previewRequested||levelPreview.wanted)stopLevelCheck();return}
  const choice=captureSources?.value||{},mode=captureSources?.fallbackMode?.()||choice.mode||'mic';
  if(mode==='system')return levelPreview.stop();
  // The microphone is only listened to, never recorded, and only for 45 s per visit:
  // Windows shows its "microphone in use" indicator while the preview is open.
  if(!state.previewRequested||levelPreview.wanted||state.previewDone===state.viewVisit)return;
- void levelPreview.start(mode==='browser'?choice.browserInputId||null:null).then(ok=>{if(!ok)return;const visit=state.viewVisit;setText('#record-caption','МИКРОФОН ПРОСЛУШИВАЕТСЯ · НЕ ЗАПИСЫВАЕТСЯ');clearTimeout(state.previewTimer);state.previewTimer=setTimeout(()=>{if(state.viewVisit===visit){state.previewDone=visit;state.previewRequested=false;levelPreview.stop();if(!state.capture)setText('#record-caption','ГОТОВО К ЗАПИСИ')}},45000);if(!nativeFrame)nativeFrame=requestAnimationFrame(drawWave)});
+ void levelPreview.start(mode==='browser'?choice.browserInputId||null:null).then(ok=>{if(!ok){stopLevelCheck();return}const visit=state.viewVisit;setText('#record-caption','МИКРОФОН ПРОСЛУШИВАЕТСЯ · НЕ ЗАПИСЫВАЕТСЯ');clearTimeout(state.previewTimer);state.previewUntil=Date.now()+LEVEL_CHECK_MS;state.previewTimer=setTimeout(()=>{if(state.viewVisit===visit)stopLevelCheck()},LEVEL_CHECK_MS);renderLevelCheck();if(!nativeFrame)nativeFrame=requestAnimationFrame(drawWave)});
+}
+/** «Проверить уровень» is a toggle with a visible countdown; it never comes back by itself. */
+const LEVEL_CHECK_MS=45000;
+function stopLevelCheck(){
+ state.previewRequested=false;state.previewDone=state.viewVisit;state.previewUntil=0;clearTimeout(state.previewTimer);
+ if(levelPreview.wanted||levelPreview.active)levelPreview.stop();
+ if(!state.capture&&!captureActive(nativeController?.snapshot))setText('#record-caption','ГОТОВО К ЗАПИСИ');
+ renderLevelCheck();
+}
+function renderLevelCheck(){
+ const button=$('#level-check');if(!button)return;clearTimeout(state.levelTick);
+ const left=Math.max(0,Math.ceil(((state.previewUntil||0)-Date.now())/1000)),on=left>0&&(levelPreview.active||levelPreview.wanted);
+ button.classList.toggle('is-on',on);button.setAttribute('aria-pressed',String(on));
+ button.textContent=on?`Остановить проверку · 0:${String(left).padStart(2,'0')}`:'Проверить уровень';
+ button.title=on?'Микрофон слушается только для шкалы и не записывается':'Микрофон откроется на 45 секунд только для шкалы — без записи';
+ if(on)state.levelTick=setTimeout(renderLevelCheck,250);
 }
 function pauseAudition(){audioReview?.player.pause();if(mediaInterlock)mediaInterlock.pauseAll();else document.querySelectorAll('audio,video').forEach(media=>media.pause())}
 function canAudition(){if(storageDetails().local&&(!nativeController?.snapshot.connected||captureActive(nativeController.snapshot))){notify('Завершите запись перед прослушиванием, чтобы звук плеера не попал в неё.','error');return false}return true}
@@ -141,10 +157,10 @@ function onNativeState(value){
  $('#start-record').hidden=active;$('#start-record').disabled=false;
  $('#pause-record').hidden=!active||value.state==='requesting';$('#level-check').hidden=active;$('#stop-record').hidden=!active;$('#mark-record').hidden=!active;$('.studio-buttons').classList.toggle('is-recording',active);
  watchDisk(active);
- if(active){saveClock.observe(value.sessionId||value.recordId,value.duration);if(!battery.active){battery.active=true;battery.reset()}void battery.check();levelPreview.stop()}else battery.active=false;
+ if(active){saveClock.observe(value.sessionId||value.recordId,value.duration);if(!battery.active){battery.active=true;battery.reset()}void battery.check();stopLevelCheck()}else battery.active=false;
  $('#pause-record').disabled=!value.connected||Boolean(value.pendingAction)||!['recording','paused'].includes(value.state);
  $('#stop-record').disabled=value.state==='stopping';$('#pause-record').innerHTML=icon(value.state==='paused'?'play':'pause')+(value.state==='paused'?' Продолжить':' Пауза');
- setText('#record-saved',!value.connected?(active?'Связь потеряна. Остановка и сохранение не подтверждены.':'Подключаемся к модулю записи…'+(nativeController?.lastError?.code?` (${nativeController.lastError.code})`:'')):value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве '+(value.state==='recording'?saveClock.text():'')+captureHealthHint(value):state.footerNote?state.footerNote:value.errorCode?captureFailureMessage(value):'Аудио сохраняется в выбранной папке');
+ setText('#record-saved',!value.connected?(active?'Связь потеряна. Остановка и сохранение не подтверждены.':'Подключаемся к модулю записи…'+(nativeController?.lastError?.code?` (${nativeController.lastError.code})`:'')):value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве '+(value.state==='recording'?saveClock.text():'')+captureHealthHint(value):state.footerNote?state.footerNote:value.errorCode?captureFailureMessage(value):'');
  updateRecordUI();
  if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId));syncLevelPreview();
   if(wasActive&&value.state==='interrupted')markRecoveredSeen(value.recordId);
@@ -189,17 +205,17 @@ async function readyForStep(step){
  }
  return null;
 }
-/** Once: a source pinned to the browser channel by an earlier fault (the reported laptop) moves to the
- * system module when it is ready. On Windows the browser path is the weaker one: Chromium ≥152 opens
- * raw-capable microphones in raw mode with no retry, and it cannot record the computer's sound. */
-function migrateBrowserSource(){
- try{if(localStorage.getItem('mono-source-migrated-1')==='1')return}catch{return}
- if(windowState?.engine==='browser')return; // there the window is the working path
- const capability=captureSources?.capability;if(captureSources?.value?.mode!=='browser'||!capability?.nativeReady||!(capability.modes||[]).includes('mic')||captureActive(nativeController?.snapshot))return;
- void captureSources.update({mode:'mic',inputId:null},{quiet:true}).then(()=>{try{localStorage.setItem('mono-source-migrated-1','1')}catch{}notify('Источник записи — системный модуль: он открывает микрофон надёжнее окна браузера. Вернуть окно можно в студии.')}).catch(()=>{});
+/** Once: MONO now records the microphone through its browser window (the person's own browser, which
+ * security software trusts). A source left on the module microphone moves to the window. */
+function migrateToBrowserSource(){
+ try{if(localStorage.getItem('mono-source-browser-1')==='1')return}catch{return}
+ if(captureActive(nativeController?.snapshot))return;
+ const done=()=>{try{localStorage.setItem('mono-source-browser-1','1')}catch{}};
+ if(captureSources?.value?.mode!=='mic'||!captureSources?.client?.supported){done();return}
+ void captureSources.update({mode:'browser',inputId:null},{quiet:true}).then(done).catch(()=>{});
 }
 /** The browser channel could not open the microphone but the system module did: keep using it. */
-function rememberPathSwitch(from,to){if(from==='browser'&&to==='mic'){notify('Окно не смогло открыть микрофон — MONO записывает через системный модуль и будет использовать его дальше.');healthEvent('BROWSER_FALLBACK');pendingSourceSwitch='mic'}}
+function rememberPathSwitch(from,to){if(from==='browser'&&to==='mic'){notify('Окно не смогло открыть микрофон — эта запись идёт через модуль Windows.');healthEvent('BROWSER_FALLBACK')}}
 // Settings cannot change during a take (the core answers CAPTURE_BUSY): the switch is saved when it ends.
 let pendingSourceSwitch=null;
 function applyPendingSourceSwitch(){if(!pendingSourceSwitch||!captureSources)return;const mode=pendingSourceSwitch;pendingSourceSwitch=null;void captureSources.update({mode,inputId:null},{quiet:true}).catch(()=>{pendingSourceSwitch=mode})}
@@ -252,10 +268,8 @@ async function initializeNative(local){
   nativeController=new NativeCaptureController(client,{onState:onNativeState,onError:error=>notify(error.message,'error',fixFor(error.code)),onIntent:async options=>{if(levelPreview.active||levelPreview.wanted){levelPreview.stop();await new Promise(resolve=>setTimeout(resolve,250))}return mediaInterlock.beforeCapture(options)}});
   const studio=$('#audio-source').closest('.side-card');studio.replaceChildren();mountCaptureSources(studio,{model:captureSources,onError:error=>notify(error.message,'error'),onNotice:message=>notify(message)});
   const card=document.createElement('article');card.className='glass settings-card';card.innerHTML='<div class="settings-card-icon"><svg><use href="#i-mic"/></svg></div><h2>Источники записи</h2><div class="settings-capture-sources"></div><button type="button" class="btn btn-outline btn-small" id="check-native-sound">Проверить звук</button>';$('#view-settings .settings-grid').prepend(card);mountCaptureSources(card.querySelector('.settings-capture-sources'),{model:captureSources,onError:error=>notify(error.message,'error')});card.querySelector('button#check-native-sound').onclick=()=>void showSetup('sound').catch(error=>notify(error.message,'error'));
-  const guide=$('.studio-side>.side-card:not(.capture-sources)');guide.replaceChildren();mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
-  const safe=document.createElement('article');safe.className='glass settings-card';safe.innerHTML='<div class="settings-card-icon"><svg><use href="#i-shield"/></svg></div><h2>Страховочная дорожка</h2><p>Пока системный модуль пишет микрофон, окно MONO параллельно пишет его копию другим путём (свой кодек и своё хранилище). Если основная запись оборвётся, MONO предложит восстановить встречу из копии. Копия удаляется через сутки после удачной записи (через неделю — после сбоя). Около 14 МБ за час.</p><label class="check-row"><input type="checkbox" id="setting-safety"> Вести страховочную дорожку</label>';$('#view-settings .settings-grid').append(safe);
-  const windowCard=document.createElement('article');windowCard.className='glass settings-card';windowCard.id='window-card';windowCard.hidden=true;windowCard.innerHTML='<div class="settings-card-icon"><svg><use href="#i-shield"/></svg></div><h2>Окно MONO</h2><p></p><div class="inline-actions"><button type="button" class="btn btn-outline btn-small"></button></div>';$('#view-settings .settings-grid').append(windowCard);
-  void loadWindowState().then(renderWindowCard);
+  const guide=$('#studio-guide');guide.replaceChildren();mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
+  const safe=document.createElement('article');safe.className='glass settings-card';safe.innerHTML='<div class="settings-card-icon"><svg><use href="#i-shield"/></svg></div><h2>Страховочная дорожка</h2><p>Когда запись идёт через модуль Windows, окно параллельно пишет копию микрофона другим путём. Если основная запись оборвётся, MONO восстановит встречу из копии. Копия хранится сутки (после сбоя — неделю), около 14 МБ за час.</p><label class="check-row"><input type="checkbox" id="setting-safety"> Вести страховочную дорожку</label>';$('#view-settings .settings-grid').append(safe);
   $('#setting-safety').checked=safetySettings;$('#setting-safety').onchange=e=>{safetySettings=e.target.checked;try{localStorage.setItem('mono-safety-track',safetySettings?'1':'0')}catch{}};
   const help=document.createElement('article');help.className='glass settings-card';mountHelp(help);$('#view-settings .settings-grid').append(help);
   // Pre-flight check: compact (problems only) in the studio, full in settings.
@@ -265,7 +279,7 @@ async function initializeNative(local){
  }
  await nativeController.connect();
  await captureSources.load();
- await loadWindowState();migrateBrowserSource();
+ await loadWindowState();migrateToBrowserSource();
  return {controller:nativeController,sources:captureSources};
  })().catch(error=>{nativeInitializing=null;throw error});return nativeInitializing;
 }
@@ -546,7 +560,7 @@ async function runDeepDiagnostics(){
  const recording=captureActive(nativeController?.snapshot)||Boolean(state.capture);
  modal('Глубокая диагностика','<p class="deep-progress" role="status">Проверяем ядро, архив, звук, Groq и окно — около 10 секунд.'+(recording?'':' Скажите что-нибудь в микрофон.')+'</p>');
  try{
-  const local=await localLibraryClient();if(!recording)levelPreview.stop();
+  const local=await localLibraryClient();if(!recording)stopLevelCheck();
   const [server,windowInfo,microphone]=await Promise.all([
    local?local.json('/diagnostics',{signal:AbortSignal.timeout(45000)}).catch(error=>({error:error.code||error.message})):Promise.resolve(null),
    windowProbe().catch(()=>null),
@@ -572,10 +586,9 @@ function passedLine(report){
 function showDeepReport(findings,text,report={}){
  const mark={warning:'✖',caution:'▲',advisory:'●'};
  const body=(findings.length?`<p>${findings.some(f=>f.level==='warning')?'Есть проблемы, которые мешают работе:':'Найдено:'}</p><ul class="deep-findings">${findings.map(f=>`<li data-level="${f.level}"><span class="deep-mark" aria-hidden="true">${mark[f.level]||'•'}</span><div><strong>${h(f.title)}</strong>${f.detail?`<span>${h(f.detail)}</span>`:''}${f.action?`<em>${h(f.action)}</em>`:''}</div></li>`).join('')}</ul>`:'<p><strong>Проблем не найдено.</strong></p>')+passedLine(report)+
-  '<p class="field-hint">В отчёте нет названий записей, текста, ключей и путей к файлам. Названия звуковых устройств остаются — по ним видно, какой микрофон проверялся.</p><div class="inline-actions"><button type="button" class="btn btn-primary btn-small" id="deep-copy">Скопировать отчёт</button><button type="button" class="btn btn-outline btn-small" id="deep-save">Сохранить файл</button>'+(findings.some(f=>f.browser)?`<button type="button" class="btn btn-outline btn-small" id="deep-browser">${windowState?.launcher&&windowState.engine!=='browser'?'Открывать MONO в моём браузере':'Скопировать адрес MONO'}</button>`:'')+'</div><p class="field-hint" id="deep-browser-hint" hidden></p>';
+  '<p class="field-hint">В отчёте нет названий записей, текста, ключей и путей к файлам. Названия звуковых устройств остаются — по ним видно, какой микрофон проверялся.</p><div class="inline-actions"><button type="button" class="btn btn-primary btn-small" id="deep-copy">Скопировать отчёт</button><button type="button" class="btn btn-outline btn-small" id="deep-save">Сохранить файл</button>'+(findings.some(f=>f.browser)?'<button type="button" class="btn btn-outline btn-small" id="deep-browser">Скопировать адрес MONO</button>':'')+'</div><p class="field-hint" id="deep-browser-hint" hidden></p>';
  modal('Глубокая диагностика',body);
  if($('#deep-browser'))$('#deep-browser').onclick=async()=>{const hint=$('#deep-browser-hint');hint.hidden=false;
-  if(windowState?.launcher&&windowState.engine!=='browser'){try{await switchWindow('browser');$('#deep-browser').disabled=true;hint.textContent=BROWSER_STEPS}catch(error){hint.textContent='Не удалось переключить: '+error.message}return}
   const address=location.origin;let copied=false;try{await navigator.clipboard.writeText(address);copied=true}catch{}
   hint.textContent=`${copied?'Адрес скопирован':'Адрес MONO'}: ${address}. Откройте Chrome или Edge сами, вставьте адрес и разрешите микрофон.`};const close=$('#modal-actions .btn-outline');if(close)close.textContent='Закрыть';
  $('#deep-copy').onclick=async()=>{try{await navigator.clipboard.writeText(text);$('#deep-copy').textContent='Скопировано'}catch(e){notify('Не удалось скопировать: '+e.message,'error')}};
@@ -586,19 +599,27 @@ function showDeepReport(findings,text,report={}){
  * (Kaspersky passes a parent's restrictions to its children) does not restrict its microphone. */
 let windowState=null;
 async function loadWindowState(){try{const local=await localLibraryClient();windowState=local?await local.json('/window'):null}catch{windowState=null}return windowState}
-const BROWSER_STEPS='Готово. Дальше: (1) закройте это окно MONO; (2) откройте свой браузер (Chrome или Edge) сами, как обычно; (3) запустите MONO — он откроется вкладкой в вашем браузере. Браузер должен быть открыт до запуска MONO: иначе его запустит MONO, и защитная программа ограничит и его. Вернуть отдельное окно: Настройки → «Окно MONO».';
-async function switchWindow(engine){
- const local=await localLibraryClient();windowState=await local.json('/window',{method:'POST',body:{engine}});
- // In the person's browser the microphone is recorded by the window itself (the system module stays blocked).
- if(engine==='browser'){try{await captureSources?.update({mode:'browser',inputId:null},{quiet:true})}catch{}try{localStorage.setItem('mono-source-migrated-1','1')}catch{}}
- renderWindowCard();return windowState;
+/** Settings read top to bottom by importance: connection and recognition first, the system check and
+ * help last; an unfinished archive copy always comes first. */
+const SETTINGS_ORDER=['Незавершённое копирование','Подключение Groq','Распознавание','Обработка аудио','Источники записи','Оформление','Архив и резервные копии','Обновление','Страховочная дорожка','Расходы','Предполётная проверка','Состояние системы','Как пользоваться MONO'];
+function orderSettings(){
+ const grid=$('#view-settings .settings-grid');if(!grid)return;
+ for(const card of grid.children){const title=card.querySelector('h2')?.textContent?.trim()||'',index=SETTINGS_ORDER.indexOf(title);card.style.order=String(index<0?SETTINGS_ORDER.length:index)}
+ if(!grid.dataset.ordered){grid.dataset.ordered='1';new MutationObserver(orderSettings).observe(grid,{childList:true})} // cards added later (modules, recovery) take their place too
 }
-function renderWindowCard(){
- const card=$('#window-card');if(!card)return;card.hidden=!windowState?.launcher;if(card.hidden)return;
- const browser=windowState.engine==='browser';
- card.querySelector('p').textContent=browser?'MONO открывается вкладкой в вашем браузере. Это нужно, когда защитная программа (например, Kaspersky) не даёт микрофон программам, запущенным MONO: браузер, который вы открыли сами, она не ограничивает. Открывайте браузер до запуска MONO.':'MONO открывается в собственном окне. Если защитная программа не даёт MONO микрофон, MONO можно открывать вкладкой в вашем браузере.';
- const button=card.querySelector('button');button.textContent=browser?'Открывать в отдельном окне':'Открывать в моём браузере';
- button.onclick=async()=>{try{await switchWindow(browser?'chromium':'browser');notify(browser?'Готово. При следующем запуске MONO откроется в отдельном окне.':BROWSER_STEPS,'info')}catch(error){notify('Не удалось переключить: '+error.message,'error')}};
+/** Offline update: the person picks a .monoupdate file; MONO checks its signature and every file's
+ * hash, unpacks it beside the app, and MONO.exe switches to it on the next start. */
+async function renderUpdateCard(){
+ const card=$('#update-card');if(!card)return;let info=null;
+ try{const local=await localLibraryClient();info=local?await local.json('/update'):null}catch{}
+ if(!info?.supported){card.hidden=true;return}card.hidden=false;
+ const status=$('#update-status'),button=$('#update-install');
+ $('#update-summary').textContent=`Установлена версия ${info.version}. Обновление ставится из файла .monoupdate — интернет не нужен.`;
+ status.textContent=info.pending?`Версия ${info.pending} проверена и будет установлена при следующем запуске MONO. Закройте окно MONO и запустите его снова.`:info.applied?.result==='rolled-back'?`Обновление до ${info.applied.version} не удалось применить — MONO вернул прежнюю версию. Попробуйте ещё раз.`:!info.signed?'В этой сборке не настроена подпись обновлений: MONO не примет файл, который нельзя проверить.':'';
+ button.disabled=!info.signed;
+ button.onclick=()=>{const input=$('#update-input');input.value='';input.onchange=async()=>{const file=input.files?.[0];if(!file)return;button.disabled=true;status.textContent=`Проверяем подпись и файлы «${file.name}»…`;
+  try{const local=await localLibraryClient(),result=await local.json('/update',{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream'}});status.textContent=`Готово: версия ${result.version} проверена (${result.files} файлов). Закройте окно MONO и запустите его снова — обновление установится само.`;notify(`Обновление ${result.version} готово к установке при следующем запуске.`)}
+  catch(error){status.textContent=error.message||'Файл обновления не принят.'}finally{button.disabled=false}};input.click()};
 }
 function closeModal(){
   if($('#modal').hidden)return;
@@ -629,7 +650,7 @@ function renderRoute({preserveDrawer=false}={}){
   const [requested,id]=location.hash.slice(1).split('/');
   let view=['dashboard','record','library','jobs','editor','settings'].includes(requested)?requested:'dashboard';
   if(state.view==='settings'&&view!=='settings')credentialForm?.clear();
-  if(view==='settings'&&state.view!=='settings')void credentialForm?.refresh();
+  if(view==='settings'&&state.view!=='settings'){void credentialForm?.refresh();orderSettings();void renderUpdateCard()}
   if(view==='editor'){
     if(!id||!state.records.some(r=>r.id===id)){view='library';}
     else if(state.editorId!==id||state.view!=='editor'){state.editorId=id;state.editorPage=0;void renderEditor(id).catch(e=>notify(e.message,'error'))}
@@ -639,7 +660,7 @@ function renderRoute({preserveDrawer=false}={}){
   if(view==='settings')document.querySelectorAll('.archive-recovery-notice').forEach(notice=>notice.remove());
   $$('.view').forEach(el=>el.classList.toggle('active',el.id==='view-'+view));
   $$('.nav-link[data-view]').forEach(el=>(el.classList.toggle('selected',el.dataset.view===view),el.setAttribute('aria-current',el.dataset.view===view?'page':'false')));
-  const titles={dashboard:'Обзор',record:'Студия записи',library:'Библиотека',jobs:'Расшифровка',editor:'Редактор',settings:'Настройки'};
+  const titles={dashboard:'Обзор',record:'Запись',library:'Библиотека',jobs:'Расшифровка',editor:'Редактор',settings:'Настройки'};
   $('#current-breadcrumb').textContent=titles[view];
   if(!preserveDrawer)closeDrawer('route');
   if(view==='library')renderLibrary();
@@ -736,7 +757,7 @@ function renderJobs(){
  $('#jobs-list').innerHTML=items.length?items.map(r=>{
   const progress=r.job?.total?Math.min(100,Math.round(r.job.completed/r.job.total*100)):0;
   const failed=r.status==='failed',active=['queued','processing'].includes(r.status);
-  return `<article class="job-card glass"><div class="job-top"><div><span class="small-label">ЗАДАНИЕ / ${h(r.jobId?.slice(0,8).toUpperCase()||'LOADING')}</span><h3>${h(r.title)}</h3><p>${h(r.job?.stage||statusLabel(r))}${r.job?.error?' · '+h(r.job.error):''}</p></div><span class="record-status">${statusLabel(r)}</span></div>
+  return `<article class="job-card glass"><div class="job-top"><div><h3>${h(r.title)}</h3><p>${h(r.job?.stage||statusLabel(r))}${r.job?.error?' · '+h(r.job.error):''}</p></div><span class="record-status">${statusLabel(r)}</span></div>
   <div class="job-progress-track" role="progressbar" aria-valuenow="${progress}" aria-valuemin="0" aria-valuemax="100"><div class="job-progress-fill" style="width:${progress}%"></div></div>
   <div class="job-bottom"><span>${jobEta(r)}${r.job?.total?`Обработано ${r.job.completed||0} из ${r.job.total} фрагментов`:'Ожидание информации от сервера'}</span>
   <div>${failed?`<button class="btn btn-outline btn-small" data-retry="${h(r.id)}">${icon('refresh')} Повторить</button>`:''}${active?`<button class="btn btn-outline btn-small" data-cancel="${h(r.id)}">Отменить</button>`:''}${r.status==='completed'?`<button class="btn btn-primary btn-small" data-open="${h(r.id)}">Открыть текст ${icon('arrow')}</button>`:''}</div></div></article>`;
@@ -759,13 +780,16 @@ async function fileDuration(file){
 }
 async function importFile(file){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
- if(!file||!(/\.(wav|mp3|mp4|m4a|ogg|opus|webm|flac|aac)$/i.test(file.name)||file.type.startsWith('audio/'))){notify('Выберите аудиофайл поддерживаемого формата.','error');return}
+ const video=Boolean(file)&&(file.type.startsWith('video/')||/\.(m4v|mov|mkv|avi|wmv|flv|ts|mts|m2ts|3gp|mpg|mpeg|ogv)$/i.test(file.name)||/\.mp4$/i.test(file.name)&&!file.type.startsWith('audio/'));
+ if(!file||!(video||/\.(wav|mp3|m4a|ogg|opus|webm|flac|aac|wma|aiff?|amr)$/i.test(file.name)||file.type.startsWith('audio/'))){notify('Выберите аудио- или видеофайл.','error');return}
  const importLimit=storageDetails().local?32*1024**3:1024**3;
  if(file.size>importLimit){notify(`Файл больше ${storageDetails().local?'32':'1'} ГБ. Разбейте его перед импортом.`,'error');return}
- const id=crypto.randomUUID(),duration=await fileDuration(file);
+ const id=crypto.randomUUID(),duration=video?0:await fileDuration(file);
  const rec={id,title:file.name.replace(/\.[^.]+$/,'').slice(0,130),createdAt:new Date().toISOString(),
-  duration,mime:file.type||mimeForName(file.name),size:file.size,source:'Импорт файла',chunkCount:0,status:'saved'};
- try{await saveImportedRecording(rec,file);await refresh();notify('Аудиофайл сохранён на устройстве.');go('library')}
+  duration,mime:video?(file.type||'video/mp4'):(file.type||mimeForName(file.name)),size:file.size,source:video?'Видео':'Импорт файла',chunkCount:0,status:'saved',...(video?{video:true}:{})};
+ if(video&&!storageDetails().local){notify('Видео обрабатывается только в приложении MONO на компьютере.','error');return}
+ if(video)notify(`Извлекаем звук из видео «${rec.title}»… Длинное видео может занять несколько минут; окно можно не держать открытым на этом разделе.`,'info');
+ try{await saveImportedRecording(rec,file);await refresh();notify(video?'Звук из видео сохранён — его можно расшифровать.':'Аудиофайл сохранён.');go('library')}
  catch(e){await removeRecording(id).catch(()=>{});notify('Ошибка сохранения файла: '+e.message,'error')}
 }
 function mimeForName(name){const ext=name.split('.').pop().toLowerCase();return {'mp3':'audio/mpeg','m4a':'audio/mp4','mp4':'audio/mp4','wav':'audio/wav','ogg':'audio/ogg','opus':'audio/ogg','flac':'audio/flac','aac':'audio/aac','webm':'audio/webm'}[ext]||'audio/webm'}
@@ -1137,22 +1161,29 @@ async function renderEditor(id){
  const hasTranscript=Boolean(rec.transcriptSummary||rec.transcript);$('#editor-segments-count').textContent=(rec.transcriptSummary?.segmentCount??rec.transcript?.segments?.length??0).toLocaleString('ru-RU');
  $('#editor-status').textContent=statusLabel(rec);
  let marks=$('#editor-marks');if(!marks){marks=document.createElement('div');marks.id='editor-marks';marks.className='editor-marks';$('.editor-source-actions').before(marks)}
- marks.innerHTML=(rec.bookmarks||[]).length?'<span class="small-label">ОТМЕТКИ</span>'+rec.bookmarks.map(m=>`<button type="button" class="mark-chip" data-seek="${Number(m.at)||0}" title="Перейти к отметке">★ ${shortTime(m.at)}${m.label&&m.label!=='Важно'?' · '+h(m.label):''}</button>`).join(''):'';
+ marks.innerHTML=(rec.bookmarks||[]).length?'<span class="marks-label">Отметки</span>'+rec.bookmarks.map(m=>`<button type="button" class="mark-chip" data-seek="${Number(m.at)||0}" title="Перейти к отметке">★ ${shortTime(m.at)}${m.label&&m.label!=='Важно'?' · '+h(m.label):''}</button>`).join(''):'';
  $('#editor-heading').textContent=rec.title;
- $('#editor-helper').textContent=hasTranscript?'Исправления сохраняются автоматически на этом устройстве.':'Прослушайте запись перед расшифровкой. Аудио остаётся на компьютере до подтверждения отправки.';
+ $('#editor-helper').textContent=hasTranscript?'Правки сохраняются сами.':'Расшифровки пока нет.';
  $('#copy-transcript').hidden=!hasTranscript;$('#export-transcript').hidden=!hasTranscript;$('#editor-transcribe').textContent=hasTranscript?'Расшифровать заново':'Расшифровать';$('#editor-transcribe').disabled=['recording','requesting','processing','queued','uploading'].includes(rec.status)||!rec.size;$('#editor-download').disabled=!rec.size;
- renderSummary(rec);void renderEditorSegments(rec);if($('#audio-tools'))$('#audio-tools').open=!hasTranscript; // the text is the document; sound tools only before transcription
+ renderSummary(rec);void renderEditorSegments(rec);
  if(state.playerURL)URL.revokeObjectURL(state.playerURL);
  state.playerURL=null;
  const audio=$('#audio-element');audio.pause();audio.removeAttribute('src');
  if(storageDetails().local){
-  if(!audioReview){const tools=document.createElement('details');tools.className='audio-tools';tools.id='audio-tools';tools.innerHTML='<summary>Улучшить звук перед расшифровкой</summary>';const host=document.createElement('section');host.setAttribute('aria-label','Подготовка и сравнение аудио');tools.append(host);$('#editor-pagination').after(tools);audioReview=new AudioReview({library:await localLibraryClient(),host,original:audio,play:media=>{if(!canAudition()||!mediaInterlock)return Promise.reject(new Error('Завершите запись перед прослушиванием.'));return mediaInterlock.play(media)},onError:error=>notify(error.message,'error'),onPlayer:value=>{followPlayback(value.time);setText('#player-now',shortTime(value.time));setText('#player-total',shortTime(value.duration));$('#player-seek').value=String(value.duration?Math.floor(1000*value.time/value.duration):0);const button=$('#player-toggle'),playing=String(value.playing);if(button.dataset.playing!==playing){button.dataset.playing=playing;button.innerHTML=icon(value.playing?'pause':'play');button.setAttribute('aria-label',value.playing?'Приостановить воспроизведение':'Воспроизвести запись')}}})}
-  audioReview.captureState(nativeController?.snapshot||{connected:false});audioReview.open(rec,audioURL(rec));$('#audio-tools').open=!hasTranscript;return;
+  if(!audioReview){const tools=document.createElement('section');tools.className='audio-tools';tools.id='audio-tools';tools.innerHTML='<h2 class="audio-tools-title">Улучшить звук перед расшифровкой</h2>';const host=document.createElement('section');host.setAttribute('aria-label','Подготовка и сравнение аудио');tools.append(host);$('#editor-pagination').after(tools);audioReview=new AudioReview({library:await localLibraryClient(),host,original:audio,play:media=>{if(!canAudition()||!mediaInterlock)return Promise.reject(new Error('Завершите запись перед прослушиванием.'));return mediaInterlock.play(media)},onError:error=>notify(error.message,'error'),onPlayer:value=>{followPlayback(value.time);setText('#player-now',shortTime(value.time));setText('#player-total',shortTime(value.duration));$('#player-seek').value=String(value.duration?Math.floor(1000*value.time/value.duration):0);const button=$('#player-toggle'),playing=String(value.playing);if(button.dataset.playing!==playing){button.dataset.playing=playing;button.innerHTML=icon(value.playing?'pause':'play');button.setAttribute('aria-label',value.playing?'Приостановить воспроизведение':'Воспроизвести запись')}}})}
+  audioReview.captureState(nativeController?.snapshot||{connected:false});audioReview.open(rec,audioURL(rec));void loadWave(rec);return;
  }
  try{const url=audioURL(rec);if(url){audio.src=url}else{const blob=await getBlob(rec);if(state.editorId!==id)return;state.playerURL=URL.createObjectURL(blob);audio.src=state.playerURL}audio.load();
  }catch(e){notify('Оригинальное аудио недоступно: '+e.message,'error')}
  $('#player-total').textContent=shortTime(rec.duration);
  $('#player-now').textContent='00:00';$('#player-seek').value='0';$('#player-toggle').innerHTML=icon('play');
+}
+let playerWave=null;
+/** The spectral waveform of the record that is open (computed once on the computer, then cached). */
+async function loadWave(rec){
+ playerWave??=new PlayerWave($('#player-wave'),$('#player-seek'));playerWave.clear();
+ if(!storageDetails().local||!rec?.size||['recording','requesting','paused','importing','migrating'].includes(rec.status))return;
+ try{const local=await localLibraryClient(),data=await local.json(`/records/${rec.id}/peaks`,{signal:AbortSignal.timeout(120000)});if(state.editorId===rec.id)playerWave.load(data)}catch{/* the plain seek bar stays */}
 }
 // ---- Transcript intelligence: on-device analysis + the meeting summary (on request) ----
 const TERMS_KEY='mono-learned-terms',SMART_KEY='mono-smart-speed';
@@ -1238,7 +1269,7 @@ function renderSummary(rec){
  const list=(title,rows,fmt)=>rows?.length?`<h3>${title}</h3><ul>${rows.map(r=>`<li>${fmt(r)}${at(r.at)}</li>`).join('')}</ul>`:'';
  const count=rec.transcriptSummary?.segmentCount??rec.transcript?.segments?.length;const stale=s.sourceSegments&&count&&count!==s.sourceSegments;
  const empty=!s.overview&&!s.decisions?.length&&!s.actions?.length&&!s.questions?.length&&!s.topics?.length;
- panel.innerHTML=`<header class="summary-head"><div class="small-label">КОНСПЕКТ ВСТРЕЧИ</div><div class="summary-tools"><button class="btn btn-subtle btn-small" type="button" data-summary="copy">Копировать</button><button class="btn btn-subtle btn-small" type="button" data-summary="redo">Обновить</button><button class="btn btn-subtle btn-small" type="button" data-summary="hide" aria-expanded="true">Свернуть</button></div></header>`+
+ panel.innerHTML=`<header class="summary-head"><h2 class="summary-title">Конспект</h2><div class="summary-tools"><button class="btn btn-subtle btn-small" type="button" data-summary="copy">Копировать</button><button class="btn btn-subtle btn-small" type="button" data-summary="redo">Обновить</button><button class="btn btn-subtle btn-small" type="button" data-summary="hide" aria-expanded="true">Свернуть</button></div></header>`+
   (empty?'<p class="summary-overview">В расшифровке не нашлось решений, задач или тем.</p>':'')+
   (s.overview?`<p class="summary-overview">${h(s.overview)}</p>`:'')+
   list('Решения',s.decisions,r=>h(r.text))+
@@ -1428,7 +1459,7 @@ async function exportPortableLibrary(){
  const source=await listRecordings();
  const records=source.filter(r=>r.status!=='recording');
  const manifest={format:'mono-portable-v1',createdAt:new Date().toISOString(),
-   version:'0.4.0',records:[]};
+   version:state.health?.version||'unknown',records:[]};
  try{
   for(const rec of records){
    if(!/^[a-f0-9-]{36}$/i.test(rec.id))throw new Error('Некорректный ID записи');
@@ -1481,7 +1512,7 @@ async function importPortableLibrary(){
 async function checkHealth(){
  try{
   const res=await fetch('/api/health',{signal:AbortSignal.timeout(4500),cache:'no-store'});if(!res.ok)throw new Error('Сервер недоступен');
-  state.health=await res.json();applyAccent(state.health.accent);offerUpdate(state.health.update);
+  state.health=await res.json();applyAccent(state.health.accent);offerUpdate(state.health.update);if(state.health.version)setText('#sidebar-version',state.health.version);
   $('#settings-health').textContent=`FFmpeg: ${state.health.ffmpeg?'доступен':'нет'} · FFprobe: ${state.health.ffprobe?'доступен':'нет'} · Groq: ${state.health.groq?'ключ задан':'не настроен'}`;
  }catch{
   state.health=null;$('#settings-health').textContent='Сервер недоступен. Запись, локальная библиотека и редактор работают автономно.';
@@ -1505,9 +1536,9 @@ function wire(){
  });
  $('#theme-toggle').onclick=()=>{settings.theme=document.body.dataset.theme==='dark'?'light':'dark';saveSettings();applyTheme();$('#setting-theme').value=settings.theme;syncControls()};
  for(const id of ['hero-import','record-import','library-import'])$('#'+id).onclick=()=>withInput(importFile);
- $('#start-record').onclick=()=>{levelPreview.stop();return beginRecord()};$('#mark-record').onclick=markMoment;
+ $('#start-record').onclick=()=>{stopLevelCheck();return beginRecord()};$('#mark-record').onclick=markMoment;
  document.addEventListener('visibilitychange',syncLevelPreview);
- $('#level-check').onclick=()=>{state.previewRequested=true;state.previewDone=null;syncLevelPreview()};
+ $('#level-check').onclick=()=>{if(state.previewUntil>Date.now()||levelPreview.wanted){stopLevelCheck();return}state.previewRequested=true;state.previewDone=null;syncLevelPreview()};
  document.addEventListener('keydown',e=>{if(e.key!=='?'||e.ctrlKey||e.metaKey||!$('#modal').hidden||e.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;e.preventDefault();showShortcuts()});
  document.addEventListener('keydown',e=>{if(e.defaultPrevented||e.ctrlKey||e.metaKey||e.altKey||e.repeat||e.code!=='KeyB'||!state.capture)return;if(e.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;e.preventDefault();markMoment()});$('#pause-record').onclick=pauseRecord;$('#stop-record').onclick=endRecord;
  let searchTimer=0;$('#library-search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(renderLibrary,220)}); // one query per pause in typing

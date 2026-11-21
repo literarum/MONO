@@ -13,11 +13,12 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     env:
-      MONO_VERSION: 0.4.0
       # Authenticode (SmartScreen trust): add repository secrets WINDOWS_SIGNING_PFX
       # (base64 of the .pfx) and WINDOWS_SIGNING_PASSWORD. Without them the build is unsigned.
       SIGNING_PFX: ${{ secrets.WINDOWS_SIGNING_PFX }}
       SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+      # Offline update files are signed with this Ed25519 key (scripts/release/update-key.mjs).
+      MONO_UPDATE_SIGNING_KEY: ${{ secrets.MONO_UPDATE_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -85,6 +86,55 @@ jobs:
           python installer/windows/stage.py --stage .build/installer-stage --python-home "$env:pythonLocation" `
             --node "$node" --ffmpeg-dir "$env:FFMPEG_DIR" --ffmpeg-license "$env:FFMPEG_LICENSE" --helper .build/helper/MonoAudio.exe
 
+      - name: Version from package.json
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          "MONO_VERSION=$version" >> $env:GITHUB_ENV
+          "MONO $version"
+
+      - name: MONO.exe — the one icon (applies verified updates, starts MONO)
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
+          # A .bat keeps cmd's quoting simple: vcvars sets up the compiler, rc embeds the icon.
+          $bat = Join-Path $env:RUNNER_TEMP 'build-mono.bat'
+          $lines = @('@echo off', "call `"$vcvars`" >nul || exit /b 1", "cd /d `"$PWD\native\windows\launcher`" || exit /b 1",
+            'rc /nologo MONO.rc || exit /b 1',
+            'cl /nologo /O1 /W4 /D_CRT_SECURE_NO_WARNINGS /DUNICODE /D_UNICODE MONO.c MONO.res /link /SUBSYSTEM:WINDOWS user32.lib shell32.lib /OUT:MONO.exe || exit /b 1')
+          Set-Content -Path $bat -Value $lines -Encoding ascii
+          cmd /c $bat
+          if ($LASTEXITCODE -ne 0) { throw "MONO.exe build failed: $LASTEXITCODE" }
+          Copy-Item native/windows/launcher/MONO.exe .build/installer-stage/MONO.exe
+          if ($env:SIGNING_PFX) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNING_PFX))
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Where-Object FullName -match 'x64' | Select-Object -Last 1
+            & $signtool.FullName sign /f $pfx /p $env:SIGNING_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 .build/installer-stage/MONO.exe
+            if ($LASTEXITCODE -ne 0) { throw 'signtool failed for MONO.exe' }
+            Remove-Item $pfx -Force
+          }
+
+      - name: Portable MONO — no installation, data next to MONO.exe
+        shell: pwsh
+        run: |
+          $portable = Join-Path $env:RUNNER_TEMP 'MONO'
+          Copy-Item .build/installer-stage $portable -Recurse
+          New-Item (Join-Path $portable 'MONO.portable') -ItemType File | Out-Null
+          New-Item .build/portable -ItemType Directory -Force | Out-Null
+          Compress-Archive -Path $portable -DestinationPath ".build/portable/MONO-portable-$env:MONO_VERSION.zip"
+          "PORTABLE_DIR=$portable" >> $env:GITHUB_ENV
+
+      - name: Portable MONO — offline update round trip (signed file → verified → applied by MONO.exe)
+        shell: pwsh
+        run: node scripts/ci/update-roundtrip.mjs "$env:PORTABLE_DIR"
+
+      - name: Signed update file for this version
+        if: env.MONO_UPDATE_SIGNING_KEY != ''
+        shell: pwsh
+        run: node scripts/release/make-update.mjs .build/installer-stage/app "$env:MONO_VERSION" ".build/portable/MONO-update-$env:MONO_VERSION.monoupdate"
+
       - name: Inno Setup
         shell: pwsh
         run: |
@@ -146,6 +196,12 @@ jobs:
           # The runner has no audio endpoints; the helper must still start and answer.
           if ($caps.reason -eq 'HELPER_UNAVAILABLE') { throw 'Bundled MonoAudio.exe was not found by the installed app' }
           Stop-Process -Id $job.Id -Force -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MONO-portable-windows
+          path: .build/portable/*
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:

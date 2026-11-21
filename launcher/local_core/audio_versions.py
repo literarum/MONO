@@ -64,7 +64,7 @@ class AudioVersions:
     def _metadata(self,meta):
         keys={'id','sourceHash','pipelineVersion','profile','parametersHash','frames','sampleRate','channels','mime'}
         if not isinstance(meta,dict) or set(meta) not in [keys,keys|{'analysisJson','analysisHash'}] or any(not sha(meta[key]) for key in ['id','sourceHash','parametersHash']):fail('INVALID_AUDIO_VERSION')
-        if not isinstance(meta['pipelineVersion'],str) or not re.fullmatch('[a-z0-9.-]{1,100}',meta['pipelineVersion']) or meta['profile'] not in ['original','gentle','level','denoise'] or meta['mime']!='audio/flac':fail('INVALID_AUDIO_VERSION')
+        if not isinstance(meta['pipelineVersion'],str) or not re.fullmatch('[a-z0-9.-]{1,100}',meta['pipelineVersion']) or meta['profile'] not in ['original','gentle','level','quiet','speech','denoise'] or meta['mime']!='audio/flac':fail('INVALID_AUDIO_VERSION')
         for key,minimum,maximum in [('frames',1,2**53-1),('sampleRate',8000,384000),('channels',1,64)]:
             if type(meta[key]) is not int or not minimum<=meta[key]<=maximum:fail('INVALID_AUDIO_VERSION')
         identity=[meta[key] for key in ['sourceHash','pipelineVersion','profile','parametersHash']]

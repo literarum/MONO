@@ -5,7 +5,7 @@
 
 #define AppName "MONO Transcribe"
 #ifndef AppVersion
-  #define AppVersion "0.4.0"
+  #define AppVersion "0.9.0"
 #endif
 #ifndef Stage
   #define Stage "..\..\.build\installer-stage"
@@ -52,11 +52,11 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 Source: "{#Stage}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\runtime\python\pythonw.exe"; Parameters: """{app}\app\launcher\mono_launcher.py"" --dev"; WorkingDir: "{app}\app"; IconFilename: "{app}\app\launcher\assets\MONO.ico"; Comment: "Запись и расшифровка речи"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\runtime\python\pythonw.exe"; Parameters: """{app}\app\launcher\mono_launcher.py"" --dev"; WorkingDir: "{app}\app"; IconFilename: "{app}\app\launcher\assets\MONO.ico"; Comment: "Запись и расшифровка речи"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\MONO.exe"; WorkingDir: "{app}"; IconFilename: "{app}\app\launcher\assets\MONO.ico"; Comment: "Запись и расшифровка речи"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\MONO.exe"; WorkingDir: "{app}"; IconFilename: "{app}\app\launcher\assets\MONO.ico"; Comment: "Запись и расшифровка речи"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\runtime\python\pythonw.exe"; Parameters: """{app}\app\launcher\mono_launcher.py"" --dev"; WorkingDir: "{app}\app"; Description: "Запустить {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\MONO.exe"; WorkingDir: "{app}"; Description: "Запустить {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 ; Byte-code caches written at run time. User data lives in %LOCALAPPDATA%\MONO Transcribe
