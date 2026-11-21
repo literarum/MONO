@@ -1934,8 +1934,9 @@ async function init(){
  if(local)startAudioCare();
  if(local)await showSetup();
  if(local&&!setupWindow&&storageDetails().libraryAvailable)void offerLegacyImport();
- if(local&&!setupWindow)void remindGroq(local);
- if(local&&!setupWindow&&!prefs.get('tourDone'))setTimeout(()=>notifyLater('В MONO много нового — посмотрите короткий тур.','info',{text:'Показать тур',run:startTour}),2500);
+ // Offers nobody asked for are left out of automated runs (navigator.webdriver): they would cover the window under test.
+ if(local&&!setupWindow&&!navigator.webdriver)void remindGroq(local);
+ if(local&&!setupWindow&&!navigator.webdriver&&!prefs.get('tourDone'))setTimeout(()=>notifyLater('В MONO много нового — посмотрите короткий тур.','info',{text:'Показать тур',run:startTour}),2500);
  announceRecovered();
  if(storage.transfer?.state==='running')void runLibraryTransfer(null,storage.transfer);
  else if(state.view!=='settings'&&(storage.transfer||storage.transferRecoveryError)){

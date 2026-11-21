@@ -302,8 +302,8 @@ test('Play at the end starts over; settings fill the width with an index and a t
  const {execFileSync}=await import('node:child_process');const dir=mkdtempSync(path.join(tmpdir(),'mono-end-')),wav=path.join(dir,'short.webm');
  // a live WebM, as the browser's recorder writes it: no duration in the header
  execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','sine=frequency=300:duration=1.5','-c:a','libopus','-live','1','-f','webm',wav]);
- // drop zone: as wide as the hero card's content, not a fixed 760 px
- const widths=await page.evaluate(()=>{const zone=document.querySelector('#hero-import'),parent=zone.parentElement;const style=getComputedStyle(parent);return {zone:zone.getBoundingClientRect().width,box:parent.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight)}});
+ // drop zone: as wide as the hero card's content, not a fixed 760 px (measured after the view has arrived)
+ await page.waitForTimeout(700);const widths=await page.evaluate(()=>{const zone=document.querySelector('#hero-import'),parent=zone.parentElement;const style=getComputedStyle(parent);return {zone:zone.getBoundingClientRect().width,box:parent.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight)}});
  assert.ok(widths.zone>=widths.box-2,`drop zone ${widths.zone} of ${widths.box}`);
  // settings
  await page.click('.nav-link[data-view=settings]');await page.waitForFunction(()=>document.querySelectorAll('#settings-index a').length>=6);
