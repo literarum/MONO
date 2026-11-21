@@ -40,9 +40,9 @@ test('hotkey, bookmark, meeting profile, undo of trash and recovery card',{skip}
  const [take]=await records(page);assert.deepEqual(take.tracks.map(track=>track.id).sort(),['mic','system']);
  const {profile}=await page.evaluate(async id=>(await fetch('/api/local/records/'+id+'/speakers')).json(),take.id);
  assert.ok(profile.tracks.mic.length>0&&profile.tracks.system.length>0,'two-track loudness profile');
- // Trash without a dialog, then «Вернуть».
+ // «Вы уверены?» first, then the trash, then «Вернуть».
  await page.evaluate(()=>{location.hash='#library';document.querySelectorAll('.toast').forEach(toast=>toast.remove())});
- await page.click(`[data-delete="${take.id}"]`);await page.click('.toast:has-text("в корзине") .toast-action');
+ await page.click(`[data-delete="${take.id}"]`);await page.waitForSelector('#modal:not([hidden])');assert.equal(await page.textContent('#modal-title'),'Вы уверены?');await page.click('#modal-actions .btn-danger');await page.click('.toast:has-text("в корзине") .toast-action');
  await until(page,async()=>(await (await fetch('/api/local/records?limit=5&q=&trash=false')).json()).items.length===1,null,{timeout:10000,polling:300});
  assert.deepEqual(page.errors,[]);
 });
@@ -346,4 +346,36 @@ test('after closing MONO in the middle of a record, the next start opens that re
  const third=await context.newPage();await third.goto(server.url+'/');await third.waitForFunction(()=>document.querySelector('#nav-count'));await third.waitForTimeout(1500);
  assert.ok(['','#dashboard','#library'].includes(await third.evaluate(()=>location.hash))&&!(await third.evaluate(()=>location.hash)).startsWith('#editor'));
  assert.deepEqual(next.errors,[]);
+});
+
+test('round 4: floating recorder and pause state, sidebar badge, library selection and list view, settings spotlight, tour, usage',{skip,timeout:120000},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});const page=await open(t,server);
+ await page.evaluate(()=>{try{localStorage.setItem('mono-prefs-1',JSON.stringify({groqReminder:false,tourDone:true}))}catch{}});
+ // usage ledger answers even before any transcription
+ const usage=await page.evaluate(async()=>(await fetch('/api/usage')).json());assert.equal(usage.total.transcriptions,0);assert.equal(usage.usdPerHour,0.04);
+ await page.click('.nav-link[data-view=record]');await page.waitForFunction(()=>!document.querySelector('#start-record').disabled);
+ await page.click('#start-record');await page.waitForFunction(()=>!document.querySelector('#stop-record').hidden,null,{timeout:20000});
+ await page.waitForFunction(()=>!document.querySelector('#nav-rec-badge').hidden&&document.querySelector('#nav-rec-badge').dataset.state==='recording');
+ // leaving the studio: the take goes on, the floating panel appears
+ await page.click('.nav-link[data-view=library]');await page.waitForSelector('.floating-recorder:not([hidden])');
+ await page.click('.floating-recorder .fr-pause');await page.waitForFunction(()=>document.querySelector('.floating-recorder').dataset.state==='paused',null,{timeout:10000});
+ assert.equal(await page.getAttribute('#nav-rec-badge','data-state'),'paused');
+ await page.click('.floating-recorder .fr-open');await page.waitForFunction(()=>location.hash==='#record');
+ assert.ok(await page.isHidden('.floating-recorder'),'no panel inside the studio');
+ await page.waitForFunction(()=>!document.querySelector('#new-record').hidden);assert.match(await page.textContent('#pause-record'),/Продолжить запись/);
+ assert.ok(await page.evaluate(()=>document.querySelector('.studio-panel').classList.contains('is-paused')));
+ await page.click('#stop-record');await page.waitForFunction(()=>document.querySelector('#nav-rec-badge').hidden,null,{timeout:20000});
+ // library: list view and selection mode
+ await page.click('.nav-link[data-view=library]');await page.waitForSelector('.record-card');
+ assert.equal(await page.locator('.record-card .item-icon').count(),0,'no file icon on the card');
+ await page.click('.view-toggle [data-value=list]');assert.equal(await page.getAttribute('#library-list','data-view'),'list');
+ await page.click('#library-select-mode');await page.locator('.record-card').first().click();await page.waitForFunction(()=>/Выбрано: 1/.test(document.querySelector('#bulk-count').textContent));
+ await page.click('#bulk-done');assert.ok(await page.isHidden('#bulk-bar'));
+ // settings: the index spotlights a card
+ await page.click('.nav-link[data-view=settings]');await page.waitForSelector('#settings-index a');await page.click('#settings-index a[data-target="groq-settings-card"]');
+ await page.waitForFunction(()=>document.querySelector('#groq-settings-card').classList.contains('is-spotlit')&&document.querySelector('#view-settings .settings-grid').classList.contains('has-spotlight'));
+ // the tour runs to the end and is remembered
+ await page.click('#start-tour');await page.waitForSelector('.tour');for(let i=0;i<9;i++){await page.click('.tour-next');await page.waitForTimeout(150)}
+ await page.waitForFunction(()=>!document.querySelector('.tour'));assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('mono-prefs-1')).tourDone),true);
+ assert.deepEqual(page.errors,[]);
 });

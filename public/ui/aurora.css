@@ -387,3 +387,64 @@ body[data-theme=light] .tour-veil{background:color-mix(in srgb,#0b1d44 38%,trans
 .tour-art[data-art=heart]::before{content:"";position:absolute;left:50%;top:50%;width:64px;height:64px;margin:-32px 0 0 -32px;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff7a95'/%3E%3Cstop offset='1' stop-color='%23ff2d55'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath fill='url(%23g)' d='M12 21s-7.5-4.6-9.6-9.3C.9 8.3 3 4.5 6.6 4.5c2.1 0 3.6 1.2 4.4 2.6.8-1.4 2.3-2.6 4.4-2.6 3.6 0 5.7 3.8 4.2 7.2C19.5 16.4 12 21 12 21Z'/%3E%3C/svg%3E") center/contain no-repeat;filter:drop-shadow(0 0 24px rgba(255,45,85,.65));animation:au-beat 1.4s ease-in-out infinite}
 @keyframes au-beat{0%,100%{transform:scale(1)}15%{transform:scale(1.14)}30%{transform:scale(.98)}45%{transform:scale(1.08)}}
 .tour.is-leaving{animation:au-leave 260ms var(--au-ease) both}
+
+/* —— Narrow windows and phones ———————————————————————————————————————— */
+@media (max-width:990px){
+ /* the sidebar is a tab bar here: only the five sections */
+ .sidebar .brand-dedication,.sidebar .sidebar-foot{display:none!important}
+ .nav-rec-badge{position:absolute;top:6px;right:calc(50% - 18px);margin:0}
+ .settings-heading-side{margin-left:0}
+}
+@media (max-width:760px){
+ main{padding-left:16px!important;padding-right:16px!important}
+ .page-heading{flex-wrap:wrap;gap:12px!important}
+ .page-heading h1{font-size:34px!important}
+ .page-heading>.btn,.page-heading>button{align-self:flex-start}
+ /* settings cards: one column, the icon above the title */
+ .settings-card{display:flex!important;flex-direction:column;align-items:stretch!important;text-align:left!important;gap:12px!important;padding:18px 16px!important}
+ .settings-card>*{align-self:stretch!important}
+ .settings-card>.settings-card-icon{align-self:flex-start!important}
+ .settings-card h2,.settings-card p{text-align:left!important}
+ .settings-card>*{grid-column:auto!important;margin:0!important}
+ .settings-card>.settings-card-icon{width:34px!important;height:34px!important}
+ .settings-card>h2+p{margin-top:-4px!important}
+ .set-row{grid-template-columns:1fr!important;gap:10px!important;padding:12px 14px!important}
+ .set-row-control{justify-content:flex-start!important;flex-wrap:wrap}
+ .set-row-control .select-wrap{width:100%!important}
+ .segmented{display:flex!important;width:100%;overflow-x:auto}
+ .segmented button{flex:1 0 auto;padding:0 10px}
+ .accent-picker{justify-content:flex-start}
+ .credential-state{grid-template-columns:auto minmax(0,1fr)!important}
+ .credential-manage{grid-column:1/-1;flex-wrap:wrap}
+ .credential-field{grid-template-columns:1fr!important}
+ .credential-field .credential-actions{justify-content:flex-start}
+ .guide-step{grid-template-columns:32px minmax(0,1fr)!important;gap:12px!important}
+ .guide-shot{grid-column:1/-1!important}
+ .groq-usage{grid-template-columns:1fr!important}
+ .settings-card .source-field{grid-template-columns:1fr!important;gap:8px!important}
+ .settings-card .preflight-item{grid-template-columns:1fr!important;padding-left:30px!important}
+ .settings-card .preflight-item::before{left:12px!important;top:20px!important;transform:none!important}
+ /* overview */
+ .drop-zone{flex-direction:column;align-items:flex-start!important;gap:14px!important;padding:20px!important}
+ .drop-zone::after{display:inline-flex!important;margin-left:0}
+ /* studio: the buttons stay in the panel, nothing floats over the timer */
+ .studio-buttons{position:static!important;background:none!important;border:0!important;box-shadow:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;padding:8px 0!important;flex-wrap:wrap;justify-content:center}
+ .studio-timer{font-size:clamp(44px,15vw,72px)!important}
+ .studio-guide{grid-template-columns:1fr!important}
+ .studio-guide .guidance-actions{grid-column:1!important;grid-row:auto!important;justify-content:flex-start}
+ .input-level{flex-wrap:wrap;justify-content:center}
+ /* library */
+ .library-toolbar .search-control{flex-basis:100%}
+ .library-toolbar .toolbar-select,.library-toolbar .select-wrap{flex:1 1 140px!important;width:auto!important}
+ .view-toggle{flex:0 0 auto!important;width:auto!important}
+ .view-toggle button{flex:0 0 auto!important}
+ .record-card-actions{flex-wrap:wrap}
+ .bulk-bar{position:static!important}
+ /* notices above the tab bar */
+ .toast-area{bottom:calc(92px + env(safe-area-inset-bottom))!important}
+ .floating-recorder{right:12px;bottom:calc(96px + env(safe-area-inset-bottom))}
+ .tour-card{width:calc(100vw - 32px)!important;left:16px!important}
+}
+@media (max-width:380px){.fr-text .fr-state{display:none}.record-card-meta{grid-template-columns:1fr!important}}
+/* Very wide screens: content keeps a readable measure, centred */
+@media (min-width:1900px){main{max-width:1680px;margin:0 auto}}
