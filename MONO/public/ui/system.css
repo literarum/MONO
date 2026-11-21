@@ -1,0 +1,208 @@
+/* MONO system layer — loaded last.
+   Built on Apple's Human Interface Guidelines patterns: grouped settings rows (label on the left,
+   control on the right), segmented controls for 2–4 exclusive choices, filled text fields with a
+   focus ring, one button vocabulary (filled / tinted / gray / plain), 8-pt spacing, and nothing that
+   costs frames: no backdrop blur on large surfaces, no infinite animations, no layout animations. */
+:root,body,body[data-theme]{
+ --sys-row:52px;--sys-field:40px;--sys-radius:12px;--sys-radius-sm:9px;--sys-radius-card:20px;
+ --sys-fill:color-mix(in srgb,var(--text) 6%,transparent);
+ --sys-fill-hover:color-mix(in srgb,var(--text) 9%,transparent);
+ --sys-fill-strong:color-mix(in srgb,var(--text) 12%,transparent);
+ --sys-separator:color-mix(in srgb,var(--text) 9%,transparent);
+ --sys-tinted:color-mix(in srgb,var(--tint) 15%,transparent);
+ --sys-tinted-hover:color-mix(in srgb,var(--tint) 22%,transparent);
+ --sys-ring:0 0 0 3.5px color-mix(in srgb,var(--tint) 38%,transparent);
+ --sys-ease:cubic-bezier(.25,.8,.25,1);--sys-fast:120ms;
+}
+
+/* —— Performance ———————————————————————————————————————————————————————
+   The sidebar sat over a static background, so its 20 px backdrop blur showed nothing but still made
+   the compositor re-blur the whole column. A translucent fill looks the same and costs nothing. */
+.sidebar{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+.settings-card,.record-card,.metric-card,.side-card,.studio-panel,.editor-workspace{contain:layout paint}
+.library-list>*{content-visibility:auto;contain-intrinsic-size:auto 120px}
+
+/* —— Buttons: one vocabulary ——————————————————————————————————————————
+   filled (.btn-primary) = the one main action; gray (.btn-outline/.btn-subtle) = other actions;
+   tinted (.btn-tinted, .text-link, .back-link, data-go navigation) = go somewhere. */
+.btn{border-radius:999px!important;font-weight:600!important;letter-spacing:-.01em!important;transition:background var(--sys-fast) var(--sys-ease),color var(--sys-fast),box-shadow var(--sys-fast),transform var(--sys-fast) var(--sys-ease)!important}
+.btn:focus-visible,.text-link:focus-visible,.back-link:focus-visible,.segmented button:focus-visible,.settings-index a:focus-visible{outline:none!important;}
+.btn-outline,.btn-subtle{background:var(--sys-fill)!important;border:1px solid transparent!important;box-shadow:none!important;color:var(--text)!important}
+.btn-outline:hover:not(:disabled),.btn-subtle:hover:not(:disabled){background:var(--sys-fill-hover)!important}
+.btn-outline:active:not(:disabled),.btn-subtle:active:not(:disabled){background:var(--sys-fill-strong)!important}
+.btn-primary{box-shadow:0 1px 2px rgba(0,0,0,.18),0 6px 16px color-mix(in srgb,var(--tint) 26%,transparent)!important}
+.btn:disabled{opacity:.45!important;cursor:default}
+/* Navigation buttons look like navigation everywhere: tinted pill with an arrow. */
+.text-link,.btn-tinted,button.btn[data-go]:not(.btn-primary),.back-link{
+ display:inline-flex!important;align-items:center;justify-content:center;gap:6px!important;min-height:34px!important;padding:0 14px!important;border-radius:999px!important;
+ background:var(--sys-tinted)!important;border:0!important;box-shadow:none!important;color:var(--tint)!important;font-size:13px!important;font-weight:600!important;text-decoration:none!important;cursor:pointer;
+ transition:background var(--sys-fast) var(--sys-ease),transform var(--sys-fast) var(--sys-ease)!important}
+.text-link:hover,.btn-tinted:hover,button.btn[data-go]:not(.btn-primary):hover,.back-link:hover{background:var(--sys-tinted-hover)!important}
+.text-link:active,.btn-tinted:active,button.btn[data-go]:not(.btn-primary):active,.back-link:active{transform:scale(.97)}
+.text-link svg,.btn-tinted svg,button.btn[data-go] svg,.back-link svg{width:15px!important;height:15px!important;stroke-width:2.1!important;color:currentColor!important}
+.back-link{padding:0 14px 0 10px!important}
+.section-title-line .text-link{margin-left:auto}
+
+/* —— Fields: filled, borderless, with a focus ring ——————————————————————— */
+.select-control,input[type=text],input[type=search],input[type=number],input[type=password],input[type=url],input[type=email],textarea,.search-control{
+ min-height:var(--sys-field)!important;border-radius:var(--sys-radius)!important;background:var(--sys-fill)!important;border:1px solid transparent!important;
+ box-shadow:inset 0 0 0 .5px var(--sys-separator)!important;color:var(--text)!important;font:inherit;font-size:14px!important;
+ transition:background var(--sys-fast) var(--sys-ease),box-shadow var(--sys-fast) var(--sys-ease)!important}
+.select-control{height:var(--sys-field)!important;padding:0 40px 0 14px!important;font-family:inherit!important;font-size:14px!important;font-weight:500}
+.select-control:hover,input[type=text]:hover,input[type=search]:hover,input[type=number]:hover,input[type=password]:hover,textarea:hover,.search-control:hover{background:var(--sys-fill-hover)!important}
+.select-control:focus-visible,.select-control[aria-expanded=true],input[type=text]:focus,input[type=search]:focus,input[type=number]:focus,input[type=password]:focus,input[type=url]:focus,textarea:focus,.search-control:focus-within{
+ background:var(--surface)!important;outline:none!important}
+.search-control input{background:none!important;box-shadow:none!important;min-height:0!important;border:0!important}
+.search-control input:focus{box-shadow:none!important;background:none!important}
+textarea{padding:11px 14px!important;min-height:92px!important;line-height:1.55!important;resize:vertical}
+::placeholder{color:var(--dim)!important;opacity:1}
+/* A number with its unit, like macOS: "$1 = [ 83,08 ] ₽" in one field */
+.unit-field{display:inline-flex;align-items:center;height:var(--sys-field);border-radius:var(--sys-radius);background:var(--sys-fill);box-shadow:inset 0 0 0 .5px var(--sys-separator);padding:0 12px;gap:8px;transition:background var(--sys-fast),box-shadow var(--sys-fast)}
+.unit-field:hover{background:var(--sys-fill-hover)}
+.unit-field:focus-within{background:var(--surface);}
+.unit-field input[type=number]{width:96px;min-height:0!important;height:calc(var(--sys-field) - 2px)!important;padding:0!important;background:none!important;box-shadow:none!important;border:0!important;text-align:right;font-variant-numeric:tabular-nums;font-weight:600!important}
+.unit-field input[type=number]:focus{box-shadow:none!important;background:none!important}
+.unit-prefix,.unit-suffix{font-size:13px;color:var(--muted);font-weight:500;white-space:nowrap}
+/* Checkbox rows become switches (the native checkbox stays for keyboard and screen readers) */
+.check-row{display:flex!important;align-items:center;gap:12px;cursor:pointer}
+.check-row input[type=checkbox]{appearance:none;-webkit-appearance:none;flex:0 0 auto;width:38px!important;height:22px!important;margin:0!important;border-radius:999px!important;background:var(--sys-fill-strong)!important;border:0!important;position:relative;cursor:pointer;transition:background var(--sys-fast) var(--sys-ease)!important}
+.check-row input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform 180ms var(--sys-ease)}
+.check-row input[type=checkbox]:checked{background:#30d158!important}
+.check-row input[type=checkbox]:checked::after{transform:translateX(16px)}
+.check-row input[type=checkbox]:focus-visible{outline:none}
+
+/* —— Segmented control —————————————————————————————————————————————————— */
+.segmented{display:inline-grid;grid-auto-flow:column;grid-auto-columns:1fr;padding:2px;border-radius:10px;background:var(--sys-fill);box-shadow:inset 0 0 0 .5px var(--sys-separator);gap:2px}
+.segmented button{min-height:30px;padding:0 14px;border:0;border-radius:8px;background:none;color:var(--muted);font:inherit;font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer;transition:background var(--sys-fast) var(--sys-ease),color var(--sys-fast)}
+.segmented button:hover{color:var(--text)}
+.segmented button[aria-checked=true]{background:var(--surface2,var(--surface));color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.2),0 0 0 .5px var(--sys-separator)}
+body[data-theme=light] .segmented button[aria-checked=true]{background:#fff}
+select.is-shadow{display:none!important}
+
+/* —— Overview: the drop zone spans the card ———————————————————————————— */
+.drop-zone{max-width:none!important;width:100%!important;padding:26px 28px!important;gap:20px!important;margin:24px 0 16px!important;border-radius:18px!important;
+ border:1.5px dashed color-mix(in srgb,var(--tint) 40%,transparent)!important;background:color-mix(in srgb,var(--tint) 5%,transparent)!important}
+.drop-zone::after{content:"Выбрать файл";margin-left:auto;flex:0 0 auto;display:inline-flex;align-items:center;min-height:34px;padding:0 16px;border-radius:999px;background:var(--sys-tinted);color:var(--tint);font-size:13px;font-weight:600;transition:background var(--sys-fast)}
+.drop-zone:hover::after{background:var(--sys-tinted-hover)}
+#view-dashboard .hero-content,#view-dashboard .hero{max-width:none!important}
+@media (max-width:760px){.drop-zone::after{display:none}}
+
+/* —— Settings: index on the left, groups on the right, both full height ——————— */
+.settings-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:28px;align-items:start}
+.settings-index{position:sticky;top:8px;display:flex;flex-direction:column;gap:2px;padding:8px;border-radius:var(--sys-radius-card);background:var(--glass-fill,var(--surface));box-shadow:inset 0 0 0 .5px var(--sys-separator)}
+.settings-index a{display:flex;align-items:center;gap:10px;min-height:36px;padding:0 10px;border-radius:10px;color:var(--text);text-decoration:none;font-size:13px;font-weight:500;transition:background var(--sys-fast) var(--sys-ease)}
+.settings-index a:hover{background:var(--sys-fill)}
+.settings-index a.active{background:var(--sys-tinted);color:var(--text);font-weight:600}
+.settings-index-icon{flex:0 0 auto;width:24px;height:24px;border-radius:7px;display:grid;place-items:center;color:#fff;background:var(--tone,#8e8e93)}
+.settings-index-icon svg{width:14px;height:14px;stroke-width:2.2}
+.settings-grid{max-width:none!important;width:100%;gap:16px!important}
+.settings-card{scroll-margin-top:12px;padding:22px 24px!important;border-radius:var(--sys-radius-card)!important;grid-template-columns:36px minmax(0,1fr)!important;column-gap:14px!important;row-gap:14px!important}
+.settings-card>.settings-card-icon{background:var(--tone,var(--tint))!important;color:#fff!important;border-radius:10px!important;box-shadow:0 2px 6px color-mix(in srgb,var(--tone,var(--tint)) 35%,transparent)}
+.settings-card>.settings-card-icon svg{width:18px;height:18px;stroke-width:2.1}
+.settings-card .select-wrap,.settings-card textarea,.settings-card input[type=number],.settings-card input[type=text],.settings-card input[type=password]{max-width:none!important}
+[data-tone=indigo]{--tone:#5e5ce6}[data-tone=orange]{--tone:#ff9f0a}[data-tone=violet]{--tone:#bf5af2}[data-tone=blue]{--tone:#0a84ff}
+[data-tone=teal]{--tone:#30b0c7}[data-tone=green]{--tone:#30d158}[data-tone=red]{--tone:#ff453a}[data-tone=gray]{--tone:#8e8e93}[data-tone=pink]{--tone:#ff375f}
+/* Grouped rows */
+.set-rows{display:flex;flex-direction:column;border-radius:14px;background:var(--sys-fill);box-shadow:inset 0 0 0 .5px var(--sys-separator);overflow:hidden}
+.set-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:20px;min-height:var(--sys-row);padding:10px 16px}
+.set-row+.set-row{box-shadow:inset 0 .5px 0 var(--sys-separator)}
+.set-row:has(.set-row-control>.btn[hidden]:only-child){display:none}
+.set-row-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.set-row-title{font-size:13.5px;font-weight:600;color:var(--text);letter-spacing:-.01em;margin:0!important;text-transform:none!important}
+.set-row-hint{font-size:12px;line-height:1.45;color:var(--muted)}
+.set-row-hint:empty{display:none}
+.set-row-control{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0}
+.set-row-control .select-wrap{width:300px!important}
+.set-row-control .btn{min-width:112px}
+.set-field{display:flex;flex-direction:column;gap:8px}
+.set-field-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.set-counter{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+.settings-path{font-family:var(--mono,ui-monospace,monospace)!important;font-size:12px!important;color:var(--muted)!important;overflow-wrap:anywhere}
+.settings-path:empty{display:none}
+@media (max-width:1100px){.settings-layout{grid-template-columns:1fr}.settings-index{display:none}}
+@media (max-width:640px){.set-row{grid-template-columns:1fr;gap:10px}.set-row-control{justify-content:flex-start}.set-row-control .select-wrap{width:100%!important}.segmented{width:100%}}
+.check-row input[type=checkbox]::before{display:none!important;content:none!important}
+.check-row input[type=checkbox]{display:block!important}
+
+/* Settings cards that other modules build: the same grouped look */
+/* Recording sources: label left, menu right */
+.settings-card .capture-sources{display:flex;flex-direction:column;border-radius:14px;background:var(--sys-fill);box-shadow:inset 0 0 0 .5px var(--sys-separator);overflow:hidden;gap:0!important}
+.settings-card .capture-sources>*{margin:0!important}
+.settings-card .source-field{display:grid;grid-template-columns:minmax(0,1fr) 300px;align-items:center;gap:20px;min-height:var(--sys-row);padding:8px 16px}
+.settings-card .source-field[hidden]{display:none}
+.settings-card .source-field .field-label{margin:0!important;font-size:13.5px!important;font-weight:600!important;color:var(--text)!important}
+.settings-card .capture-sources>*+*{box-shadow:inset 0 .5px 0 var(--sys-separator)}
+.settings-card .active-devices{display:grid!important;grid-template-columns:1fr 1fr;gap:16px;padding:12px 16px!important;border:0!important;border-radius:0!important;background:none!important}
+.settings-card .active-devices-label{font-size:12px;color:var(--muted)}
+.settings-card .active-devices strong{font-size:13px;font-weight:600}
+.settings-card .source-guidance{padding:12px 16px!important;margin:0!important}
+.settings-card .capture-sources .btn{margin:0 16px 14px!important;justify-self:start;align-self:flex-start}
+#check-native-sound{justify-self:start;width:auto!important}
+/* Pre-flight: a grouped list with status lights */
+.settings-card .preflight{display:flex;flex-direction:column;gap:12px}
+.settings-card .preflight-head{display:flex;align-items:center;gap:10px}
+.settings-card .preflight-list{list-style:none;margin:0!important;padding:0!important;border-radius:14px;background:var(--sys-fill);box-shadow:inset 0 0 0 .5px var(--sys-separator);overflow:hidden}
+.settings-card .preflight-item{display:grid!important;grid-template-columns:minmax(160px,.4fr) minmax(0,1fr);align-items:center;gap:4px 20px;min-height:44px;padding:9px 16px 9px 36px!important;margin:0!important;position:relative}
+.settings-card .preflight-item+.preflight-item{box-shadow:inset 0 .5px 0 var(--sys-separator)}
+.settings-card .preflight-item::before{position:absolute!important;left:16px!important;top:50%!important;margin:0!important;transform:translateY(-50%)}
+.settings-card .preflight-item strong{font-size:13px;font-weight:600}
+.settings-card .preflight-item span{font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
+/* Groq key: field and button on one line */
+.credentials-form{display:flex;flex-direction:column;gap:12px}
+.credentials-form>p:empty,.credential-message:empty{display:none}
+.credential-account{display:flex;flex-direction:column;gap:10px}
+.credential-account>p{margin:0!important}
+.credential-account-links{display:flex;gap:8px;flex-wrap:wrap}
+.credential-entry{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 10px;align-items:center}
+.credential-entry .field-label{grid-column:1/-1;margin:0!important}
+.credential-entry .credential-actions{display:flex;gap:8px;margin:0!important}
+.credential-entry .credential-actions .btn{min-height:var(--sys-field)!important;padding:0 18px!important}
+/* Help: rows that open, with a chevron instead of a triangle */
+.settings-card details.setup-details{border:0!important;padding:0!important;margin:0!important}
+.help-notes{row-gap:0!important}
+.help-notes>h2{margin-bottom:14px!important}
+.help-notes>details{background:var(--sys-fill);padding:0 16px!important}
+.help-notes>details:first-of-type{border-radius:14px 14px 0 0}
+.help-notes>details:last-of-type{border-radius:0 0 14px 14px}
+.help-notes>details+details{box-shadow:inset 0 .5px 0 var(--sys-separator)}
+.settings-card details>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;min-height:46px;cursor:pointer;font-size:13.5px;font-weight:600;color:var(--text)}
+.settings-card details>summary::-webkit-details-marker{display:none}
+.settings-card details>summary::after{content:"";width:7px;height:7px;border-right:1.8px solid var(--dim);border-bottom:1.8px solid var(--dim);transform:rotate(-45deg);transition:transform 160ms var(--sys-ease);margin-right:4px}
+.settings-card details[open]>summary::after{transform:rotate(45deg)}
+.settings-card details>:not(summary){margin:0 0 14px!important;font-size:13px;line-height:1.6;color:var(--muted)}
+#groq-settings-card details.setup-details{box-shadow:inset 0 .5px 0 var(--sys-separator)}
+@media (max-width:760px){.settings-card .source-field{grid-template-columns:1fr}.settings-card .preflight-item{grid-template-columns:1fr}.settings-card .active-devices{grid-template-columns:1fr}}
+.help-notes>details.setup-details{padding:0 16px!important}
+.help-notes>details.setup-details>p{padding-right:24px}
+/* Plain: dismiss / secondary text actions — no fill, muted until hovered */
+.btn-plain{display:inline-flex;align-items:center;min-height:34px;padding:0 12px;border:0;border-radius:999px;background:none;color:var(--muted);font:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:color var(--sys-fast),background var(--sys-fast)}
+.btn-plain:hover{color:var(--text);background:var(--sys-fill)}
+.btn-plain:focus-visible{outline:none;}
+/* Checkboxes outside switch rows: tinted when on */
+input[type=checkbox]:not(.check-row input):checked{background:var(--tint)!important;border-color:var(--tint)!important}
+input[type=checkbox]:not(.check-row input):checked::before{border-color:#fff!important}
+
+/* —— Editor details: a grouped list like the settings rows ——————————————— */
+.editor-sidebar .detail-pair{display:flex!important;align-items:center;justify-content:space-between;gap:12px;min-height:40px;margin:0!important;padding:0 14px!important;background:var(--sys-fill);font-size:12.5px}
+.editor-sidebar .detail-pair[hidden]{display:none!important}
+.editor-sidebar .detail-pair span{color:var(--muted);font-size:12.5px}
+.editor-sidebar .detail-pair strong{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+.editor-sidebar .detail-pair:not([hidden]):first-of-type{border-radius:12px 12px 0 0}
+.editor-sidebar .detail-pair+.detail-pair{box-shadow:inset 0 .5px 0 var(--sys-separator)}
+.editor-sidebar .detail-pair:has(+ :not(.detail-pair)),.editor-sidebar .detail-pair:has(+ .detail-pair[hidden]:last-of-type){border-radius:0 0 12px 12px}
+.editor-sidebar{gap:0!important}
+.editor-sidebar .editor-source-actions{margin-top:16px!important;gap:8px!important}
+/* Sentence case for counts and small labels, as in macOS */
+.library-count{text-transform:none!important;letter-spacing:0!important;font-size:12.5px!important;font-weight:600!important;color:var(--muted)!important}
+
+/* —— Top bar status light ——————————————————————————————————————————— */
+.top-right{display:flex;align-items:center;gap:8px}
+.system-status{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 14px 0 12px;border:0;border-radius:999px;background:var(--sys-fill);color:var(--text);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:background var(--sys-fast)}
+.system-status:hover{background:var(--sys-fill-hover)}
+.system-status:focus-visible{outline:none;}
+.system-status-light{width:8px;height:8px;border-radius:50%;background:#8e8e93;box-shadow:0 0 0 3px color-mix(in srgb,#8e8e93 22%,transparent)}
+.system-status[data-level=ok] .system-status-light,.system-status[data-level=advisory] .system-status-light{background:#30d158;box-shadow:0 0 0 3px color-mix(in srgb,#30d158 22%,transparent)}
+.system-status[data-level=caution] .system-status-light{background:#ffd60a;box-shadow:0 0 0 3px color-mix(in srgb,#ffd60a 22%,transparent)}
+.system-status[data-level=warning] .system-status-light{background:#ff453a;box-shadow:0 0 0 3px color-mix(in srgb,#ff453a 25%,transparent)}
+.system-status[data-level=warning]{background:color-mix(in srgb,#ff453a 14%,transparent)}
+@media (max-width:640px){.system-status-text{display:none}.system-status{padding:0 12px}}

@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+# The application lives in MONO/ (the repository root holds only the installer and that folder).
+defaults:
+  run:
+    working-directory: MONO
+
 jobs:
   installer:
     name: Build, install and verify MONO-Setup.exe
@@ -34,6 +39,17 @@ jobs:
       - name: Native capture module — unit tests (also compiles the sources)
         shell: pwsh
         run: dotnet run --project native/windows/tests/MonoAudio.Tests.csproj -c Release
+
+      - name: Source installer — syntax and the in-app module install (windows.ps1 -HelperOnly)
+        shell: powershell
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/install/windows.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count) { $errors | ForEach-Object { Write-Host $_ }; throw 'windows.ps1 has syntax errors' }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install/windows.ps1 -HelperOnly -Unattended
+          if ($LASTEXITCODE -ne 0) { Get-Content "$env:TEMP\mono-install.log" -ErrorAction SilentlyContinue; throw "windows.ps1 -HelperOnly exited with $LASTEXITCODE" }
+          if (!(Test-Path .build/capture-windows/bundle/MonoAudio.exe)) { throw 'windows.ps1 -HelperOnly did not build MonoAudio.exe' }
+          Remove-Item -Recurse -Force .build/capture-windows
 
       - name: Native capture module — publish MonoAudio.exe
         shell: pwsh
@@ -215,17 +231,17 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: MONO-Windows
-          path: .build/release/*.zip
+          path: MONO/.build/release/*.zip
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
           name: MONO-portable-windows
-          path: .build/portable/*
+          path: MONO/.build/portable/*
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
           name: MONO-Setup-windows
-          path: .build/installer/MONO-Setup-*.exe
+          path: MONO/.build/installer/MONO-Setup-*.exe
           if-no-files-found: error
