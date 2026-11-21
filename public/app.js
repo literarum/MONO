@@ -95,7 +95,7 @@ function renderLevelCheck(){
 }
 function pauseAudition(){audioReview?.player.pause();if(mediaInterlock)mediaInterlock.pauseAll();else document.querySelectorAll('audio,video').forEach(media=>media.pause())}
 function canAudition(){if(storageDetails().local&&(!nativeController?.snapshot.connected||captureActive(nativeController.snapshot))){notify('Завершите запись перед прослушиванием, чтобы звук плеера не попал в неё.','error');return false}return true}
-async function playAudition(media){if(!canAudition())return;try{if(storageDetails().local){if(!mediaInterlock)throw new Error('Дождитесь подключения модуля записи.');await mediaInterlock.play(media)}else await media.play()}catch(error){if(error.name!=='AbortError')notify(error.message||'Не удалось воспроизвести аудио.','error')}}
+async function playAudition(media){if(!canAudition())return;if(media.ended||(Number.isFinite(media.duration)&&media.duration>0&&media.currentTime>=media.duration-.25))media.currentTime=0;try{if(storageDetails().local){if(!mediaInterlock)throw new Error('Дождитесь подключения модуля записи.');await mediaInterlock.play(media)}else await media.play()}catch(error){if(error.name!=='AbortError')notify(error.message||'Не удалось воспроизвести аудио.','error')}}
 /** Warn while recording, not after: a silent or clipping input is fixable only now. */
 const captureHealth={session:null,lastSound:0,clipUntil:0};
 function captureHealthHint(value){
@@ -275,7 +275,7 @@ async function initializeNative(local){
   // Pre-flight check: compact (problems only) in the studio, full in settings.
   preflight=new Preflight(local);$('#system-health-card').hidden=true; // the pre-flight check below covers the same systems in depth
   const studioCheck=document.createElement('div');studioCheck.className='glass side-card';$('.studio-side').prepend(studioCheck);mountPreflight(studioCheck,{model:preflight,compact:true,onError:()=>{}});
-  const settingsCheck=document.createElement('article');settingsCheck.className='glass settings-card';settingsCheck.innerHTML='<div class="settings-card-icon"><svg><use href="#i-check"/></svg></div><h2>Предполётная проверка</h2><div></div>';$('#view-settings .settings-grid').prepend(settingsCheck);mountPreflight(settingsCheck.lastElementChild,{model:preflight,onError:error=>notify(error.message,'error'),onDeep:()=>void runDeepDiagnostics()});
+  const settingsCheck=document.createElement('article');settingsCheck.className='glass settings-card';settingsCheck.innerHTML='<div class="settings-card-icon"><svg><use href="#i-check"/></svg></div><h2>Предполётная проверка</h2><div></div>';$('#view-settings .settings-grid').prepend(settingsCheck);mountPreflight(settingsCheck.lastElementChild,{model:preflight,onError:error=>notify(error.message,'error'),onDeep:()=>void runDeepDiagnostics()});mountSystemStatus(preflight);
  }
  await nativeController.connect();
  await captureSources.load();
@@ -602,10 +602,53 @@ async function loadWindowState(){try{const local=await localLibraryClient();wind
 /** Settings read top to bottom by importance: connection and recognition first, the system check and
  * help last; an unfinished archive copy always comes first. */
 const SETTINGS_ORDER=['Незавершённое копирование','Подключение Groq','Распознавание','Обработка аудио','Источники записи','Оформление','Архив и резервные копии','Обновление','Страховочная дорожка','Расходы','Предполётная проверка','Состояние системы','Как пользоваться MONO'];
+/** Segmented controls mirror a hidden <select> (the select keeps the value and its change handler). */
+function syncSegmented(){for(const group of document.querySelectorAll('.segmented[data-for]')){const select=document.getElementById(group.dataset.for);for(const button of group.querySelectorAll('button')){const on=button.dataset.value===select.value;button.setAttribute('aria-checked',String(on));button.tabIndex=on?0:-1}}}
+function mountSegmented(){
+ for(const group of document.querySelectorAll('.segmented[data-for]')){if(group.dataset.ready)continue;group.dataset.ready='1';const select=document.getElementById(group.dataset.for),buttons=[...group.querySelectorAll('button')];
+  const choose=button=>{if(select.value===button.dataset.value)return;select.value=button.dataset.value;select.dispatchEvent(new Event('change',{bubbles:true}));syncSegmented()};
+  group.addEventListener('click',event=>{const button=event.target.closest('button');if(button)choose(button)});
+  group.addEventListener('keydown',event=>{const step={ArrowRight:1,ArrowDown:1,ArrowLeft:-1,ArrowUp:-1}[event.key];if(!step)return;event.preventDefault();const index=buttons.findIndex(button=>button.dataset.value===select.value),next=buttons[(index+step+buttons.length)%buttons.length];choose(next);next.focus()});
+ }
+ syncSegmented();
+}
+/** The settings index: one entry per visible card, in the cards' order; the entry of the card in view is highlighted. */
+let settingsSpy=null;
+function renderSettingsIndex(){
+ const index=$('#settings-index'),grid=$('#view-settings .settings-grid');if(!index||!grid)return;
+ const cards=[...grid.children].filter(card=>!card.hidden&&card.querySelector('h2')).sort((a,b)=>Number(a.style.order||0)-Number(b.style.order||0));
+ const slug=text=>'set-'+text.toLowerCase().replace(/[^a-zа-яё0-9]+/gi,'-').replace(/^-|-$/g,'');
+ index.replaceChildren(...cards.map(card=>{const title=card.querySelector('h2').textContent.trim();card.id||=slug(title);const link=document.createElement('a');link.href='#settings';link.dataset.target=card.id;link.dataset.tone=card.dataset.tone||'';
+  const icon=card.querySelector('.settings-card-icon svg use')?.getAttribute('href')||'#i-settings';link.innerHTML=`<span class="settings-index-icon"><svg><use href="${icon}"/></svg></span><span></span>`;link.lastElementChild.textContent=SETTINGS_SHORT[title]||title;link.title=title;
+  link.onclick=event=>{event.preventDefault();card.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});mark(card.id)};return link}));
+ const mark=id=>{for(const link of index.children)link.classList.toggle('active',link.dataset.target===id)};
+ settingsSpy?.disconnect();settingsSpy=new IntersectionObserver(entries=>{const visible=entries.filter(entry=>entry.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top)[0];if(visible)mark(visible.target.id)},{root:$('#main'),rootMargin:'-10% 0px -70% 0px'});
+ for(const card of cards)settingsSpy.observe(card);if(cards[0])mark(cards[0].id);
+}
+/** The status light in the top bar, like a master caution: MONO checks its systems at start, every
+ * five minutes, when the window comes back and when a device is plugged in; one glance says whether a
+ * recording can start, and a click opens the full check. */
+function mountSystemStatus(model){
+ const button=$('#system-status');if(!button||button.dataset.ready)return;button.dataset.ready='1';button.hidden=false;
+ const text=button.querySelector('.system-status-text');
+ const LABEL={ok:'Системы в норме',advisory:'Системы в норме',caution:'Есть ограничения',warning:'Нужно действие'};
+ model.subscribe(result=>{const notable=result.checks.filter(item=>['caution','warning'].includes(item.level));button.dataset.level=result.level;
+  text.textContent=notable.length>1?`${LABEL[result.level]} · ${notable.length}`:LABEL[result.level]||'Системы';
+  button.title=notable.length?notable.map(item=>'• '+item.title).join('\n'):'Все проверки пройдены. Нажмите, чтобы открыть подробности.'});
+ button.onclick=()=>{go('settings');requestAnimationFrame(()=>document.getElementById('set-предполётная-проверка')?.scrollIntoView({block:'start'}))};
+ const again=()=>void model.run().catch(()=>{});
+ setInterval(()=>{if(!document.hidden)void model.run({force:true}).catch(()=>{})},5*60*1000);
+ addEventListener('focus',again);addEventListener('online',again);navigator.mediaDevices?.addEventListener?.('devicechange',()=>void model.run({force:true}).catch(()=>{}));
+ again();
+}
+const SETTINGS_ICONS={'Как пользоваться MONO':'#i-sparkle','Незавершённое копирование':'#i-refresh'};
+const SETTINGS_SHORT={'Подключение Groq':'Groq','Архив и резервные копии':'Архив','Страховочная дорожка':'Страховка','Предполётная проверка':'Проверка','Как пользоваться MONO':'Справка','Незавершённое копирование':'Копирование','Источники записи':'Источники'};
+const SETTINGS_TONES={'Источники записи':'red','Страховочная дорожка':'pink','Предполётная проверка':'green','Как пользоваться MONO':'blue','Незавершённое копирование':'orange'};
 function orderSettings(){
  const grid=$('#view-settings .settings-grid');if(!grid)return;
- for(const card of grid.children){const title=card.querySelector('h2')?.textContent?.trim()||'',index=SETTINGS_ORDER.indexOf(title);card.style.order=String(index<0?SETTINGS_ORDER.length:index)}
- if(!grid.dataset.ordered){grid.dataset.ordered='1';new MutationObserver(orderSettings).observe(grid,{childList:true})} // cards added later (modules, recovery) take their place too
+ for(const card of grid.children){const title=card.querySelector('h2')?.textContent?.trim()||'',index=SETTINGS_ORDER.indexOf(title);card.style.order=String(index<0?SETTINGS_ORDER.length:index);if(!card.dataset.tone&&SETTINGS_TONES[title])card.dataset.tone=SETTINGS_TONES[title];if(title&&!card.querySelector(':scope>.settings-card-icon')){const icon=document.createElement('div');icon.className='settings-card-icon';icon.innerHTML=`<svg><use href="${SETTINGS_ICONS[title]||'#i-sparkle'}"/></svg>`;card.prepend(icon)}}
+ if(!grid.dataset.ordered){grid.dataset.ordered='1';let queued=0;new MutationObserver(records=>{if(records.some(record=>record.type==='childList'||record.target.parentElement===grid)&&!queued)queued=requestAnimationFrame(()=>{queued=0;orderSettings()})}).observe(grid,{childList:true,subtree:true,attributes:true,attributeFilter:['hidden']})}
+ renderSettingsIndex(); // cards added later (modules, recovery) take their place too
 }
 /** Offline update: the person picks a .monoupdate file; MONO checks its signature and every file's
  * hash, unpacks it beside the app, and MONO.exe switches to it on the next start. */
@@ -614,7 +657,7 @@ async function renderUpdateCard(){
  try{const local=await localLibraryClient();info=local?await local.json('/update'):null}catch{}
  if(!info?.supported){card.hidden=true;return}card.hidden=false;
  const status=$('#update-status'),button=$('#update-install');
- $('#update-summary').textContent=`Установлена версия ${info.version}. Обновление ставится из файла .monoupdate — интернет не нужен.`;
+ $('#update-summary').textContent=`MONO ${info.version}`;
  status.textContent=info.pending?`Версия ${info.pending} проверена и будет установлена при следующем запуске MONO. Закройте окно MONO и запустите его снова.`:info.applied?.result==='rolled-back'?`Обновление до ${info.applied.version} не удалось применить — MONO вернул прежнюю версию. Попробуйте ещё раз.`:!info.signed?'В этой сборке не настроена подпись обновлений: MONO не примет файл, который нельзя проверить.':'';
  button.disabled=!info.signed;
  button.onclick=()=>{const input=$('#update-input');input.value='';input.onchange=async()=>{const file=input.files?.[0];if(!file)return;button.disabled=true;status.textContent=`Проверяем подпись и файлы «${file.name}»…`;
@@ -641,6 +684,37 @@ function statusLabel(r){
  if(r.status==='migrating')return 'Перенос не завершён';
   return 'Аудио сохранено';
 }
+/** Session: where the person is, so that closing MONO and starting it again continues the work.
+ * Unfinished work = a record left open in the editor (or a transcription still running). Someone who
+ * went back to the library or the overview has finished, and MONO starts on the overview. */
+const session={
+ key:'mono-session-2',restoring:false,
+ read(){try{return JSON.parse(localStorage.getItem(this.key)||'null')}catch{return null}},
+ save(patch){if(this.restoring)return;try{const value={...(this.read()||{}),...patch,at:Date.now()};localStorage.setItem(this.key,JSON.stringify(value))}catch{}},
+ resumable(records){
+  const last=this.read();if(!last||Date.now()-(last.at||0)>30*24*3600*1000)return null;
+  if(last.view==='editor'&&last.id){const record=records.find(r=>r.id===last.id);if(record&&!record.trashed)return {hash:`editor/${encodeURIComponent(last.id)}`,...last}}
+  if(last.view==='jobs'&&records.some(r=>['uploading','queued','processing'].includes(r.status)))return {hash:'jobs',...last};
+  return null;
+ },
+ async restore(last){
+  this.restoring=true;
+  try{
+   if(last.view==='editor'){
+    for(let i=0;i<60&&!(state.editorId===last.id&&document.querySelector('#editor-segments,#view-editor .editor-workspace'));i++)await new Promise(r=>setTimeout(r,100));
+    await new Promise(r=>setTimeout(r,250));
+    if(last.time>0){const time=last.time;if(audioReview?.player)await audioReview.player.seek(time).catch(()=>{});else{const a=$('#audio-element');const apply=()=>{try{a.currentTime=time}catch{}};a.readyState>=1?apply():a.addEventListener('loadedmetadata',apply,{once:true})}}
+   }
+   if(last.scroll>0)$('#main').scrollTop=last.scroll;
+  }finally{this.restoring=false}
+ },
+ watch(){
+  if(this.watching)return;this.watching=true;let queued=0;
+  $('#main').addEventListener('scroll',()=>{if(queued)return;queued=setTimeout(()=>{queued=0;this.save({scroll:Math.round($('#main').scrollTop)})},400)},{passive:true});
+  setInterval(()=>{if(state.view!=='editor'||document.hidden)return;const time=audioReview?.player?audioReview.player.time:$('#audio-element')?.currentTime;if(Number.isFinite(time))this.save({time:Math.round(time*10)/10})},2000);
+  addEventListener('pagehide',()=>{const time=audioReview?.player?audioReview.player.time:$('#audio-element')?.currentTime;this.save({scroll:Math.round($('#main').scrollTop),...(state.view==='editor'&&Number.isFinite(time)?{time:Math.round(time*10)/10}:{})})});
+ }
+};
 function escapeNext(){return location.hash.slice(1).split('/')[0]}
 function go(view,id=null){
   location.hash=view==='editor'&&id?`#editor/${encodeURIComponent(id)}`:`#${view}`;
@@ -656,7 +730,8 @@ function renderRoute({preserveDrawer=false}={}){
     else if(state.editorId!==id||state.view!=='editor'){state.editorId=id;state.editorPage=0;void renderEditor(id).catch(e=>notify(e.message,'error'))}
   }
  if(state.view==='editor'&&view!=='editor'){if(audioReview){audioReview.player.pause();void audioReview.cancel(true).catch(e=>notify(e.message,'error'))}else $('#audio-element').pause()}
-  state.view=view;try{if(view!=='editor')localStorage.setItem('mono-last-view',view)}catch{}
+  const prior=state.view;state.view=view;try{if(view!=='editor')localStorage.setItem('mono-last-view',view)}catch{}
+  if(prior!==view||(view==='editor'&&session.read()?.id!==state.editorId))session.save({view,id:view==='editor'?state.editorId:null,scroll:0,time:0});
   if(view==='settings')document.querySelectorAll('.archive-recovery-notice').forEach(notice=>notice.remove());
   $$('.view').forEach(el=>el.classList.toggle('active',el.id==='view-'+view));
   $$('.nav-link[data-view]').forEach(el=>(el.classList.toggle('selected',el.dataset.view===view),el.setAttribute('aria-current',el.dataset.view===view?'page':'false')));
@@ -1534,7 +1609,7 @@ function wire(){
     const rec=state.records.find(r=>r.id===state.editorId);if(rec)renderEditorSegments(rec);
   }
  });
- $('#theme-toggle').onclick=()=>{settings.theme=document.body.dataset.theme==='dark'?'light':'dark';saveSettings();applyTheme();$('#setting-theme').value=settings.theme;syncControls()};
+ $('#theme-toggle').onclick=()=>{settings.theme=document.body.dataset.theme==='dark'?'light':'dark';saveSettings();applyTheme();$('#setting-theme').value=settings.theme;syncControls();syncSegmented()};
  for(const id of ['hero-import','record-import','library-import'])$('#'+id).onclick=()=>withInput(importFile);
  $('#start-record').onclick=()=>{stopLevelCheck();return beginRecord()};$('#mark-record').onclick=markMoment;
  document.addEventListener('visibilitychange',syncLevelPreview);
@@ -1557,9 +1632,10 @@ function wire(){
  a.addEventListener('loadedmetadata',()=>{if(!audioReview)$('#player-total').textContent=shortTime(a.duration)});
  $('#player-seek').oninput=e=>{if(audioReview){void audioReview.player.seek(audioReview.player.snapshot.duration*Number(e.target.value)/1000).catch(error=>{if(error.name!=='AbortError')notify(error.message,'error')})}else if(Number.isFinite(a.duration))a.currentTime=a.duration*Number(e.target.value)/1000};
  $('#player-speed').onchange=e=>{if(audioReview)audioReview.player.setRate(Number(e.target.value));else a.playbackRate=Number(e.target.value)};
- $('#setting-theme').value=settings.theme;$('#setting-theme').onchange=e=>{settings.theme=e.target.value;saveSettings();applyTheme()};
+ $('#setting-theme').value=settings.theme;$('#setting-theme').onchange=e=>{settings.theme=e.target.value;saveSettings();applyTheme();syncSegmented()};mountSegmented();
+ {const prompt=$('#setting-prompt'),count=$('#setting-prompt-count'),update=()=>{count.textContent=`${prompt.value.length} / ${prompt.maxLength}`};prompt.addEventListener('input',update);update()}
  $('#setting-profile').value=settings.profile;$('#setting-profile').onchange=e=>{settings.profile=e.target.value;saveSettings()};
- $('#setting-prompt').value=settings.prompt;$('#setting-prompt').oninput=e=>{settings.prompt=e.target.value;saveSettings()};
+ $('#setting-prompt').value=settings.prompt;$('#setting-prompt').dispatchEvent(new Event('input'));$('#setting-prompt').oninput=e=>{settings.prompt=e.target.value;saveSettings()};
  $('#setting-rate').value=settings.rate;$('#setting-rate').onchange=e=>{settings.rate=Math.max(1,Math.min(1000,Number(e.target.value)||83.0784));saveSettings();renderDashboard()};
  $('#refresh-health').onclick=checkHealth;
  $('#export-library').onclick=()=>{void exportPortableLibrary()};
@@ -1622,9 +1698,9 @@ async function init(){
   await patchRecording(r.id,{status:'interrupted',duration:r.duration||Math.max(0,((r.lastChunkAt||Date.parse(r.createdAt))-Date.parse(r.createdAt))/1000)});
  }
  if(available)await refresh();
- // Reopen where the person left off (a fresh launch has no hash).
- try{const last=localStorage.getItem('mono-last-view');if(!location.hash&&last&&['dashboard','record','library','jobs','settings'].includes(last))history.replaceState(null,'','#'+last)}catch{}
- renderRoute({preserveDrawer:true});await checkHealth();
+ // A fresh launch has no hash: reopen the record the person was working on, as they left it.
+ const resume=!location.hash?session.resumable(state.records):null;if(resume)history.replaceState(null,'','#'+resume.hash);
+ renderRoute({preserveDrawer:true});if(resume)void session.restore(resume);session.watch();await checkHealth();
  updateStorageSettings();
  if(local&&available)await initializeNative(local).catch(error=>notify(error.message,'error'));
  if(local)startAudioCare();
@@ -1675,7 +1751,9 @@ async function offerLegacyImport(){
 function updateStorageSettings(){
  const storage=storageDetails();if(!storage.local)return;
  if(!$('#library-filter option[value="trash"]')){const option=document.createElement('option');option.value='trash';option.textContent='Корзина';$('#library-filter').append(option);syncControls()}
- $('#request-persistence').textContent=storage.libraryConfigured?'Подключить папку архива':'Выбрать папку для записей';
+ const persist=$('[data-row="persist"]');persist.querySelector('.set-row-title').textContent=storage.libraryConfigured?'Другая папка архива':'Папка для записей';persist.querySelector('.set-row-hint').textContent=storage.libraryConfigured?'Подключить существующую папку с записями MONO.':'Выберите, где хранить аудио и расшифровки.';
+ $('#request-persistence').textContent=storage.libraryConfigured?'Подключить…':'Выбрать…';
+ $('[data-row="move"] .set-row-title').textContent='Перенести архив';
  $('#storage-persistence').textContent=storage.libraryPath||'Аудио и расшифровки будут сохранены в выбранной папке.';
  $('#move-library').hidden=!storage.libraryAvailable;
  $('#migrate-library').hidden=false;

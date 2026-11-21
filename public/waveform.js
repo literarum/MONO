@@ -4,16 +4,22 @@
 export class PlayerWave{
  constructor(canvas,seek,{frame=globalThis.requestAnimationFrame?.bind(globalThis),cancel=globalThis.cancelAnimationFrame?.bind(globalThis)}={}){
   Object.assign(this,{canvas,seek,frame,cancel});this.data=null;this.drawn=null;this.loop=0;
-  this.resize=new ResizeObserver(()=>{this.drawn=null});this.resize.observe(canvas);
+  this.idle=0;this.resize=new ResizeObserver(()=>{this.drawn=null;this.start()});this.resize.observe(canvas);
+  // Draw only when something changed: the loop sleeps after half a second without changes and wakes
+  // when the position is set (by playback or by the person), the size changes or the theme flips.
+  const proto=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value'),wave=this;
+  Object.defineProperty(seek,'value',{configurable:true,get(){return proto.get.call(this)},set(value){proto.set.call(this,value);wave.start()}});
+  seek.addEventListener('input',()=>this.start());
+  new MutationObserver(()=>{this.drawn=null;this.start()}).observe(document.body,{attributes:true,attributeFilter:['data-theme']});
  }
  load(data){this.data=data?.peaks?.length?data:null;this.drawn=null;this.canvas.closest('.seek-wave')?.classList.toggle('has-wave',Boolean(this.data));this.start()}
  clear(){this.load(null);const context=this.canvas.getContext('2d');context?.clearRect(0,0,this.canvas.width,this.canvas.height)}
- start(){if(!this.loop&&this.frame)this.loop=this.frame(()=>this.tick())}
+ start(){this.idle=0;if(!this.loop&&this.frame)this.loop=this.frame(()=>this.tick())}
  stop(){if(this.loop&&this.cancel)this.cancel(this.loop);this.loop=0}
  tick(){
   this.loop=0;if(!this.data)return;
-  if(this.canvas.isConnected&&this.canvas.offsetParent!==null&&!document.hidden){const progress=Number(this.seek.value)/Number(this.seek.max||1000),key=`${progress.toFixed(4)}|${this.canvas.clientWidth}|${document.body.dataset.theme}`;if(key!==this.drawn){this.draw(progress);this.drawn=key}}
-  this.start();
+  if(this.canvas.isConnected&&this.canvas.offsetParent!==null&&!document.hidden){const progress=Number(this.seek.value)/Number(this.seek.max||1000),key=`${progress.toFixed(4)}|${this.canvas.clientWidth}|${document.body.dataset.theme}`;if(key!==this.drawn){this.draw(progress);this.drawn=key;this.idle=0}else this.idle++}else this.idle++
+  if(this.idle<30&&this.frame)this.loop=this.frame(()=>this.tick());
  }
  draw(progress){
   const canvas=this.canvas,ratio=Math.min(2,globalThis.devicePixelRatio||1),width=Math.max(1,Math.round(canvas.clientWidth*ratio)),height=Math.max(1,Math.round(canvas.clientHeight*ratio));

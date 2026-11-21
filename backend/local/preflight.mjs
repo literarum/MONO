@@ -67,7 +67,8 @@ export async function preflight({worker,runtime,keyManager,now=()=>performance.n
   if(capture.ready&&(capture.modes||[]).includes('system'))checks.push(check('capture','ok','Звук компьютера','Можно записывать звук компьютера вместе с микрофоном.'));
  }catch{}
  try{checks.push(...microphoneChecks(await timed(worker.call('capture.diagnose'),7000)))}catch{}
- try{const apps=await timed(users(),5000);if(apps?.length)checks.push(check('mic-users','advisory','Микрофон сейчас может использовать другое приложение',apps.slice(0,3).join(', ')+'.','Если запись не начнётся — закройте его или выключите в нём микрофон.'))}catch{}
+ // Another app holding the microphone is not reported: Windows shares a microphone between apps in
+ // shared mode, so it is almost never why recording fails, and a real failure is reported when it happens.
  try{const mic=await timed(privacy(),4000);
   if(mic?.blocked)checks.push(check('mic-privacy','caution',mic.scope==='desktop'?'Windows запрещает классическим приложениям доступ к микрофону':'Доступ к микрофону выключен в Windows','Микрофон не запишется ни через модуль записи, ни через окно браузера. Звук компьютера записывать можно.','Параметры → Конфиденциальность и защита → Микрофон: включите доступ и «Разрешить классическим приложениям».'));
  }catch{}

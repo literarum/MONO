@@ -480,7 +480,7 @@ async function route(req,res){
   if(url.pathname==='/api/launcher/clients'&&req.method==='GET'){
     const token=process.env.MONO_LAUNCHER_TOKEN||'',given=String(req.headers['x-mono-launcher-token']||'');
     if(!token||Buffer.byteLength(given)!==Buffer.byteLength(token)||!timingSafeEqual(Buffer.from(given),Buffer.from(token))){res.writeHead(403).end();return}
-    res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify({pages:eventClients.size}));return;
+    res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify({pages:eventClients.size,busy:activeControllers.size+saving.size}));return; // busy: transcriptions in flight, results being saved
   }
   if(url.pathname==='/api/local/events'&&req.method==='GET'){
     const denied=authorizeLocalRequest(req);if(denied){fail(res,denied,'Доступ отклонён');return}

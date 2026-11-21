@@ -40,6 +40,28 @@ class BrowserModeTests(unittest.TestCase):
         stopped=self.run_pages(answers,first_wait=900,idle_wait=300)
         self.assertGreater(stopped,12*3+300-1)
 
+    def test_closing_the_window_quits_mono_within_seconds_by_default(self):
+        clock=Clock();calls=iter([1]*30)
+        def pages():
+            try:return next(calls)
+            except StopIteration:return 0
+        mono.serve_browser("http://127.0.0.1:4173",LOG,pages,clock=clock,sleep=clock.sleep)
+        self.assertGreater(clock.now,30+10-1);self.assertLess(clock.now,30+13)
+
+    def test_a_clock_jump_after_sleep_does_not_end_an_open_session(self):
+        clock=Clock();answers=iter([1]*5+[0]+[1]*5)
+        def pages():
+            value=next(answers,0)
+            if clock.now==5:clock.now+=3600  # the computer slept for an hour
+            return value
+        mono.serve_browser("http://127.0.0.1:4173",LOG,pages,clock=clock,sleep=clock.sleep,poll=1,idle_wait=10)
+        self.assertGreater(clock.now,3600+11+9)
+
+    def test_a_transcription_in_flight_keeps_mono_running_after_the_window_closes(self):
+        with patch.object(mono,"browser_clients",return_value=(0,1)):self.assertEqual(mono.browser_pages("http://x","t"),1)
+        with patch.object(mono,"browser_clients",return_value=(0,0)):self.assertEqual(mono.browser_pages("http://x","t"),0)
+        with patch.object(mono,"browser_clients",return_value=None):self.assertIsNone(mono.browser_pages("http://x","t"))
+
     def test_no_page_ever_connects(self):
         stopped=self.run_pages([None]*1000,first_wait=60,idle_wait=300)
         self.assertGreater(stopped,60);self.assertLess(stopped,70)

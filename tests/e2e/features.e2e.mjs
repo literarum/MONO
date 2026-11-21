@@ -296,3 +296,54 @@ test('a source left on the module microphone moves to the browser window once, q
  assert.equal((await page.evaluate(async()=>(await fetch('/api/local/preferences')).json())).capture.mode,'mic','only once: a later choice of the module is respected');
  assert.deepEqual(page.errors,[]);
 });
+
+test('Play at the end starts over; settings fill the width with an index and a theme switch; the drop zone spans its card',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});const page=await open(t,server);
+ const {execFileSync}=await import('node:child_process');const dir=mkdtempSync(path.join(tmpdir(),'mono-end-')),wav=path.join(dir,'short.webm');
+ // a live WebM, as the browser's recorder writes it: no duration in the header
+ execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','sine=frequency=300:duration=1.5','-c:a','libopus','-live','1','-f','webm',wav]);
+ // drop zone: as wide as the hero card's content, not a fixed 760 px
+ const widths=await page.evaluate(()=>{const zone=document.querySelector('#hero-import'),parent=zone.parentElement;const style=getComputedStyle(parent);return {zone:zone.getBoundingClientRect().width,box:parent.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight)}});
+ assert.ok(widths.zone>=widths.box-2,`drop zone ${widths.zone} of ${widths.box}`);
+ // settings
+ await page.click('.nav-link[data-view=settings]');await page.waitForFunction(()=>document.querySelectorAll('#settings-index a').length>=6);
+ const layout=await page.evaluate(()=>{const grid=document.querySelector('#view-settings .settings-grid'),index=document.querySelector('#settings-index'),main=document.querySelector('#main');return {grid:grid.getBoundingClientRect().right,main:main.getBoundingClientRect().right,index:index.getBoundingClientRect().width,labels:[...index.querySelectorAll('a')].map(a=>a.textContent)}});
+ assert.ok(layout.main-layout.grid<80,`settings stop ${layout.main-layout.grid}px short of the right edge`);assert.ok(layout.labels.includes('Groq')&&layout.labels.includes('Архив'));
+ await page.click('.segmented button[data-value=light]');assert.equal(await page.evaluate(()=>document.body.dataset.theme),'light');
+ assert.equal(await page.getAttribute('.segmented button[data-value=light]','aria-checked'),'true');
+ await page.click('.segmented button[data-value=dark]');assert.equal(await page.evaluate(()=>document.body.dataset.theme),'dark');
+ // the pre-flight check no longer guesses that another app holds the microphone
+ assert.ok(!(await page.textContent('#view-settings')).includes('может использовать другое приложение'));
+ // replay from the end
+ await page.click('.nav-link[data-view=library]');const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.click('#library-import')]);await chooser.setFiles(wav);
+ let list=[];for(let i=0;i<60&&!list.length;i++){list=await records(page);if(!list.length)await new Promise(r=>setTimeout(r,500))}const [record]=list;assert.ok(record,'the WebM was not imported');
+ await page.evaluate(id=>{location.hash='#editor/'+id},record.id);await page.waitForSelector('#player-toggle');
+ await page.click('#player-toggle');
+ await page.waitForFunction(()=>{const value=Number(document.querySelector('#player-seek').value);return value>=990},null,{timeout:15000});
+ await page.waitForFunction(()=>document.querySelector('#player-toggle').innerHTML.includes('i-play'),null,{timeout:5000});
+ await page.click('#player-toggle');
+ await page.waitForFunction(()=>{const value=Number(document.querySelector('#player-seek').value);return value>0&&value<700},null,{timeout:5000});
+ assert.deepEqual(page.errors,[]);
+});
+
+test('after closing MONO in the middle of a record, the next start opens that record at the same place; after finishing, it opens the overview',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});const page=await open(t,server);
+ const {execFileSync}=await import('node:child_process');const dir=mkdtempSync(path.join(tmpdir(),'mono-resume-')),wav=path.join(dir,'long.wav');
+ execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','sine=frequency=220:duration=30','-ar','16000',wav]);
+ await page.click('.nav-link[data-view=library]');const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.click('#library-import')]);await chooser.setFiles(wav);
+ let list=[];for(let i=0;i<60&&!list.length;i++){list=await records(page);if(!list.length)await new Promise(r=>setTimeout(r,500))}const [record]=list;assert.ok(record);
+ await page.evaluate(id=>{location.hash='#editor/'+id},record.id);await page.waitForSelector('#player-toggle');
+ await page.waitForFunction(()=>document.querySelector('#player-total')?.textContent?.includes('00:30'),null,{timeout:15000});
+ await page.evaluate(()=>{const s=document.querySelector('#player-seek');s.value='400';s.dispatchEvent(new Event('input',{bubbles:true}));s.dispatchEvent(new Event('change',{bubbles:true}))});
+ await page.waitForTimeout(2600);
+ const context=page.context();await page.close();
+ // the next start: the launcher opens the plain address, without a view in it
+ const next=await context.newPage();next.errors=[];next.on('pageerror',error=>next.errors.push(error.message));await next.goto(server.url+'/');
+ await next.waitForFunction(id=>location.hash==='#editor/'+encodeURIComponent(id),record.id,{timeout:15000});
+ await next.waitForFunction(()=>{const v=Number(document.querySelector('#player-seek').value);return v>300&&v<500},null,{timeout:10000});
+ // finishing: back to the library, close, start again → overview
+ await next.click('#view-editor .back-link');await next.waitForFunction(()=>location.hash==='#library');await next.close();
+ const third=await context.newPage();await third.goto(server.url+'/');await third.waitForFunction(()=>document.querySelector('#nav-count'));await third.waitForTimeout(1500);
+ assert.ok(['','#dashboard','#library'].includes(await third.evaluate(()=>location.hash))&&!(await third.evaluate(()=>location.hash)).startsWith('#editor'));
+ assert.deepEqual(next.errors,[]);
+});

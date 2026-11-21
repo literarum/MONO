@@ -571,32 +571,57 @@ def open_in_browser(url: str, browser=None) -> None:
         webbrowser.open_new(url + "/")
 
 
-def browser_pages(url: str, token: str, timeout: float = 2.0) -> int | None:
-    """How many MONO pages are open (their live event streams), or None if the server did not answer."""
+def browser_clients(url: str, token: str, timeout: float = 2.0) -> tuple[int, int] | None:
+    """(open MONO pages, background tasks still running), or None if the server did not answer."""
     request = urllib.request.Request(url + "/api/launcher/clients", headers={"X-Mono-Launcher-Token": token})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return int(json.loads(response.read(4096)).get("pages", 0))
+            answer = json.loads(response.read(4096))
+            return int(answer.get("pages", 0)), int(answer.get("busy", 0))
     except (OSError, ValueError, TypeError, urllib.error.URLError, http.client.HTTPException):
         return None
 
 
-def serve_browser(url: str, logger: logging.Logger, pages, *, first_wait: float = 900, idle_wait: float = 300,
-                  poll: float = 3.0, clock=time.monotonic, sleep=time.sleep) -> None:
-    """Browser mode: MONO keeps running while a MONO page is open in the person's browser. It stops
-    when no page has been open for `idle_wait` seconds (a reload or a closed tab must not stop it),
-    or when no page ever connected within `first_wait` seconds."""
+def browser_pages(url: str, token: str, timeout: float = 2.0) -> int | None:
+    """How many MONO pages are open (their live event streams), or None if the server did not answer.
+    A transcription still being sent or saved counts as a page, so closing the window does not cut it."""
+    answer = browser_clients(url, token, timeout)
+    if answer is None:
+        return None
+    pages, busy = answer
+    return pages or (1 if busy else 0)
+
+
+def serve_browser(url: str, logger: logging.Logger, pages, *, first_wait: float = 180, idle_wait: float = 10,
+                  poll: float = 1.0, clock=time.monotonic, sleep=time.sleep) -> None:
+    """Browser mode: MONO runs while its window is open and quits completely soon after it is closed.
+    `idle_wait` seconds without a page (a reload reconnects within one or two) end it; so does no page
+    at all within `first_wait` seconds of the start. The gap is counted in polls as well as in time,
+    so waking the computer from sleep (when the clock jumps) does not end a session that is still open."""
     seen = False
     last = clock()
+    empty = unknown = 0
     while True:
         count = pages()
         now = clock()
+        if count is None and seen:  # the server is busy or restarting its core: neither open nor closed
+            unknown += 1
+            if unknown * poll > 120:
+                logger.info("Browser mode: the server has not answered for %.0f s; quitting", unknown * poll)
+                return
+            sleep(poll)
+            continue
+        unknown = 0
         if count:
             seen = True
             last = now
-        elif now - last > (idle_wait if seen else first_wait):
-            logger.info("Browser mode: no MONO page open for %.0f s; stopping", now - last)
-            return
+            empty = 0
+        else:
+            empty += 1
+            limit = idle_wait if seen else first_wait
+            if now - last > limit and empty * poll >= limit:
+                logger.info("Browser mode: no MONO page open for %.0f s; quitting", now - last)
+                return
         sleep(poll)
 
 
