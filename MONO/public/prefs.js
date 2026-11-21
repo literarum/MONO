@@ -7,11 +7,13 @@ export const PREF_DEFAULTS=Object.freeze({
  motion:'full',            // full | reduced
  textSize:'normal',        // normal | large | larger
  checkSoundEveryTime:false,// a five-second sound check before each new recording
- countdown:0,              // 0 | 3 seconds before recording starts
+ countdown:0,              // 0 | 3 | custom seconds before recording starts
+ countdownCustom:5,        // «Свой» seconds
+ titleCustom:'',           // «Своё название…» base for new recordings
  silenceWarning:true,      // tell when nothing is heard during a recording
  clipWarning:true,         // tell when the voice overloads
  floatingRecorder:true,    // a movable recording panel outside the studio
- titleTemplate:'date',     // date | meeting | voice
+ titleTemplate:'date',     // date | meeting | voice | custom
  offerTranscription:true,  // after a recording, offer to transcribe (always asks before sending)
  showDoubts:true,          // highlight uncertain words in the transcript
  libraryView:'grid',       // grid | list

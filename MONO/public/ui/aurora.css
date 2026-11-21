@@ -60,8 +60,6 @@ main{padding-top:28px!important}
 /* —— Dedication under the logo ——————————————————————————————————— */
 .brand{margin-bottom:6px!important}
 .brand-dedication{display:flex;align-items:center;gap:7px;margin:0 12px 30px;font-size:12px;font-weight:500;letter-spacing:.01em;color:var(--muted);font-style:italic}
-.dedication-heart{width:13px;height:13px;flex:none;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23ff3b66' d='M12 21s-7.5-4.6-9.6-9.3C.9 8.3 3 4.5 6.6 4.5c2.1 0 3.6 1.2 4.4 2.6.8-1.4 2.3-2.6 4.4-2.6 3.6 0 5.7 3.8 4.2 7.2C19.5 16.4 12 21 12 21Z'/%3E%3C/svg%3E") center/contain no-repeat;animation:au-heart 2.6s var(--au-ease) infinite}
-@keyframes au-heart{0%,70%,100%{transform:scale(1)}78%{transform:scale(1.22)}86%{transform:scale(.96)}}
 
 /* —— Motion on every interaction ————————————————————————————————————— */
 .btn,.text-link,.back-link,.btn-plain,.icon-btn,.nav-link,.segmented button,.accent-dot,.select-control,.select-option,.settings-index a,.record-card,.metric-card,.drop-zone,.fr-btn,.preflight-item.is-actionable,details>summary,.switch,.check-row input,.usage-tile,.guide-step,.lib-check,.view-toggle button{
@@ -104,7 +102,7 @@ body.reduce-motion *,body.reduce-motion *::before,body.reduce-motion *::after{an
  background:var(--au-field)!important;border:1px solid transparent!important;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--text) 6%,transparent)!important;outline:none!important;border-radius:12px!important}
 .select-control:hover,input[type=text]:hover,input[type=search]:hover,input[type=number]:hover,input[type=password]:hover,textarea:hover,.text-field:hover,.search-control:hover,.unit-field:hover{background:var(--au-field-hover)!important}
 .select-control:focus,.select-control:focus-visible,.select-control[aria-expanded=true],input[type=text]:focus,input[type=search]:focus,input[type=number]:focus,input[type=password]:focus,input[type=url]:focus,input[type=email]:focus,textarea:focus,.text-field:focus,.search-control:focus-within,.unit-field:focus-within{
- background:var(--au-field-focus)!important;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--text) 12%,transparent),0 6px 20px -12px color-mix(in srgb,var(--tint) 60%,transparent)!important;outline:none!important}
+ background:var(--au-field-focus)!important;outline:none!important;border-color:transparent!important;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--text) 6%,transparent)!important}
 .search-control{display:flex!important;align-items:center;gap:10px;min-height:42px!important;padding:0 6px 0 14px!important;cursor:text}
 .search-control>svg{flex:none;width:17px!important;height:17px!important;color:var(--dim)!important;transition:color var(--au-fast),transform var(--au-med) var(--au-spring)!important}
 .search-control:focus-within>svg{color:var(--tint)!important;transform:scale(1.08)}
@@ -124,11 +122,9 @@ input,textarea{caret-color:var(--tint)}
 
 /* —— Notices (bottom right): one width, one rhythm, a light on the left ——— */
 .toast-area{right:20px!important;bottom:20px!important;left:auto!important;width:min(380px,calc(100vw - 32px));gap:10px!important;align-items:stretch!important}
-.toast{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;width:100%!important;max-width:none!important;margin:0!important;padding:14px 16px 14px 18px!important;border-radius:16px!important;
+.toast{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;width:100%!important;max-width:none!important;margin:0!important;padding:14px 16px!important;border-radius:18px!important;
  background:color-mix(in srgb,var(--surface) 82%,transparent)!important;border:1px solid var(--au-rim-soft)!important;box-shadow:0 18px 40px -18px rgba(0,8,30,.6),0 1px 0 var(--au-rim-soft) inset!important;
  -webkit-backdrop-filter:blur(18px) saturate(150%);backdrop-filter:blur(18px) saturate(150%);font-size:13px!important;line-height:1.45!important;position:relative;overflow:hidden;animation:au-toast var(--au-slow) var(--au-spring) both!important}
-.toast::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--tint)}
-.toast.error::before{background:#ff453a}
 .toast .toast-action{grid-column:2;margin:0!important;min-height:30px!important;white-space:nowrap}
 @keyframes au-toast{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
 @media (max-width:640px){.toast-area{right:16px!important;left:16px!important;width:auto;bottom:calc(84px + env(safe-area-inset-bottom))!important}}
@@ -448,3 +444,39 @@ body[data-theme=light] .tour-veil{background:color-mix(in srgb,#0b1d44 38%,trans
 @media (max-width:380px){.fr-text .fr-state{display:none}.record-card-meta{grid-template-columns:1fr!important}}
 /* Very wide screens: content keeps a readable measure, centred */
 @media (min-width:1900px){main{max-width:1680px;margin:0 auto}}
+
+/* notices: error is told by a soft red tint, not a stripe; progress notices share the look */
+.toast.error{background:color-mix(in srgb,#ff453a 14%,var(--surface) 86%)!important;border-color:color-mix(in srgb,#ff453a 30%,transparent)!important}
+.toast::before{display:none!important;content:none!important}
+.toast>*{min-width:0}
+.toast:not(:has(.toast-action)){grid-template-columns:minmax(0,1fr)}
+.toast.archive-progress,.archive-recovery-notice{display:flex!important;flex-direction:column;align-items:stretch;gap:10px}
+.toast.archive-progress .progress-track,.toast progress{width:100%}
+.toast .toast-action{align-self:center;justify-self:end}
+.connection-banner{border-radius:999px!important;background:color-mix(in srgb,var(--surface) 84%,transparent)!important;-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);box-shadow:0 14px 34px -16px rgba(0,8,30,.6)!important;border:1px solid var(--au-rim-soft)!important}
+.countdown-control .seg-custom{display:inline-flex;align-items:center;justify-content:center;gap:4px}
+.seg-custom-field{display:inline-flex;align-items:center;gap:4px}
+.seg-custom-field[hidden]{display:none}
+.seg-custom-field input{width:44px!important;min-height:0!important;height:24px!important;padding:0 6px!important;border-radius:7px!important;text-align:center;font-weight:700!important;font-size:13px!important;background:color-mix(in srgb,var(--text) 10%,transparent)!important;box-shadow:none!important;animation:au-pop var(--au-med) var(--au-spring) both}
+.title-custom{margin-top:8px;width:100%;animation:au-unfold var(--au-med) var(--au-ease) both}
+.title-custom[hidden]{display:none}
+.set-row-control:has(.title-custom:not([hidden])){flex-direction:column;align-items:stretch}
+#record-state[hidden]{display:none!important}
+
+/* —— No focus rings anywhere (the person asked for none): focus is shown only by a calmer fill
+   change on fields, and nothing draws a border, outline or ring around a focused element. ——— */
+:root,body,body[data-theme]{--sys-ring:0 0 0 0 transparent;--rf-ring:0 0 0 0 transparent}
+*:focus,*:focus-visible,*:focus-within{outline:none!important;outline-offset:0!important}
+/* the older layer drew a tint ring and border on focused fields: neutralised */
+.select-control[aria-expanded=true],.select-control:focus-visible,.search-control:focus-within,input:focus-visible:not([type=range]):not([type=checkbox]):not(.search-control input):not(.unit-field input):not(.seg-custom-field input),textarea:focus-visible,input:focus:not([type=range]):not([type=checkbox]):not(.search-control input):not(.unit-field input):not(.seg-custom-field input),textarea:focus{border-color:transparent!important;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--text) 6%,transparent)!important}
+.search-control input:focus,.search-control input:focus-visible,.unit-field input:focus,.unit-field input:focus-visible,.seg-custom-field input:focus{box-shadow:none!important;border-color:transparent!important}
+.search-control input[type=search],.search-control input[type=search]:is(:hover,:focus,:focus-visible),.search-control input[type=text]:is(:hover,:focus,:focus-visible){background:transparent!important;box-shadow:none!important;border:0!important;border-radius:0!important}
+/* Chrome draws its own search-field box inside ours unless the native look is switched off */
+input[type=search]{-webkit-appearance:none!important;appearance:none!important}
+input[type=search]::-webkit-search-decoration{-webkit-appearance:none}
+.search-control,.search-control:focus-within,.search-control:hover{border-color:transparent!important}
+/* (an older «input:hover:not(…):not(…)» rule outranked these; :not(#_) lifts them above any class rule) */
+.search-control input:not(#_),.search-control input:not(#_):hover,.search-control input:not(#_):focus,.search-control input:not(#_):focus-visible,
+.unit-field input:not(#_),.unit-field input:not(#_):hover,.unit-field input:not(#_):focus,
+.seg-custom-field input:not(#_):hover,.seg-custom-field input:not(#_):focus{background:transparent!important;box-shadow:none!important;border:0!important;outline:none!important}
+.seg-custom-field input:not(#_){background:color-mix(in srgb,var(--text) 10%,transparent)!important;border:0!important;box-shadow:none!important}

@@ -408,7 +408,8 @@ async function applyTitleTemplate(id){
  const template=prefs.get('titleTemplate');if(template==='date')return;
  try{const rec=await getRecording(id,{transcript:false});if(!rec||!DEFAULT_TITLE.test(rec.title||''))return;const at=new Date(rec.createdAt||Date.now());
   const day=at.toLocaleDateString('ru-RU',{day:'numeric',month:'long'}),time=at.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
-  await patchRecording(id,{title:template==='meeting'?`Встреча · ${day}, ${time}`:`Голосовая заметка · ${day}, ${time}`});await refresh()}catch{}
+  const custom=prefs.get('titleCustom').trim();if(template==='custom'&&!custom)return;
+  await patchRecording(id,{title:template==='meeting'?`Встреча · ${day}, ${time}`:template==='custom'?`${custom} · ${day}, ${time}`:`Голосовая заметка · ${day}, ${time}`});await refresh()}catch{}
 }
 function markDoneWhileAway(){if(!document.title.startsWith('✓')){const previous=document.title;document.title='✓ Расшифровка готова — MONO';document.addEventListener('visibilitychange',()=>{if(!document.hidden&&document.title.startsWith('✓'))document.title=previous},{once:true})}}
 /** «?» — every keyboard shortcut in one sheet. */
@@ -653,8 +654,14 @@ const SETTINGS_ORDER=['Незавершённое копирование','По�
 /** Every control with data-pref / data-server-pref is bound to its setting: the control shows the
  * value, a change saves it and applies it at once. Server settings are those the launcher reads. */
 let serverPrefs={};
-const typed=(key,raw)=>typeof PREF_DEFAULTS[key]==='number'||/lingerSeconds/.test(key)?Number(raw):raw;
+const typed=(key,raw)=>key==='countdown'?(raw==='custom'?'custom':Number(raw)):typeof PREF_DEFAULTS[key]==='number'||/lingerSeconds/.test(key)?Number(raw):raw;
 function prefValue(control){const server=control.dataset.serverPref;if(server){const [group,key]=server.split('.');return serverPrefs?.[group]?.[key]}return prefs.get(control.dataset.pref)}
+/** «Свой» countdown: the button becomes a small field for the seconds; «Своё название…» opens a text field. */
+function syncCustomControls(){
+ const custom=prefs.get('countdown')==='custom',field=$('.seg-custom-field'),label=$('.seg-custom-label'),input=$('#countdown-seconds');
+ if(field&&label&&input){field.hidden=!custom;label.hidden=custom;if(document.activeElement!==input)input.value=String(prefs.get('countdownCustom'))}
+ const title=$('#title-custom');if(title){title.hidden=prefs.get('titleTemplate')!=='custom';if(document.activeElement!==title)title.value=prefs.get('titleCustom')}
+}
 function syncPreferenceControls(){
  for(const control of document.querySelectorAll('[data-pref],[data-server-pref]')){
   const value=prefValue(control);
@@ -662,7 +669,7 @@ function syncPreferenceControls(){
   else if(control.matches('select')){control.value=String(value);}
   else for(const button of control.querySelectorAll('button[data-value]')){const on=button.dataset.value===String(value);button.setAttribute('aria-checked',String(on));button.tabIndex=on?0:-1}
  }
- syncControls();
+ syncControls();syncCustomControls();
 }
 async function savePreference(control,raw){
  const server=control.dataset.serverPref;
@@ -683,6 +690,9 @@ function bindPreferences(){
  prefs.subscribe(key=>{if([null,'accent','glass','motion','textSize','showDoubts'].includes(key)){applyVisualPrefs();applyAccent(systemAccent);document.body.classList.toggle('hide-doubts',!prefs.get('showDoubts'))}if([null,'libraryView','librarySort'].includes(key)&&typeof renderLibrary==='function'){applyLibraryPrefs();void renderLibrary()}syncPreferenceControls()});
  applyVisualPrefs();document.body.classList.toggle('hide-doubts',!prefs.get('showDoubts'));syncPreferenceControls();
  void localLibraryClient().then(async local=>{if(!local)return;try{serverPrefs=await local.json('/preferences')}catch{}syncPreferenceControls()});
+ const seconds=$('#countdown-seconds');if(seconds){seconds.addEventListener('click',event=>event.stopPropagation());seconds.addEventListener('keydown',event=>event.stopPropagation());seconds.addEventListener('input',()=>{const n=Math.round(Number(seconds.value));if(n>=1&&n<=60)prefs.set('countdownCustom',n)});seconds.addEventListener('blur',()=>{seconds.value=String(prefs.get('countdownCustom'))})}
+ const titleField=$('#title-custom');if(titleField){titleField.addEventListener('input',()=>prefs.set('titleCustom',titleField.value.trim().slice(0,80)))}
+ prefs.subscribe(key=>{if(key==='countdown'&&prefs.get('countdown')==='custom')requestAnimationFrame(()=>{const f=$('#countdown-seconds');f?.focus();f?.select()});if(key==='titleTemplate'&&prefs.get('titleTemplate')==='custom')requestAnimationFrame(()=>$('#title-custom')?.focus())});
  $('#reset-prefs')?.addEventListener('click',()=>modal('Сбросить настройки?','<p>Оформление, запись, библиотека и уведомления вернутся к исходным. Записи, папка архива и ключ Groq останутся как есть.</p>',[{text:'Сбросить',primary:true,run:()=>{prefs.reset();settings.theme='system';saveSettings();applyTheme();$('#setting-theme').value='system';syncSegmented();notify('Настройки сброшены.')}}]));
 }
 let quietTimer=0;
@@ -1092,7 +1102,7 @@ function chosenMime(){
 }
 /** Settings → «Запись» → «Обратный отсчёт»: 3-2-1 over the timer; any click or Esc cancels. */
 async function countdownBeforeRecording(){
- const seconds=Number(prefs.get('countdown'))||0;if(!seconds)return true;
+ const choice=prefs.get('countdown'),seconds=choice==='custom'?Math.max(1,Math.min(60,Number(prefs.get('countdownCustom'))||5)):Number(choice)||0;if(!seconds)return true;
  const box=$('#record-countdown');box.hidden=false;let cancelled=false;const cancel=()=>{cancelled=true};
  addEventListener('keydown',cancel,{once:true});box.onclick=cancel;
  try{for(let n=seconds;n>0&&!cancelled;n--){box.textContent=String(n);box.classList.remove('tick');void box.offsetWidth;box.classList.add('tick');await new Promise(r=>setTimeout(r,1000))}}
@@ -1181,7 +1191,7 @@ function updateRecordUI(){
  const r=state.capture;
  if(r?.native){const value=r.snapshot,labels={requesting:'Подключаем звук',recording:'Идёт запись',paused:'Пауза',stopping:'Сохраняем'};$('#record-state').classList.toggle('recording',value.state==='recording'&&value.connected);setText('#record-state',value.connected?labels[value.state]:'Нет связи');setText('#record-caption',value.state==='paused'?'ПАУЗА СОХРАНЯЕТСЯ НА ШКАЛЕ ВРЕМЕНИ':value.state==='recording'?'ОКНО МОЖНО СВЕРНУТЬ — ЗАПИСЬ ПРОДОЛЖИТСЯ':'ОЖИДАЕМ ПОДТВЕРЖДЕНИЕ');setText('#record-timer',durationText(smoothSeconds(value)));return}
  $('#record-state').classList.toggle('recording',Boolean(r&&!r.paused));
- $('#record-state').innerHTML=r?(r.paused?'Пауза':`<span class="tiny-dot"></span> Идёт запись`):`<span class="tiny-dot"></span> Ожидание`;
+ $('#record-state').innerHTML=r?(r.paused?'Пауза':`<span class="tiny-dot"></span> Идёт запись`):'';$('#record-state').hidden=!r;
  $('#record-caption').textContent=r?(r.paused?'ЗАПИСЬ ПРИОСТАНОВЛЕНА':'ЗАПИСЬ В ПРОЦЕССЕ'):levelPreview.active?'МИКРОФОН ПРОСЛУШИВАЕТСЯ · НЕ ЗАПИСЫВАЕТСЯ':'ГОТОВО К ЗАПИСИ';
  $('#record-timer').textContent=durationText(currentRecordingSeconds());
 }
