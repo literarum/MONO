@@ -1,13 +1,13 @@
 import http from 'node:http';
 import {createReadStream, createWriteStream, existsSync, readFileSync} from 'node:fs';
-import {mkdir, readFile, writeFile, rename, readdir, stat, unlink, statfs} from 'node:fs/promises';
+import {mkdir, readFile, writeFile, rename, readdir, stat, unlink, statfs, appendFile} from 'node:fs/promises';
 import {pipeline} from 'node:stream/promises';
 import {Transform,Readable} from 'node:stream';
 import {spawn} from 'node:child_process';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID, timingSafeEqual,createHash} from 'node:crypto';
-import {planSegments,normalizeSegments,estimateCostSeconds,alignToSilence,parseSilences,contextPrompt,isHallucination,rateLimitWait} from './core.mjs';
+import {USD_PER_HOUR,planSegments,normalizeSegments,estimateCostSeconds,alignToSilence,parseSilences,contextPrompt,isHallucination,rateLimitWait} from './core.mjs';
 import {localRoute,localWorker,authorizeLocalRequest} from './backend/local/routes.mjs';
 import {systemAccent} from './backend/local/appearance.mjs';
 import {checkUpdate} from './backend/local/updates.mjs';
@@ -284,6 +284,34 @@ async function reapExpiredJobs(){
     }
   }
 }
+// Usage ledger: one line per transcription with what was actually sent to Groq (each request is billed
+// for at least 10 s). It outlives the records, so the all-time total survives deleting them. Only
+// numbers and identifiers are written — never titles or text. Deltas make a resumed job count once.
+const USAGE_FILE=path.join(storage,'usage.jsonl');
+// Settings → «Работа в фоне», read by the launcher on every poll (cached for 15 s).
+let backgroundCache={at:0,value:{lingerSeconds:10,finishWork:true,keepAwake:true}};
+async function backgroundPreferences(){
+  if(DEPLOY_MODE!=='local')return backgroundCache.value;
+  if(performance.now()-backgroundCache.at<15000)return backgroundCache.value;
+  try{const value=(await localWorker.call('preferences.get',{}))?.background;if(value)backgroundCache={at:performance.now(),value:{lingerSeconds:value.lingerSeconds,finishWork:value.finishWork,keepAwake:value.keepAwake!==false}}}catch{}
+  return backgroundCache.value;
+}
+async function recordUsage(job,status){
+  const usd=Math.max(0,(job.estimatedUSD||0)-(job.loggedUSD||0)),billed=Math.max(0,(job.billedSeconds||0)-(job.loggedSeconds||0));
+  if(!usd&&!billed&&status!=='completed')return;
+  const line={at:new Date().toISOString(),job:job.id,record:job.recordId||null,status,audioSeconds:status==='completed'?Math.round((job.duration||0)*10)/10:0,billedSeconds:Math.round(billed*10)/10,usd:Math.round(usd*1e6)/1e6,requests:Math.max(0,(job.attempts||0)-(job.loggedRequests||0))};
+  await appendFile(USAGE_FILE,JSON.stringify(line)+'\n',{mode:0o600});
+  await update(job,{loggedUSD:job.estimatedUSD||0,loggedSeconds:job.billedSeconds||0,loggedRequests:job.attempts||0});
+}
+async function usageSummary(){
+  let text='';try{text=await readFile(USAGE_FILE,'utf8')}catch{}
+  const total={usd:0,billedSeconds:0,audioSeconds:0,requests:0,transcriptions:0,since:null},byRecord={};
+  for(const raw of text.split('\n')){if(!raw)continue;let line;try{line=JSON.parse(raw)}catch{continue}
+    const usd=Number(line.usd)||0,billed=Number(line.billedSeconds)||0,audio=Number(line.audioSeconds)||0;
+    total.usd+=usd;total.billedSeconds+=billed;total.audioSeconds+=audio;total.requests+=Number(line.requests)||0;if(line.status==='completed')total.transcriptions++;total.since??=line.at;
+    if(typeof line.record==='string'){const entry=byRecord[line.record]??={usd:0,billedSeconds:0,audioSeconds:0,transcriptions:0};entry.usd+=usd;entry.billedSeconds+=billed;entry.audioSeconds+=audio;if(line.status==='completed')entry.transcriptions++}}
+  return {total,byRecord,usdPerHour:USD_PER_HOUR,minimumSeconds:10};
+}
 async function doWork(job){
   await toolsReady;if(!config.ffmpeg||!config.ffprobe)await detectTools({force:true});
   if(!config.ffmpeg||!config.ffprobe||!config.groq){
@@ -304,7 +332,7 @@ async function doWork(job){
     await update(job,{duration,total:plans.length,stage:'Подготовка и распознавание'});
     const done=[];
     // Keep the computer awake while this job runs (lease renewed each segment, 3 min).
-    const holdAwake=()=>localWorker.call('power.busy',{seconds:180}).catch(()=>{});
+    const awake=(await backgroundPreferences()).keepAwake!==false,holdAwake=()=>awake?localWorker.call('power.busy',{seconds:180}).catch(()=>{}):Promise.resolve();
     if(DEPLOY_MODE==='local')void holdAwake();
     for(const plan of plans){
       if(DEPLOY_MODE==='local')void holdAwake();
@@ -331,7 +359,8 @@ async function doWork(job){
         // Potential charge per outbound attempt, even if timeout hides a successful inference.
         await update(job,{stage:`Groq · сегмент ${plan.index+1}/${plans.length}`,
           attempts:(job.attempts||0)+1,
-          estimatedUSD:(job.estimatedUSD||0)+estimateCostSeconds(plan.mediaEnd-plan.mediaStart)});
+          estimatedUSD:(job.estimatedUSD||0)+estimateCostSeconds(plan.mediaEnd-plan.mediaStart),
+          billedSeconds:(job.billedSeconds||0)+Math.max(10,plan.mediaEnd-plan.mediaStart)});
         if(job.rateWait){await update(job,{stage:'Пауза по лимиту Groq'});await sleep(job.rateWait);job.rateWait=0}
         try{data=await transcribe(audioFile,job);break}
         catch(e){
@@ -354,10 +383,12 @@ async function doWork(job){
     const resultPath=path.join(folders.jobs,`${job.id}.result.json`);
     await writeAtomic(resultPath,JSON.stringify(transcript));
     await update(job,{status:'completed',stage:'Завершено',completed:plans.length,resultReady:true});
+    await recordUsage(job,'completed');
     counters.workCompleted++;
   }catch(e){
     if(stopping)await update(job,{status:'queued',stage:'Ожидает перезапуска',error:null});
     else if(job.cancelRequested)await update(job,{status:'cancelled',stage:'Отменено пользователем',error:null});
+    if(!stopping)await recordUsage(job,job.cancelRequested?'cancelled':'failed').catch(()=>{});
     else if(DEPLOY_MODE==='local'&&(!config.groq||['KEY_NOT_CONFIGURED','VAULT_UNAVAILABLE','VAULT_LOCKED'].includes(e.code)))await update(job,{status:'queued',stage:'Подключите Groq в настройках',error:null});
     else{counters.workFailed++;await update(job,{status:'failed',stage:'Не удалось обработать',error:errorText(e)})}
   }
@@ -476,11 +507,17 @@ async function route(req,res){
     if(!token||Buffer.byteLength(given)!==Buffer.byteLength(token)||!timingSafeEqual(Buffer.from(given),Buffer.from(token))){res.writeHead(403).end();return}
     broadcast('hotkey',{action:'toggle-recording'});res.writeHead(204).end();return;
   }
+  // A second click on the MONO icon: bring the open window forward instead of opening another one.
+  if(url.pathname==='/api/launcher/focus'&&req.method==='POST'){
+    const token=process.env.MONO_LAUNCHER_TOKEN||'',given=String(req.headers['x-mono-launcher-token']||'');req.resume();
+    if(!token||Buffer.byteLength(given)!==Buffer.byteLength(token)||!timingSafeEqual(Buffer.from(given),Buffer.from(token))){res.writeHead(403).end();return}
+    broadcast('focus',{});res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify({pages:eventClients.size}));return;
+  }
   // Browser mode: the launcher keeps MONO running while a page is open (each page holds one event stream).
   if(url.pathname==='/api/launcher/clients'&&req.method==='GET'){
     const token=process.env.MONO_LAUNCHER_TOKEN||'',given=String(req.headers['x-mono-launcher-token']||'');
     if(!token||Buffer.byteLength(given)!==Buffer.byteLength(token)||!timingSafeEqual(Buffer.from(given),Buffer.from(token))){res.writeHead(403).end();return}
-    res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify({pages:eventClients.size,busy:activeControllers.size+saving.size}));return; // busy: transcriptions in flight, results being saved
+    res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify({pages:eventClients.size,busy:activeControllers.size+saving.size,...(({lingerSeconds,finishWork})=>({lingerSeconds,finishWork}))(await backgroundPreferences())}));return; // busy: transcriptions in flight, results being saved
   }
   if(url.pathname==='/api/local/events'&&req.method==='GET'){
     const denied=authorizeLocalRequest(req);if(denied){fail(res,denied,'Доступ отклонён');return}
@@ -496,6 +533,10 @@ async function route(req,res){
     const denied=authorizeLocalRequest(req);if(denied){req.resume();fail(res,denied,'Доступ отклонён');return}
   }
   if(pathname.startsWith('/api/')){
+    if(req.method==='GET'&&pathname==='/api/usage'){
+      if(DEPLOY_MODE==='local'){const denied=authorizeLocalRequest(req);if(denied){fail(res,denied,'Доступ отклонён');return}}
+      json(res,200,await usageSummary());return;
+    }
     if(req.method==='GET'&&pathname==='/api/health'){
       // ?wait=tools: answer only after FFmpeg/FFprobe detection (re-run if missing).
       if(url.searchParams.get('wait')==='tools'){await toolsReady;if(!config.ffmpeg||!config.ffprobe)await detectTools({force:true})}

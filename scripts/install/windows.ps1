@@ -1,7 +1,7 @@
 ﻿# MONO Transcribe — установка из исходников для Windows 10/11.
-# Запускается из INSTALL-MONO-Windows.cmd. Совместим с Windows PowerShell 5.1.
+# Запускается из «Установить и запустить MONO.cmd» (окно установки без консоли: -Gui). Совместим с Windows PowerShell 5.1.
 # Файл сохранён в UTF-8 с BOM: без BOM PowerShell 5.1 читает кириллицу как ANSI.
-param([switch]$NoLaunch,[switch]$Unattended)
+param([switch]$NoLaunch,[switch]$Unattended,[switch]$Gui)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 try{[Console]::OutputEncoding=[System.Text.Encoding]::UTF8}catch{}
@@ -9,12 +9,32 @@ $Root=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $Log=Join-Path $env:TEMP 'mono-install.log'
 Start-Transcript -Path $Log -Force | Out-Null
 
-function Step($text){Write-Host ''; Write-Host "==> $text" -ForegroundColor Cyan}
-function Ok($text){Write-Host "    [OK] $text" -ForegroundColor Green}
+# A small window instead of a console: what is happening now, and a moving bar.
+$Window=$null
+if($Gui){
+  Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+  [System.Windows.Forms.Application]::EnableVisualStyles()
+  $Window=New-Object System.Windows.Forms.Form
+  $Window.Text='Установка MONO';$Window.Width=460;$Window.Height=190;$Window.FormBorderStyle='FixedDialog';$Window.MaximizeBox=$false;$Window.MinimizeBox=$true;$Window.StartPosition='CenterScreen'
+  try{$Window.Icon=New-Object System.Drawing.Icon (Join-Path $Root 'launcher\assets\MONO.ico')}catch{}
+  $Title=New-Object System.Windows.Forms.Label;$Title.Text='Устанавливаем MONO';$Title.Font=New-Object System.Drawing.Font('Segoe UI',13,[System.Drawing.FontStyle]::Bold);$Title.AutoSize=$true;$Title.Location='22,18'
+  $Now=New-Object System.Windows.Forms.Label;$Now.Text='Подготовка…';$Now.Font=New-Object System.Drawing.Font('Segoe UI',9.5);$Now.Width=410;$Now.Height=36;$Now.Location='24,56'
+  $Bar=New-Object System.Windows.Forms.ProgressBar;$Bar.Style='Marquee';$Bar.MarqueeAnimationSpeed=28;$Bar.Width=410;$Bar.Height=10;$Bar.Location='24,100'
+  $Note=New-Object System.Windows.Forms.Label;$Note.Text='После установки на рабочем столе появится значок MONO, и приложение откроется само.';$Note.Font=New-Object System.Drawing.Font('Segoe UI',8.5);$Note.ForeColor=[System.Drawing.Color]::DimGray;$Note.Width=410;$Note.Height=32;$Note.Location='24,118'
+  $Window.Controls.AddRange(@($Title,$Now,$Bar,$Note));$Window.Show();[System.Windows.Forms.Application]::DoEvents()
+}
+function Say($text){if($Window){$Now.Text=$text;[System.Windows.Forms.Application]::DoEvents()}}
+function Step($text){Write-Host ''; Write-Host "==> $text" -ForegroundColor Cyan; Say $text}
+function Ok($text){Write-Host "    [OK] $text" -ForegroundColor Green; if($Window){[System.Windows.Forms.Application]::DoEvents()}}
 function Warn($text){Write-Host "    [!] $text" -ForegroundColor Yellow}
-function Fail($text){Write-Host ''; Write-Host "[ОШИБКА] $text" -ForegroundColor Red; Write-Host "Журнал установки: $Log"; Stop-Transcript | Out-Null; exit 1}
+function Fail($text){
+  Write-Host ''; Write-Host "[ОШИБКА] $text" -ForegroundColor Red; Write-Host "Журнал установки: $Log"; Stop-Transcript | Out-Null
+  if($Window){$Window.Hide();[System.Windows.Forms.MessageBox]::Show("Установка не завершилась.`n`n$text`n`nПодробности: $Log",'Установка MONO','OK','Error') | Out-Null}
+  exit 1
+}
 function Ask($question){
   if($Unattended){return $false}
+  if($Window){return ([System.Windows.Forms.MessageBox]::Show($question.Trim(),'Установка MONO','YesNo','Question') -eq 'Yes')}
   $answer=Read-Host "$question [y/N]"
   return $answer -match '^(y|yes|д|да)$'
 }
@@ -150,5 +170,6 @@ Write-Host ''
 Write-Host 'Готово. Запускайте MONO ярлыком «MONO Transcribe» на рабочем столе.' -ForegroundColor Green
 Write-Host 'Данные хранятся в %LOCALAPPDATA%\MONO Transcribe и в выбранной вами папке архива.'
 Stop-Transcript | Out-Null
+if($Window){$Window.Close()}
 if(-not $NoLaunch -and -not $running){Start-Process -FilePath $pythonw -ArgumentList ('"'+(Join-Path $Root 'launcher\mono_launcher.py')+'" --dev') -WorkingDirectory $Root}
 exit 0

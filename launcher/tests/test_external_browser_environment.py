@@ -50,7 +50,7 @@ class ExternalBrowserEnvironmentTests(unittest.TestCase):
                 self.assertEqual(kwargs['env']['MONO_TEST_SENTINEL'],'preserved')
                 self.assertEqual(os.environ['PATH'],original_path,'Parent environment must remain unchanged')
                 self.assertFalse(any(a.startswith('--user-data-dir') for a in arguments),'the person\'s own browser profile')
-                self.assertIn('--app='+mono.URL+'/',arguments)
+                self.assertIn('--app='+mono.URL+'/?window=mono',arguments)
                 self.assertEqual(arguments[0],r'C:\InstalledChrome\chrome.exe')
                 return expected_process
             # The factory is an OS boundary, not a replacement for production

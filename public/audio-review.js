@@ -33,7 +33,7 @@ export class AudioReview{
    }
    if(generation!==this.generation){await this.request(`/preparations/${id}/cancel`,{method:'POST',body:{}});return}
    if(job.state!=='ready')throw new Error(failures[job.errorCode]||'Подготовка не завершена. Можно повторить попытку.');
-   this.result=job.result;this.player.setPrepared(job.result.audioURL,job.result.analysis);this.measurements(job.result.analysis);const chosen=job.reason?`Выбрано: «${this.profiles?.find(value=>value.id===job.profile)?.title||job.profile}». ${job.reason} `:'';this.setStatus(chosen+(job.result.analysis.original.loudness.valid&&job.result.analysis.prepared.loudness.valid?'Переключайте «Оригинал» и «После обработки» в одной позиции.':'Для точного сравнения громкости в записи мало звука.'));
+   this.result=job.result;this.player.setPrepared(job.result.audioURL,job.result.analysis);this.measurements(job.result.analysis);const chosen=job.reason?`Выбрано: «${this.profiles?.find(value=>value.id===job.profile)?.title||({smart:"Умная обработка"})[job.profile]||job.profile}». ${job.reason} `:'';this.setStatus(chosen+(job.result.analysis.original.loudness.valid&&job.result.analysis.prepared.loudness.valid?'Переключайте «Оригинал» и «После обработки» в одной позиции.':'Для точного сравнения громкости в записи мало звука.'));
   }catch(error){if(generation===this.generation){this.setStatus(failures[error.code]||error.message||'Не удалось подготовить запись.');throw error}}
   finally{if(generation===this.generation){this.busy=false;this.jobId=null;this.controls()}}
  }

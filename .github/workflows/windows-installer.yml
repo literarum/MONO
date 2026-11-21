@@ -161,7 +161,7 @@ jobs:
         run: |
           $setup = Get-ChildItem .build/installer -Filter 'MONO-Setup-*.exe' | Select-Object -First 1
           $dir = Join-Path $env:RUNNER_TEMP 'MONO Transcribe'
-          $p = Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/CURRENTUSER','/NORESTART',"/DIR=`"$dir`"",'/TASKS=desktopicon' -Wait -PassThru
+          $p = Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/CURRENTUSER','/NORESTART',"/DIR=`"$dir`"" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Setup exit code $($p.ExitCode)" }
           # Nothing from the runner's PATH may be used: hide node/ffmpeg/python.
           $env:Path = "$env:SystemRoot\system32;$env:SystemRoot"
@@ -196,6 +196,27 @@ jobs:
           # The runner has no audio endpoints; the helper must still start and answer.
           if ($caps.reason -eq 'HELPER_UNAVAILABLE') { throw 'Bundled MonoAudio.exe was not found by the installed app' }
           Stop-Process -Id $job.Id -Force -ErrorAction SilentlyContinue
+
+      - name: The archive a person downloads — one installer icon, one folder
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem .build/installer -Filter 'MONO-Setup-*.exe' | Select-Object -First 1
+          $root = Join-Path $env:RUNNER_TEMP 'MONO-release'
+          Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue; New-Item $root -ItemType Directory | Out-Null
+          Copy-Item $setup.FullName (Join-Path $root 'Установить и запустить MONO.exe')
+          Copy-Item $env:PORTABLE_DIR (Join-Path $root 'MONO без установки') -Recurse
+          New-Item .build/release -ItemType Directory -Force | Out-Null
+          Compress-Archive -Path (Join-Path $root '*') -DestinationPath ".build/release/MONO-$env:MONO_VERSION-Windows.zip"
+          # what the person sees after unpacking: exactly one installer and one folder
+          $top = Get-ChildItem $root | Select-Object -ExpandProperty Name
+          $top
+          if (@($top).Count -ne 2) { throw 'The archive must hold one installer and one folder' }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MONO-Windows
+          path: .build/release/*.zip
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:

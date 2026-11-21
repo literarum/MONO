@@ -19,6 +19,10 @@ import {SafetyTrack} from './safety-track.js';
 import {LevelPreview,addBookmark,SaveClock,BatteryWatch,DEFAULT_TITLE,suggestTitle} from './studio-extras.js';import {PlayerWave} from './waveform.js';
 import {speakerFor,SPEAKER_NAMES} from './speakers.js';
 import {paragraphs,isDoubtful,nextDoubtful,silenceSkips,skipTarget,savedSeconds,cleanText,transcriptStats,learnTerms,rememberTerms,promptWithTerms} from './intelligence.js';
+import {guardSingleWindow} from './window-guard.js';
+import {prefs,PREF_DEFAULTS,ACCENTS,applyVisualPrefs} from './prefs.js';
+import {FloatingRecorder} from './floating-recorder.js';
+import {runTour} from './tour.js';
 import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -36,11 +40,15 @@ const money=n=>new Intl.NumberFormat('ru-RU',{minimumFractionDigits:2,maximumFra
 const MODEL_PRICE=.04;
 const DEFAULTS={theme:'system',profile:'standard',rate:83.0784,prompt:''};
 const settings={...DEFAULTS,...readSettings()};
+// The theme follows Windows unless the person chose one in Settings; the old top-bar switch saved a
+// fixed theme without asking, so that choice is reset to «Как в системе» once.
+try{if(localStorage.getItem('mono-theme-system-1')!=='1'){settings.theme='system';localStorage.setItem('mono-theme-system-1','1');localStorage.setItem('mono-settings',JSON.stringify(settings))}}catch{}
 const state={records:[],view:'dashboard',recorder:null,recordingId:null,capture:null,health:null,
   editorId:null,editorPage:0,playerURL:null,pollBusy:false,recordBusy:false,pendingEdits:new Map(),failedEdits:new Map(),visibleSegments:new Map()};
-let credentialForm=null,pendingTranscriptionId=null;
+let credentialForm=null,pendingTranscriptionId=null,groqConfigured=null;
 let nativeController=null,captureSources=null,nativeCompleted=null,nativeFrame=0,nativeInitializing=null,setupWindow=null,setupOpening=null;
-let mediaInterlock=null,audioReview=null,preflight=null;
+let mediaInterlock=null,audioReview=null,preflight=null,studioGuidance=null,permissionAsked=false;
+const floatingRecorder=new FloatingRecorder({onOpen:()=>go('record'),onPause:()=>pauseRecord(),onStop:()=>void endRecord(),enabled:()=>prefs.get('floatingRecorder'),inStudio:()=>state.view==='record'&&!document.hidden});
 const levelPreview=new LevelPreview(),saveClock=new SaveClock(),battery=new BatteryWatch({onWarn:message=>notify(message,'error')});
 const takeMarks={id:null,marks:[]};
 /** Bookmark the current moment of the take ("Важно", key B). Saved with the record when it ends. */
@@ -110,8 +118,8 @@ function captureHealthHint(value){
  const quiet=levels.length&&levels.every(level=>level.rms>0.001&&level.rms<0.004);
  if(!quiet)captureHealth.quietSince=0;else if(!captureHealth.quietSince)captureHealth.quietSince=now;
  if(captureHealth.quietSince&&now-captureHealth.quietSince>20000&&!captureHealth.levelTried){captureHealth.levelTried=true;void raiseQuietInput()}
- if(now-captureHealth.lastSound>10000){if(!captureHealth.repairTried){captureHealth.repairTried=true;healthEvent('SILENCE',inputName());void silenceRepair(value)}return ' · ⚠ Микрофон молчит больше 10 с — проверьте выбранный вход и его громкость'}
- if(now<captureHealth.clipUntil)return ' · ⚠ Перегрузка входа — уменьшите усиление микрофона или отодвиньтесь';
+ if(now-captureHealth.lastSound>10000){if(!captureHealth.repairTried){captureHealth.repairTried=true;healthEvent('SILENCE',inputName());void silenceRepair(value)}return prefs.get('silenceWarning')?' · ⚠ Микрофон молчит больше 10 с — проверьте выбранный вход и его громкость':''}
+ if(now<captureHealth.clipUntil&&prefs.get('clipWarning'))return ' · ⚠ Перегрузка входа — уменьшите усиление микрофона или отодвиньтесь';
  return '';
 }
 /** Ten seconds of silence while recording: if Windows muted the microphone or set its level
@@ -125,12 +133,21 @@ async function silenceRepair(value){
 }
 /** The taskbar shows the state too: «● 00:12 · Запись — MONO» and a red dot on the icon. */
 const baseTitle=document.title;let iconState='';
+/** Paused with something recorded: the main button says «Продолжить запись», «Создать новую запись»
+ * appears beside it, and the studio, its timer and the sidebar pulse calmly so the pause is obvious. */
+function reflectPaused(paused,hasAudio){
+ const pause=$('#pause-record');pause.innerHTML=icon(paused?'play':'pause')+(paused?' Продолжить запись':' Пауза');pause.classList.toggle('btn-primary',paused);pause.classList.toggle('btn-large',paused);pause.classList.toggle('btn-outline',!paused);
+ $('#new-record').hidden=!(paused&&hasAudio);$('.studio-panel')?.classList.toggle('is-paused',paused);
+ const state=$('#record-state');if(state&&paused)state.innerHTML='<span class="tiny-dot"></span> На паузе';
+}
 function reflectRecordingInChrome(active,value){
  const paused=value?.state==='paused';
+ const badge=$('#nav-rec-badge');if(badge){badge.hidden=!active;badge.dataset.state=paused?'paused':'recording';badge.title=paused?'Запись на паузе':'Идёт запись';badge.closest('.nav-link')?.classList.toggle('is-live',active)}
+ floatingRecorder.update(active,value);
  document.title=active?`${paused?'❚❚':'●'} ${durationText(value?.duration||0)} · ${paused?'Пауза':'Запись'} — MONO`:baseTitle;
  const want=active?(paused?'paused':'recording'):'';if(want===iconState)return;iconState=want;
  const link=document.querySelector('link[rel=icon]');if(!link)return;
- if(!want){link.href='/icon.svg';return}
+ if(!want){link.href=link.dataset.idle||'/favicon.ico';return}link.dataset.idle??=link.getAttribute('href');
  const svg=`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='#111'/><g fill='#fff'><rect x='14' y='22' width='4' height='20' rx='2'/><rect x='22' y='16' width='4' height='32' rx='2'/><rect x='30' y='24' width='4' height='16' rx='2'/></g><circle cx='46' cy='18' r='12' fill='${want==='paused'?'#ff9f0a':'#ff453a'}'/></svg>`;
  link.href='data:image/svg+xml,'+encodeURIComponent(svg);
 }
@@ -159,16 +176,16 @@ function onNativeState(value){
  watchDisk(active);
  if(active){saveClock.observe(value.sessionId||value.recordId,value.duration);if(!battery.active){battery.active=true;battery.reset()}void battery.check();stopLevelCheck()}else battery.active=false;
  $('#pause-record').disabled=!value.connected||Boolean(value.pendingAction)||!['recording','paused'].includes(value.state);
- $('#stop-record').disabled=value.state==='stopping';$('#pause-record').innerHTML=icon(value.state==='paused'?'play':'pause')+(value.state==='paused'?' Продолжить':' Пауза');
+ $('#stop-record').disabled=value.state==='stopping';reflectPaused(active&&value.state==='paused',Number(value.duration)>0);
  setText('#record-saved',!value.connected?(active?'Связь потеряна. Остановка и сохранение не подтверждены.':'Подключаемся к модулю записи…'+(nativeController?.lastError?.code?` (${nativeController.lastError.code})`:'')):value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве '+(value.state==='recording'?saveClock.text():'')+captureHealthHint(value):state.footerNote?state.footerNote:value.errorCode?captureFailureMessage(value):'');
  updateRecordUI();
- if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId));syncLevelPreview();
+ if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId)).then(()=>applyTitleTemplate(value.recordId));if(wasActive&&prefs.get('checkSoundEveryTime'))studioGuidance?.reopen('first-mic');syncLevelPreview();
   if(wasActive&&value.state==='interrupted')markRecoveredSeen(value.recordId);
   if(wasActive&&value.errorCode)healthEvent('CAPTURE_ERROR',[value.errorCode,value.failureDetails?.stage,value.failureDetails?.nativeCode].filter(Boolean).join(' ')); // the journal sees module failures too
   // A start that never captured audio leaves an empty «Прервано · 0 с» record: it is noise, not a meeting.
   if(wasActive&&value.state==='interrupted'&&!(Number(value.savedBytes)>0)&&!(Number(value.savedFrames)>0)&&!(Number(value.duration)>0)){const empty=value.recordId;setTimeout(()=>{void getRecording(empty,{transcript:false}).then(r=>r&&!(r.size>0)&&!(r.duration>0)?removeRecording(empty).then(()=>refresh()):null).catch(()=>{})},1500)}
   if(wasActive&&value.state==='interrupted'&&!(Number(value.savedBytes)>0)&&AUTOPILOT_RETRY.has(value.errorCode)&&autopilot.selection&&autopilot.steps.length){void autopilotRetry(value.errorCode).then(handled=>{if(!handled)void notifyCaptureError(captureFailureMessage(value),value.errorCode)});void refresh().catch(()=>{});return}
-  if(wasActive&&value.state==='interrupted'&&value.errorCode==='DEVICE_LOST'&&(Number(value.savedBytes)>0||Number(value.savedFrames)>0)){void continueAfterDeviceChange(value.recordId);return}void refresh().catch(e=>notify(e.message,'error'));if(wasActive&&!setupWindow)notify(value.state==='ready'?'Запись сохранена в библиотеке.':captureFailureMessage(value),value.state==='ready'?'info':'error',value.state==='ready'?{text:state.health?.groq?'Расшифровать':'Открыть',run:async()=>{go('editor',value.recordId);if(state.health?.groq){await refresh();const rec=state.records.find(r=>r.id===value.recordId);if(rec)void startTranscription(rec)}}}:fixFor(value.errorCode))}
+  if(wasActive&&value.state==='interrupted'&&value.errorCode==='DEVICE_LOST'&&(Number(value.savedBytes)>0||Number(value.savedFrames)>0)){void continueAfterDeviceChange(value.recordId);return}void refresh().catch(e=>notify(e.message,'error'));if(wasActive&&!setupWindow)notify(value.state==='ready'?'Запись сохранена в библиотеке.':captureFailureMessage(value),value.state==='ready'?'info':'error',value.state==='ready'?{text:state.health?.groq&&prefs.get('offerTranscription')?'Расшифровать':'Открыть',run:async()=>{go('editor',value.recordId);if(state.health?.groq&&prefs.get('offerTranscription')){await refresh();const rec=state.records.find(r=>r.id===value.recordId);if(rec)void startTranscription(rec)}}}:fixFor(value.errorCode))}
 }
 /** Autopilot (Apple: recover quietly; ask only when nothing else can help).
  * Before a microphone take: Windows' own view of the microphone. A muted endpoint or a
@@ -268,13 +285,17 @@ async function initializeNative(local){
   nativeController=new NativeCaptureController(client,{onState:onNativeState,onError:error=>notify(error.message,'error',fixFor(error.code)),onIntent:async options=>{if(levelPreview.active||levelPreview.wanted){levelPreview.stop();await new Promise(resolve=>setTimeout(resolve,250))}return mediaInterlock.beforeCapture(options)}});
   const studio=$('#audio-source').closest('.side-card');studio.replaceChildren();mountCaptureSources(studio,{model:captureSources,onError:error=>notify(error.message,'error'),onNotice:message=>notify(message)});
   const card=document.createElement('article');card.className='glass settings-card';card.innerHTML='<div class="settings-card-icon"><svg><use href="#i-mic"/></svg></div><h2>Источники записи</h2><div class="settings-capture-sources"></div><button type="button" class="btn btn-outline btn-small" id="check-native-sound">Проверить звук</button>';$('#view-settings .settings-grid').prepend(card);mountCaptureSources(card.querySelector('.settings-capture-sources'),{model:captureSources,onError:error=>notify(error.message,'error')});card.querySelector('button#check-native-sound').onclick=()=>void showSetup('sound').catch(error=>notify(error.message,'error'));
-  const guide=$('#studio-guide');guide.replaceChildren();mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
+  // The one consent MONO cannot give itself: when the browser has not yet let it hear the
+  // microphone, ask once in a modal (with the browser prompt behind the button), not with a lasting button.
+  captureSources.subscribe(model=>{if(permissionAsked||!model.activeDevices?.().needsPermission||model.busy)return;if(!['record','settings'].includes(state.view))return;permissionAsked=true;
+   modal('Разрешите MONO слышать микрофон','<p>Браузер спросит разрешение один раз — нажмите в его окне <b>«Разрешить»</b>. После этого MONO сам увидит микрофоны и будет обновлять их список.</p>',[{text:'Разрешить доступ',primary:true,run:async()=>{try{await model.refresh({requestAccess:true})}catch(error){notify(error.message,'error')}}}])});
+  const guide=$('#studio-guide');guide.replaceChildren();studioGuidance=mountGuidance(guide,{library:local,controller:nativeController,sources:captureSources,onError:error=>notify(error.message,'error'),onAction:async(action,recordId)=>{if(action==='listen'){await refresh();go('editor',recordId)}else await showSetup('sound')}});
   const safe=document.createElement('article');safe.className='glass settings-card';safe.innerHTML='<div class="settings-card-icon"><svg><use href="#i-shield"/></svg></div><h2>Страховочная дорожка</h2><p>Когда запись идёт через модуль Windows, окно параллельно пишет копию микрофона другим путём. Если основная запись оборвётся, MONO восстановит встречу из копии. Копия хранится сутки (после сбоя — неделю), около 14 МБ за час.</p><label class="check-row"><input type="checkbox" id="setting-safety"> Вести страховочную дорожку</label>';$('#view-settings .settings-grid').append(safe);
   $('#setting-safety').checked=safetySettings;$('#setting-safety').onchange=e=>{safetySettings=e.target.checked;try{localStorage.setItem('mono-safety-track',safetySettings?'1':'0')}catch{}};
   const help=document.createElement('article');help.className='glass settings-card';mountHelp(help);$('#view-settings .settings-grid').append(help);
   // Pre-flight check: compact (problems only) in the studio, full in settings.
   preflight=new Preflight(local);$('#system-health-card').hidden=true; // the pre-flight check below covers the same systems in depth
-  const studioCheck=document.createElement('div');studioCheck.className='glass side-card';$('.studio-side').prepend(studioCheck);mountPreflight(studioCheck,{model:preflight,compact:true,onError:()=>{}});
+  const studioCheck=document.createElement('div');studioCheck.className='glass side-card';$('.studio-side').prepend(studioCheck);mountPreflight(studioCheck,{model:preflight,compact:true,onError:()=>{},onOpen:openLimitation});
   const settingsCheck=document.createElement('article');settingsCheck.className='glass settings-card';settingsCheck.innerHTML='<div class="settings-card-icon"><svg><use href="#i-check"/></svg></div><h2>Предполётная проверка</h2><div></div>';$('#view-settings .settings-grid').prepend(settingsCheck);mountPreflight(settingsCheck.lastElementChild,{model:preflight,onError:error=>notify(error.message,'error'),onDeep:()=>void runDeepDiagnostics()});mountSystemStatus(preflight);
  }
  await nativeController.connect();
@@ -285,7 +306,7 @@ async function initializeNative(local){
 }
 async function showSetup(initialStep=null){
  if(setupWindow)return;if(setupOpening){await setupOpening;if(initialStep&&!setupWindow)return showSetup(initialStep);return}setupOpening=(async()=>{const local=await localLibraryClient();if(!local)return;
- const opened=await openOnboarding({library:local,storage:storageDetails,configure:configureLibrary,choose:chooseLibraryFolder,ensureNative:()=>initializeNative(local),onArchive:async()=>{updateStorageSettings();await refresh()},onComplete:()=>{setupWindow=null;void credentialForm?.refresh();void ensureArchive('setup').then(()=>offerLegacyImport())},onError:error=>notify(error.message,'error'),helpTemplate:$('#groq-settings-card .setup-details'),initialStep,canPlay:canAudition,playAudio:audio=>mediaInterlock.play(audio)});setupWindow=opened&&!opened.closed?opened:null;
+ const opened=await openOnboarding({library:local,storage:storageDetails,configure:configureLibrary,choose:chooseLibraryFolder,ensureNative:()=>initializeNative(local),onArchive:async()=>{updateStorageSettings();await refresh()},onComplete:()=>{setupWindow=null;void credentialForm?.refresh();void ensureArchive('setup').then(()=>offerLegacyImport()).then(()=>{if(!prefs.get('tourDone'))setTimeout(startTour,600)})},onError:error=>notify(error.message,'error'),helpTemplate:$('#groq-settings-card .setup-details'),initialStep,canPlay:canAudition,playAudio:audio=>mediaInterlock.play(audio)});setupWindow=opened&&!opened.closed?opened:null;
  })().finally(()=>{setupOpening=null});return setupOpening;
 }
 /** Transcriber controls: Ctrl+Space / F9 / Space play–pause (pausing steps back 2 s), Alt+←/→ seek ±5 s. */
@@ -305,8 +326,8 @@ function saveSettings(){try{localStorage.setItem('mono-settings',JSON.stringify(
 function applyTheme(){
   const dark=settings.theme==='system'?(!matchMedia('(prefers-color-scheme: light)').matches):settings.theme==='dark';
   document.body.dataset.theme=dark?'dark':'light';
-  $('#theme-toggle').innerHTML=icon(dark?'sun':'moon');
-  document.querySelector('meta[name="theme-color"]').content=dark?'#08090b':'#f1f1ef';
+
+  document.querySelector('meta[name="theme-color"]').content=dark?'#0b1a33':'#e8f0fb';
 }
 /** During a take, once a minute: will the disk hold the rest of it? (warn at ~30 and ~5 min) */
 const diskWatch={timer:0,warned:new Set()};
@@ -374,6 +395,21 @@ function startAudioCare(){
  setInterval(()=>{if(!document.hidden)void backgroundAudioCare('timer')},180000);
 }
 /** A transcript finished while the window was in the background: the title says so until return. */
+/** A transcription is ready: a soft two-note chime and, while MONO is in the background, a Windows
+ * notification — each only if the person kept it on in Settings → «Работа в фоне». */
+let doneAnnounced=new Set();
+function transcriptionDone(record){
+ if(doneAnnounced.has(record.id))return;doneAnnounced.add(record.id);void renderUsage();
+ if(prefs.get('doneSound'))try{const context=new AudioContext(),now=context.currentTime;for(const [i,f] of [[0,880],[1,1318.5]]){const osc=context.createOscillator(),gain=context.createGain();osc.type='sine';osc.frequency.value=f;gain.gain.setValueAtTime(0,now+i*.14);gain.gain.linearRampToValueAtTime(.09,now+i*.14+.02);gain.gain.exponentialRampToValueAtTime(.0001,now+i*.14+.5);osc.connect(gain).connect(context.destination);osc.start(now+i*.14);osc.stop(now+i*.14+.55)}setTimeout(()=>void context.close(),1200)}catch{}
+ if(prefs.get('doneNotification')&&document.hidden&&'Notification' in window&&Notification.permission==='granted')try{const note=new Notification('Расшифровка готова',{body:record.title||'Запись',icon:'/icon-192.png',tag:'mono-'+record.id});note.onclick=()=>{window.focus();go('editor',record.id);note.close()}}catch{}
+}
+/** The name a new recording gets, from Settings → «Запись». The core names it «Запись 21.11.2026 14:05». */
+async function applyTitleTemplate(id){
+ const template=prefs.get('titleTemplate');if(template==='date')return;
+ try{const rec=await getRecording(id,{transcript:false});if(!rec||!DEFAULT_TITLE.test(rec.title||''))return;const at=new Date(rec.createdAt||Date.now());
+  const day=at.toLocaleDateString('ru-RU',{day:'numeric',month:'long'}),time=at.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+  await patchRecording(id,{title:template==='meeting'?`Встреча · ${day}, ${time}`:`Голосовая заметка · ${day}, ${time}`});await refresh()}catch{}
+}
 function markDoneWhileAway(){if(!document.title.startsWith('✓')){const previous=document.title;document.title='✓ Расшифровка готова — MONO';document.addEventListener('visibilitychange',()=>{if(!document.hidden&&document.title.startsWith('✓'))document.title=previous},{once:true})}}
 /** «?» — every keyboard shortcut in one sheet. */
 function showShortcuts(){
@@ -381,9 +417,17 @@ function showShortcuts(){
  modal('Сочетания клавиш','<dl class="shortcut-list">'+rows.map(([k,v])=>`<dt><kbd>${h(k)}</kbd></dt><dd>${h(v)}</dd>`).join('')+'</dl>');
 }
 /** Ctrl+Alt+R anywhere in Windows (registered by the launcher) starts or stops recording. */
+/** A second MONO window that the browser did not let close: say so plainly, offer to work here. */
+function showDuplicateWindow(takeOver){
+ const veil=document.createElement('div');veil.className='duplicate-window';veil.setAttribute('role','alertdialog');veil.setAttribute('aria-modal','true');veil.setAttribute('aria-labelledby','duplicate-title');
+ veil.innerHTML='<div class="duplicate-panel glass"><div class="duplicate-mark"><svg><use href="#i-grid"/></svg></div><h2 id="duplicate-title">MONO уже открыт</h2><p>Он работает в другом окне — переключитесь на него. Это окно можно закрыть.</p><div class="modal-actions"><button type="button" class="btn btn-primary">Работать в этом окне</button><button type="button" class="btn btn-outline">Закрыть окно</button></div></div>';
+ document.body.append(veil);const [here,close]=veil.querySelectorAll('button');here.focus();
+ here.onclick=()=>{takeOver();veil.remove()};close.onclick=()=>{try{window.close()}catch{}};
+}
 function listenForLauncherEvents(){
  if(!storageDetails().local||typeof EventSource!=='function')return;
  const source=new EventSource('/api/local/events');
+ source.addEventListener('focus',()=>{try{window.focus()}catch{}document.body.classList.add('window-called');setTimeout(()=>document.body.classList.remove('window-called'),900)});
  source.addEventListener('hotkey',()=>{
   const recording=captureActive(nativeController?.snapshot)||Boolean(state.capture);
   if(recording){void endRecord();notify('Запись остановлена (Ctrl+Alt+R).')}
@@ -397,7 +441,9 @@ function offerUpdate(update){
  notifyLater(`Доступна версия MONO ${update.version}. Установка поверх сохранит записи и настройки.`,'info',{text:'Скачать',run:()=>{window.open(update.url,'_blank','noopener')}});
 }
 /** Windows accent colour as the app tint, when it is readable on both themes (WCAG 3:1 for UI). */
+let systemAccent=null;
 function applyAccent(accent){
+ systemAccent=accent;const chosen=ACCENTS[prefs.get('accent')];if(chosen){document.body.style.setProperty('--tint',chosen);document.body.style.setProperty('--tint-strong',chosen);return}
  const match=/^#([0-9a-f]{6})$/i.exec(accent||'');if(!match){document.body.style.removeProperty('--tint');document.body.style.removeProperty('--tint-strong');return}
  const n=parseInt(match[1],16),lin=c=>(c/=255)<=.03928?c/12.92:((c+.055)/1.055)**2.4,L=.2126*lin(n>>16&255)+.7152*lin(n>>8&255)+.0722*lin(n&255);
  const contrast=(a,b)=>(Math.max(a,b)+.05)/(Math.min(a,b)+.05);
@@ -421,7 +467,7 @@ function notify(message,type='info',action=null){
     entry={el,timer:null};active.set(key,entry);
   }
   clearTimeout(entry.timer);
-  if(!(type==='error'&&action?.sticky))entry.timer=setTimeout(()=>{entry.el.remove();if(active.get(key)===entry)active.delete(key)},action?12000:type==='error'?9000:6500);
+  if(!(type==='error'&&action?.sticky))entry.timer=setTimeout(()=>{leaveToast(entry.el);if(active.get(key)===entry)active.delete(key)},(action?12000:type==='error'?9000:6500)*(typeof prefs!=='undefined'&&prefs.get('toastDuration')==='long'?1.8:1));
 }
 /** «Busy» microphone: name the app Windows says is using it, instead of a generic guess. */
 async function notifyCaptureError(message,code){
@@ -459,13 +505,15 @@ function fixFor(code){
  if(code&&storageDetails().local)return {text:'Диагностика',run:()=>void runDeepDiagnostics()};
  return null;
 }
+/** A notice leaves the way it came: it slides back and fades (no animation API — it just goes). */
+function leaveToast(el){const reduce=typeof document!=='undefined'&&document.body?.classList?.contains?.('reduce-motion');if(!el.animate||reduce){el.remove();return}const run=el.animate([{opacity:1,transform:'none'},{opacity:0,transform:'translateY(8px) scale(.98)'}],{duration:220,easing:'cubic-bezier(.4,0,1,1)'});run.onfinish=()=>el.remove()}
 let modalReturnFocus=null;
 function modal(title,body,actions=[]){
   modalReturnFocus=document.activeElement;
   $('#modal-title').textContent=title;$('#modal-text').innerHTML=body;const container=$('#modal-actions');container.replaceChildren();
   const cancel=document.createElement('button');cancel.className='btn btn-outline';cancel.textContent='Отмена';cancel.onclick=closeModal;container.append(cancel);
   for(const action of actions){
-    const btn=document.createElement('button');btn.className='btn '+(action.primary?'btn-primary':'btn-outline');
+    const btn=document.createElement('button');btn.className='btn '+(action.danger?'btn-danger':action.primary?'btn-primary':'btn-outline');
     btn.textContent=action.text;btn.onclick=()=>{closeModal();void Promise.resolve().then(action.run).catch(e=>notify(e.message,'error'))};container.append(btn);
   }
   $('#modal').hidden=false;container.querySelector('button').focus();
@@ -601,7 +649,44 @@ let windowState=null;
 async function loadWindowState(){try{const local=await localLibraryClient();windowState=local?await local.json('/window'):null}catch{windowState=null}return windowState}
 /** Settings read top to bottom by importance: connection and recognition first, the system check and
  * help last; an unfinished archive copy always comes first. */
-const SETTINGS_ORDER=['Незавершённое копирование','Подключение Groq','Распознавание','Обработка аудио','Источники записи','Оформление','Архив и резервные копии','Обновление','Страховочная дорожка','Расходы','Предполётная проверка','Состояние системы','Как пользоваться MONO'];
+const SETTINGS_ORDER=['Незавершённое копирование','Подключение Groq','Расходы','Распознавание','Обработка аудио','Источники записи','Запись','Оформление','Библиотека','Работа в фоне','Архив и резервные копии','Обновление','Страховочная дорожка','Предполётная проверка','Состояние системы','Как пользоваться MONO','О MONO'];
+/** Every control with data-pref / data-server-pref is bound to its setting: the control shows the
+ * value, a change saves it and applies it at once. Server settings are those the launcher reads. */
+let serverPrefs={};
+const typed=(key,raw)=>typeof PREF_DEFAULTS[key]==='number'||/lingerSeconds/.test(key)?Number(raw):raw;
+function prefValue(control){const server=control.dataset.serverPref;if(server){const [group,key]=server.split('.');return serverPrefs?.[group]?.[key]}return prefs.get(control.dataset.pref)}
+function syncPreferenceControls(){
+ for(const control of document.querySelectorAll('[data-pref],[data-server-pref]')){
+  const value=prefValue(control);
+  if(control.matches('input[type=checkbox]'))control.checked=Boolean(value);
+  else if(control.matches('select')){control.value=String(value);}
+  else for(const button of control.querySelectorAll('button[data-value]')){const on=button.dataset.value===String(value);button.setAttribute('aria-checked',String(on));button.tabIndex=on?0:-1}
+ }
+ syncControls();
+}
+async function savePreference(control,raw){
+ const server=control.dataset.serverPref;
+ if(server){const [group,key]=server.split('.'),value=control.matches('input[type=checkbox]')?raw:typed(server,raw);const local=await localLibraryClient();if(!local)return;
+  try{serverPrefs=await local.json('/preferences',{method:'PATCH',body:{[group]:{[key]:value}}});notifyQuiet('Сохранено')}catch(error){notify(error.message,'error')}syncPreferenceControls();return}
+ const key=control.dataset.pref;prefs.set(key,control.matches('input[type=checkbox]')?raw:typed(key,raw));
+}
+function bindPreferences(){
+ for(const control of document.querySelectorAll('[data-pref],[data-server-pref]')){
+  if(control.dataset.bound)continue;control.dataset.bound='1';
+  if(control.matches('input[type=checkbox]'))control.addEventListener('change',()=>void savePreference(control,control.checked));
+  else if(control.matches('select'))control.addEventListener('change',()=>void savePreference(control,control.value));
+  else{const buttons=[...control.querySelectorAll('button[data-value]')];
+   control.addEventListener('click',event=>{const button=event.target.closest('button[data-value]');if(button)void savePreference(control,button.dataset.value)});
+   control.addEventListener('keydown',event=>{const step={ArrowRight:1,ArrowDown:1,ArrowLeft:-1,ArrowUp:-1}[event.key];if(!step)return;event.preventDefault();const index=buttons.findIndex(button=>button.getAttribute('aria-checked')==='true'),next=buttons[(index+step+buttons.length)%buttons.length];void savePreference(control,next.dataset.value);next.focus()})}
+ }
+ prefs.subscribe((key,value)=>{if(key==='doneNotification'&&value&&'Notification' in window&&Notification.permission!=='granted')void Notification.requestPermission().then(permission=>{if(permission!=='granted'){prefs.set('doneNotification',false);notify('Windows не разрешил уведомления от MONO. Разрешить можно в настройках сайта: значок замка в адресной строке → Уведомления.')}})});
+ prefs.subscribe(key=>{if([null,'accent','glass','motion','textSize','showDoubts'].includes(key)){applyVisualPrefs();applyAccent(systemAccent);document.body.classList.toggle('hide-doubts',!prefs.get('showDoubts'))}if([null,'libraryView','librarySort'].includes(key)&&typeof renderLibrary==='function'){applyLibraryPrefs();void renderLibrary()}syncPreferenceControls()});
+ applyVisualPrefs();document.body.classList.toggle('hide-doubts',!prefs.get('showDoubts'));syncPreferenceControls();
+ void localLibraryClient().then(async local=>{if(!local)return;try{serverPrefs=await local.json('/preferences')}catch{}syncPreferenceControls()});
+ $('#reset-prefs')?.addEventListener('click',()=>modal('Сбросить настройки?','<p>Оформление, запись, библиотека и уведомления вернутся к исходным. Записи, папка архива и ключ Groq останутся как есть.</p>',[{text:'Сбросить',primary:true,run:()=>{prefs.reset();settings.theme='system';saveSettings();applyTheme();$('#setting-theme').value='system';syncSegmented();notify('Настройки сброшены.')}}]));
+}
+let quietTimer=0;
+function notifyQuiet(text){const pill=$('#saved-pill');if(!pill)return;pill.textContent=text;pill.classList.add('is-on');clearTimeout(quietTimer);quietTimer=setTimeout(()=>pill.classList.remove('is-on'),1400)}
 /** Segmented controls mirror a hidden <select> (the select keeps the value and its change handler). */
 function syncSegmented(){for(const group of document.querySelectorAll('.segmented[data-for]')){const select=document.getElementById(group.dataset.for);for(const button of group.querySelectorAll('button')){const on=button.dataset.value===select.value;button.setAttribute('aria-checked',String(on));button.tabIndex=on?0:-1}}}
 function mountSegmented(){
@@ -613,14 +698,26 @@ function mountSegmented(){
  syncSegmented();
 }
 /** The settings index: one entry per visible card, in the cards' order; the entry of the card in view is highlighted. */
-let settingsSpy=null;
+let settingsSpy=null,spotlightTimer=0;
+/** Bring one settings card forward: it scrolls into view, the others dim for a moment and the card
+ * glows, so the eye lands exactly where the person asked to go. A hint can be shown above it. */
+function spotlightSetting(id,{hint=null}={}){
+ const run=()=>{const card=document.getElementById(id);if(!card)return;const grid=card.parentElement;
+  card.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches||document.body.classList.contains('reduce-motion')?'auto':'smooth',block:'start'});
+  for(const other of grid.querySelectorAll('.is-spotlit'))other.classList.remove('is-spotlit');grid.classList.add('has-spotlight');void card.offsetWidth;card.classList.add('is-spotlit');
+  card.querySelector(':scope>.spotlight-hint')?.remove();if(hint){const box=document.createElement('div');box.className='spotlight-hint';box.setAttribute('role','note');box.innerHTML=hint;card.querySelector(':scope>h2')?.after(box)}
+  clearTimeout(spotlightTimer);spotlightTimer=setTimeout(()=>{grid.classList.remove('has-spotlight');card.classList.remove('is-spotlit')},hint?6000:2400);
+  const end=()=>{clearTimeout(spotlightTimer);grid.classList.remove('has-spotlight');card.classList.remove('is-spotlit');removeEventListener('pointerdown',end,true)};addEventListener('pointerdown',end,true);
+ };
+ if(state.view!=='settings'){go('settings');requestAnimationFrame(()=>requestAnimationFrame(run))}else run();
+}
 function renderSettingsIndex(){
  const index=$('#settings-index'),grid=$('#view-settings .settings-grid');if(!index||!grid)return;
  const cards=[...grid.children].filter(card=>!card.hidden&&card.querySelector('h2')).sort((a,b)=>Number(a.style.order||0)-Number(b.style.order||0));
  const slug=text=>'set-'+text.toLowerCase().replace(/[^a-zа-яё0-9]+/gi,'-').replace(/^-|-$/g,'');
  index.replaceChildren(...cards.map(card=>{const title=card.querySelector('h2').textContent.trim();card.id||=slug(title);const link=document.createElement('a');link.href='#settings';link.dataset.target=card.id;link.dataset.tone=card.dataset.tone||'';
   const icon=card.querySelector('.settings-card-icon svg use')?.getAttribute('href')||'#i-settings';link.innerHTML=`<span class="settings-index-icon"><svg><use href="${icon}"/></svg></span><span></span>`;link.lastElementChild.textContent=SETTINGS_SHORT[title]||title;link.title=title;
-  link.onclick=event=>{event.preventDefault();card.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});mark(card.id)};return link}));
+  link.onclick=event=>{event.preventDefault();spotlightSetting(card.id);mark(card.id)};return link}));
  const mark=id=>{for(const link of index.children)link.classList.toggle('active',link.dataset.target===id)};
  settingsSpy?.disconnect();settingsSpy=new IntersectionObserver(entries=>{const visible=entries.filter(entry=>entry.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top)[0];if(visible)mark(visible.target.id)},{root:$('#main'),rootMargin:'-10% 0px -70% 0px'});
  for(const card of cards)settingsSpy.observe(card);if(cards[0])mark(cards[0].id);
@@ -628,21 +725,49 @@ function renderSettingsIndex(){
 /** The status light in the top bar, like a master caution: MONO checks its systems at start, every
  * five minutes, when the window comes back and when a device is plugged in; one glance says whether a
  * recording can start, and a click opens the full check. */
+let lastPreflight=null;
+/** Where each limitation is fixed, and how — in plain words. The deep check is offered under the hint. */
+const LIMITATION_FIX={
+ groq:{card:'groq-settings-card',how:'Расшифровке нужен ключ Groq — он бесплатный. Нажмите <b>«Получить ключ на сайте Groq»</b>, скопируйте ключ и вставьте его в поле ниже. Пошаговая инструкция — чуть ниже, в «Как получить ключ».'},
+ 'mic-permission':{card:'set-источники-записи',how:'Браузер пока не дал MONO доступ к микрофону. Нажмите <b>«Проверить звук»</b> в этом разделе и в появившемся окне выберите <b>«Разрешить»</b>. Если окно не появляется: значок замка слева в адресной строке → Микрофон → «Разрешить».'},
+ 'mic-device':{card:'set-источники-записи',how:'Windows не видит ни одного микрофона. Подключите микрофон или гарнитуру — MONO заметит его сам, ничего нажимать не нужно.'},
+ 'mic-muted':{card:'set-источники-записи',how:'Микрофон выключен в Windows. Нажмите <b>«Исправить»</b> в проверке ниже — MONO включит его сам.'},
+ 'mic-level':{card:'set-источники-записи',how:'Громкость микрофона в Windows почти на нуле. Нажмите <b>«Исправить»</b> в проверке — MONO поднимет её до нормального уровня.'},
+ 'mic-disabled':{card:'set-источники-записи',how:'Микрофон отключён в Windows. Откройте <b>Параметры → Система → Звук → Все звуковые устройства</b>, выберите микрофон и нажмите <b>«Разрешить»</b>.'},
+ 'mic-privacy':{card:'set-источники-записи',how:'Windows запрещает приложениям слышать микрофон. Откройте <b>Параметры → Конфиденциальность и защита → Микрофон</b> и включите доступ для приложений и классических приложений.'},
+ 'mic-handsfree':{card:'set-источники-записи',how:'Bluetooth-гарнитура в режиме громкой связи звучит глухо. Для лучшего качества выберите встроенный или проводной микрофон.'},
+ 'window-audio':{card:'set-источники-записи',how:'Это окно не умеет записывать звук. Откройте MONO значком на рабочем столе — он запускается в Chrome или Edge.'},
+ disk:{card:'set-архив-и-резервные-копии',how:'На диске мало места. Освободите место или перенесите архив на другой диск: строка <b>«Папка архива» → «Перенести…»</b>.'},
+ onedrive:{card:'set-архив-и-резервные-копии',how:'Архив лежит в OneDrive: при нехватке места записи могут остаться только в облаке. В Проводнике щёлкните папку архива правой кнопкой → <b>«Всегда сохранять на этом устройстве»</b>.'},
+ library:{card:'set-архив-и-резервные-копии',how:'Папка архива недоступна. Подключите диск с архивом или выберите папку заново: <b>«Другая папка архива» → «Подключить…»</b>.'},
+ transfer:{card:'transfer-recovery',how:'Копирование архива не закончено. Нажмите <b>«Продолжить»</b> или отмените его.'},
+ 'audio-tools':{card:'set-предполётная-проверка',how:'Не найдены программы обработки звука. Переустановите MONO из архива — они входят в комплект.'},
+ core:{card:'set-предполётная-проверка',how:'Ядро архива отвечает медленно. Подождите минуту и нажмите <b>«Проверить снова»</b>; если не помогло — перезапустите MONO.'}
+};
+function openLimitation(result,id=null){
+ const order=['warning','caution','advisory'],checks=result?.checks||[];
+ const item=id?checks.find(check=>check.id===id):order.map(level=>checks.find(check=>check.level===level&&LIMITATION_FIX[check.id])).find(Boolean);
+ const fix=item&&LIMITATION_FIX[item.id];
+ if(!fix){spotlightSetting('set-предполётная-проверка');return}
+ const deep='<div class="spotlight-deep">Не помогло? <button type="button" class="btn-plain" data-deep-check>Глубокая диагностика ›</button></div>';
+ spotlightSetting(fix.card,{hint:`<strong>${h(item.title)}</strong><p>${fix.how}</p>${deep}`});
+ requestAnimationFrame(()=>requestAnimationFrame(()=>document.querySelector('[data-deep-check]')?.addEventListener('click',()=>{spotlightSetting('set-предполётная-проверка',{hint:'<strong>Глубокая диагностика</strong><p>Нажмите <b>«Глубокая диагностика»</b> внизу этого блока: MONO проверит микрофон, звук и архив по шагам и подскажет, что именно мешает.</p>'});setTimeout(()=>document.querySelector('.preflight-deep')?.focus({preventScroll:true}),500)},{once:true})));
+}
 function mountSystemStatus(model){
  const button=$('#system-status');if(!button||button.dataset.ready)return;button.dataset.ready='1';button.hidden=false;
  const text=button.querySelector('.system-status-text');
  const LABEL={ok:'Системы в норме',advisory:'Системы в норме',caution:'Есть ограничения',warning:'Нужно действие'};
- model.subscribe(result=>{const notable=result.checks.filter(item=>['caution','warning'].includes(item.level));button.dataset.level=result.level;
+ model.subscribe(result=>{lastPreflight=result;const notable=result.checks.filter(item=>['caution','warning'].includes(item.level));button.dataset.level=result.level;
   text.textContent=notable.length>1?`${LABEL[result.level]} · ${notable.length}`:LABEL[result.level]||'Системы';
   button.title=notable.length?notable.map(item=>'• '+item.title).join('\n'):'Все проверки пройдены. Нажмите, чтобы открыть подробности.'});
- button.onclick=()=>{go('settings');requestAnimationFrame(()=>document.getElementById('set-предполётная-проверка')?.scrollIntoView({block:'start'}))};
+ button.onclick=()=>openLimitation(lastPreflight);
  const again=()=>void model.run().catch(()=>{});
  setInterval(()=>{if(!document.hidden)void model.run({force:true}).catch(()=>{})},5*60*1000);
  addEventListener('focus',again);addEventListener('online',again);navigator.mediaDevices?.addEventListener?.('devicechange',()=>void model.run({force:true}).catch(()=>{}));
  again();
 }
 const SETTINGS_ICONS={'Как пользоваться MONO':'#i-sparkle','Незавершённое копирование':'#i-refresh'};
-const SETTINGS_SHORT={'Подключение Groq':'Groq','Архив и резервные копии':'Архив','Страховочная дорожка':'Страховка','Предполётная проверка':'Проверка','Как пользоваться MONO':'Справка','Незавершённое копирование':'Копирование','Источники записи':'Источники'};
+const SETTINGS_SHORT={'Работа в фоне':'В фоне','Обработка аудио':'Обработка','Подключение Groq':'Groq','Архив и резервные копии':'Архив','Страховочная дорожка':'Страховка','Предполётная проверка':'Проверка','Как пользоваться MONO':'Справка','Незавершённое копирование':'Копирование','Источники записи':'Источники'};
 const SETTINGS_TONES={'Источники записи':'red','Страховочная дорожка':'pink','Предполётная проверка':'green','Как пользоваться MONO':'blue','Незавершённое копирование':'orange'};
 function orderSettings(){
  const grid=$('#view-settings .settings-grid');if(!grid)return;
@@ -652,6 +777,32 @@ function orderSettings(){
 }
 /** Offline update: the person picks a .monoupdate file; MONO checks its signature and every file's
  * hash, unpacks it beside the app, and MONO.exe switches to it on the next start. */
+/** Groq spend: what the records now in the library cost, and the all-time total (the ledger keeps
+ * deleted records too). Rubles use the person's rate. */
+async function renderUsage(){
+ const host=$('#groq-usage');if(!host)return;let usage=null;
+ try{const response=await fetch('/api/usage',{cache:'no-store'});if(response.ok)usage=await response.json()}catch{}
+ const set=(key,text)=>{const node=host.querySelector(`[data-usage="${key}"]`);if(node)node.textContent=text};
+ if(!usage){host.hidden=true;return}host.hidden=false;
+ const rub=usd=>`${money(usd*settings.rate)} ₽`,time=seconds=>{const m=Math.round(seconds/60);return m<60?`${m} мин`:`${Math.floor(m/60)} ч ${String(m%60).padStart(2,'0')} мин`};
+ const present=new Set(state.records.filter(r=>!r.trashed).map(r=>r.id));let usd=0,billed=0,audio=0,count=0;
+ for(const [id,entry] of Object.entries(usage.byRecord||{}))if(present.has(id)){usd+=entry.usd;billed+=entry.billedSeconds;audio+=entry.audioSeconds;count+=entry.transcriptions}
+ const total=usage.total||{};
+ set('library-rub',count||usd?rub(usd):'0 ₽');set('library-sub',count||usd?`${count} ${plural(count,'расшифровка','расшифровки','расшифровок')} · звук ${time(audio)} · оплачено ${Math.round(billed)} с`:'ещё не было');
+ set('total-rub',total.transcriptions||total.usd?rub(total.usd):'0 ₽');set('total-sub',total.transcriptions||total.usd?`${total.transcriptions} ${plural(total.transcriptions,'расшифровка','расшифровки','расшифровок')} · ${total.requests} ${plural(total.requests,'запрос','запроса','запросов')} · $${(total.usd||0).toFixed(3)}`:'ещё не было');
+}
+/** At start, without a Groq key (and setup already done): one calm offer per launch. Declining says
+ * where to connect it later; «Не напоминать» is the same switch as in Settings → Groq. */
+async function remindGroq(local){
+ if(prefs.get('groqReminder')===false)return;
+ let status=null;try{status=await new CredentialsClient(local).status()}catch{return}
+ if(status.configured||status.managed||status.errorCode)return;
+ const where='Подключить можно в любой момент: Настройки → Groq.';
+ modal('Подключить расшифровку?','<p>Groq превращает записи в текст. Это бесплатно: нужен только ключ — его можно получить за 3 минуты по пошаговой инструкции.</p><p class="field-hint">Записывать и слушать можно и без него.</p>',[
+  {text:'Подключить',primary:true,run:()=>{closeModal();go('settings');spotlightSetting('groq-settings-card')}},
+  {text:'Не сейчас',run:()=>{closeModal();notify(where)}},
+  {text:'Не напоминать',run:()=>{closeModal();prefs.set('groqReminder',false);syncPreferenceControls();notify(where+' Напоминания можно вернуть там же.')}}]);
+}
 async function renderUpdateCard(){
  const card=$('#update-card');if(!card)return;let info=null;
  try{const local=await localLibraryClient();info=local?await local.json('/update'):null}catch{}
@@ -724,19 +875,20 @@ function renderRoute({preserveDrawer=false}={}){
   const [requested,id]=location.hash.slice(1).split('/');
   let view=['dashboard','record','library','jobs','editor','settings'].includes(requested)?requested:'dashboard';
   if(state.view==='settings'&&view!=='settings')credentialForm?.clear();
-  if(view==='settings'&&state.view!=='settings'){void credentialForm?.refresh();orderSettings();void renderUpdateCard()}
+  if(view==='settings'&&state.view!=='settings'){void credentialForm?.refresh();orderSettings();void renderUpdateCard();void renderUsage()}
   if(view==='editor'){
     if(!id||!state.records.some(r=>r.id===id)){view='library';}
     else if(state.editorId!==id||state.view!=='editor'){state.editorId=id;state.editorPage=0;void renderEditor(id).catch(e=>notify(e.message,'error'))}
   }
  if(state.view==='editor'&&view!=='editor'){if(audioReview){audioReview.player.pause();void audioReview.cancel(true).catch(e=>notify(e.message,'error'))}else $('#audio-element').pause()}
   const prior=state.view;state.view=view;try{if(view!=='editor')localStorage.setItem('mono-last-view',view)}catch{}
+  floatingRecorder.update(floatingRecorder.active,floatingRecorder.value);
   if(prior!==view||(view==='editor'&&session.read()?.id!==state.editorId))session.save({view,id:view==='editor'?state.editorId:null,scroll:0,time:0});
   if(view==='settings')document.querySelectorAll('.archive-recovery-notice').forEach(notice=>notice.remove());
   $$('.view').forEach(el=>el.classList.toggle('active',el.id==='view-'+view));
   $$('.nav-link[data-view]').forEach(el=>(el.classList.toggle('selected',el.dataset.view===view),el.setAttribute('aria-current',el.dataset.view===view?'page':'false')));
   const titles={dashboard:'Обзор',record:'Запись',library:'Библиотека',jobs:'Расшифровка',editor:'Редактор',settings:'Настройки'};
-  $('#current-breadcrumb').textContent=titles[view];
+  document.title=view==='dashboard'?'MONO':`${titles[view]} · MONO`;
   if(!preserveDrawer)closeDrawer('route');
   if(view==='library')renderLibrary();
   if(view==='jobs')renderJobs();
@@ -762,7 +914,7 @@ async function refresh(){
   state.records=(await listRecordings()).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   // Local archive: a transcript finishing in the background is announced once.
   if(storageDetails().local)for(const r of state.records){const before=lastStatus.get(r.id);lastStatus.set(r.id,r.status);
-   if(before&&['queued','processing','uploading'].includes(before)&&r.status==='completed'){notify(`Расшифровка «${r.title}» готова`,'info',{text:'Открыть',run:()=>go('editor',r.id)});if(document.hidden)markDoneWhileAway()}}
+   if(before&&['queued','processing','uploading'].includes(before)&&r.status==='completed'){notify(`Расшифровка «${r.title}» готова`,'info',{text:'Открыть',run:()=>go('editor',r.id)});transcriptionDone(r);if(document.hidden)markDoneWhileAway()}}
   void nameFromTranscripts().then(changed=>{if(changed){renderDashboard();if(state.view==='library')renderLibrary()}}).catch(()=>{});
   $('#nav-count').textContent=state.records.length;
   renderDashboard();
@@ -790,6 +942,48 @@ function renderDashboard(){
     `<div class="empty-state">${icon('mic')}<strong>Здесь появятся ваши записи</strong><p>Начните запись или загрузите аудио,<br>чтобы создать первую транскрипцию.</p><button class="btn btn-outline btn-small" data-go="record">Открыть студию ${icon('arrow')}</button></div>`;
 }
 let libraryGeneration=0;
+/** Library: grid or list (Settings → Библиотека or the toggle), and a selection mode for bulk work. */
+const selection={active:false,ids:new Set()};let libraryVisible=[];
+function applyLibraryPrefs(){const list=$('#library-list');if(list)list.dataset.view=prefs.get('libraryView');const sort=$('#library-sort');if(sort&&!sort.dataset.touched){sort.value=prefs.get('librarySort');syncControls()}}
+function reflectSelection(){
+ const bar=$('#bulk-bar'),button=$('#library-select-mode');if(!bar)return;bar.hidden=!selection.active;button.setAttribute('aria-pressed',String(selection.active));button.classList.toggle('is-on',selection.active);
+ const n=selection.ids.size;setText('#bulk-count',n?`Выбрано: ${n}`:'Выберите записи');for(const id of ['bulk-transcribe','bulk-rename','bulk-export','bulk-delete'])$('#'+id).disabled=!n;
+ setText('#bulk-all',n&&n===libraryVisible.length?'Снять выбор':'Выбрать все');$('#library-list').classList.toggle('is-selecting',selection.active);
+}
+function setSelecting(on){selection.active=on;if(!on)selection.ids.clear();state.librarySignature=null;void renderLibrary();reflectSelection()}
+const chosenRecords=()=>state.records.filter(r=>selection.ids.has(r.id)&&!r.trashed);
+async function bulkTranscribe(){
+ const records=chosenRecords().filter(r=>r.status!=='completed'&&!['queued','processing','uploading'].includes(r.status)&&(r.size||0)>0);
+ if(!records.length){notify('Все выбранные записи уже расшифрованы или в очереди.');return}
+ if(!state.health?.groq){notify('Сначала подключите Groq.','error',{text:'Подключить',run:()=>spotlightSetting('groq-settings-card')});return}
+ const seconds=records.reduce((sum,r)=>sum+Math.max(10,r.duration||0),0),cost=money(seconds/3600*MODEL_PRICE*settings.rate);
+ modal('Расшифровать выбранные?',`<p>${records.length} ${plural(records.length,'запись','записи','записей')} (${durationText(seconds)}) будут отправлены в Groq по очереди. Оценка: ≈ ${cost} ₽.</p><p class="field-hint">Звук уходит в Groq только после этого подтверждения.</p>`,
+  [{text:'Отправить в Groq',primary:true,run:async()=>{for(const rec of records){try{await startTranscription(rec,{confirmed:true})}catch(error){notify(`«${rec.title}»: ${error.message}`,'error')}}notify(`В очереди на расшифровку: ${records.length}.`,'info',{text:'Открыть очередь',run:()=>go('jobs')});setSelecting(false)}}]);
+}
+async function bulkRename(){
+ const records=chosenRecords();let renamed=0,without=0;
+ for(const rec of records){if(rec.status!=='completed'){without++;continue}
+  try{const segments=storageDetails().local?(await transcriptPage(rec.id,{offset:0,limit:12})).segments:(await getRecording(rec.id))?.transcript?.segments;const title=suggestTitle(segments);if(!title||title===rec.title)continue;await getRecording(rec.id);await patchRecording(rec.id,{title});renamed++}catch(error){notify(`«${rec.title}»: ${error.message}`,'error')}}
+ await refresh();notify(renamed?`Переименовано по содержанию: ${renamed}.`+(without?` Без расшифровки (пропущены): ${without}.`:''):without?'Умное название берётся из текста: сначала расшифруйте эти записи.':'Названия уже соответствуют содержанию.');setSelecting(false);
+}
+async function bulkExport(){
+ const records=chosenRecords();if(!records.length)return;const local=await localLibraryClient();
+ const safe=name=>String(name||'Запись').replace(/[\\/:*?"<>|\u0000-\u001f]+/g,' ').trim().slice(0,100)||'Запись';
+ const textOf=async rec=>{if(rec.status!=='completed')return null;const segments=[];for(let offset=0;offset<20000;offset+=500){const page=storageDetails().local?await transcriptPage(rec.id,{offset,limit:500}):{segments:(await getRecording(rec.id))?.transcript?.segments||[]};segments.push(...(page?.segments||[]));if(!storageDetails().local||!page?.segments?.length||page.segments.length<500)break}return segments.map(s=>`[${shortTime(s.start||0)}] ${String(s.text||'').trim()}`).join('\n')};
+ let folder=null;try{if(window.showDirectoryPicker)folder=await window.showDirectoryPicker({mode:'readwrite',id:'mono-export'})}catch(error){if(error.name==='AbortError')return}
+ const toast=notify(`Экспорт: 0 из ${records.length}…`);let done=0;
+ for(const rec of records){
+  try{const base=safe(rec.title),response=local?await fetch(local.audioURL(rec.id)):null,blob=response?.ok?await response.blob():null,ext=(blob?.type||rec.mime||'').includes('flac')?'flac':(blob?.type||rec.mime||'').includes('wav')?'wav':(blob?.type||rec.mime||'').includes('mpeg')?'mp3':(blob?.type||rec.mime||'').includes('mp4')?'m4a':'webm',text=await textOf(rec);
+   const files=[...(blob?[[`${base}.${ext}`,blob]]:[]),...(text?[[`${base}.txt`,new Blob([text],{type:'text/plain;charset=utf-8'})]]:[])];
+   for(const [name,data] of files){if(folder){const handle=await folder.getFileHandle(name,{create:true}),writable=await handle.createWritable();await writable.write(data);await writable.close()}else{const a=document.createElement('a');a.href=URL.createObjectURL(data);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}}
+   done++;}catch(error){notify(`«${rec.title}»: ${error.message}`,'error')}}
+ notify(`Экспортировано: ${done} из ${records.length}${folder?` — в папку «${folder.name}»`:''}.`);setSelecting(false);void toast;
+}
+function bulkDelete(){
+ const records=chosenRecords();if(!records.length)return;
+ modal('Вы уверены?',`<p>${records.length===1?`Запись «${h(records[0].title)}» будет`:`${records.length} ${plural(records.length,'запись','записи','записей')} будут`} перемещены в корзину. Их можно вернуть из корзины.</p>`,
+  [{text:'Удалить',primary:true,danger:true,run:async()=>{let moved=0;for(const rec of records){try{await removeRecording(rec.id);moved++}catch(error){notify(`«${rec.title}»: ${error.message}`,'error')}}await refresh();notify(`В корзине: ${moved}.`);setSelecting(false)}}]);
+}
 async function renderLibrary(){
   const generation=++libraryGeneration;
   const q=$('#library-search').value.trim().toLowerCase(),filter=$('#library-filter').value,sort=$('#library-sort').value;
@@ -807,16 +1001,17 @@ async function renderLibrary(){
   if(sort==='name')records=records.sort((a,b)=>a.title.localeCompare(b.title,'ru'));
   if(sort==='longest')records=records.sort((a,b)=>(b.duration||0)-(a.duration||0));
   const totalSeconds=records.reduce((sum,r)=>sum+(r.duration||0),0);
-  $('#library-count').textContent=`${records.length} ${({one:'ЗАПИСЬ',few:'ЗАПИСИ'})[new Intl.PluralRules('ru-RU').select(records.length)]||'ЗАПИСЕЙ'}`+(totalSeconds>0?` · ${durationText(totalSeconds)}`:'');
-  const signature=JSON.stringify([q,filter,sort,settings.rate,records.map(r=>[r.id,r.version,r.status,r.title,r.trashed])]);
+  $('#library-count').textContent=`${records.length} ${({one:'запись',few:'записи'})[new Intl.PluralRules('ru-RU').select(records.length)]||'записей'}`+(totalSeconds>0?` · ${durationText(totalSeconds)}`:'');
+  libraryVisible=records.filter(r=>!r.trashed).map(r=>r.id);
+  const signature=JSON.stringify([q,filter,sort,settings.rate,prefs.get('libraryView'),selection.active,[...selection.ids],records.map(r=>[r.id,r.version,r.status,r.title,r.trashed])]);
   if(signature===state.librarySignature&&$('#library-list').childElementCount)return; // identical list: no DOM rebuild
   state.librarySignature=signature;
-  $('#library-list').innerHTML=records.length?records.map(r=>`
-   <article class="record-card glass"><div class="record-card-head"><span class="item-icon">${icon('file')}</span><span class="record-status">${statusLabel(r)}</span></div>
-   <h3 title="${h(r.title)}">${h(r.title)}</h3><p class="record-sub">${fmtDate(r.createdAt)} · ${h(r.source||'Импорт')}</p>
-   <div class="record-card-meta"><div><span>ДЛИТЕЛЬНОСТЬ</span><strong title="${pausedSeconds(r)?'С паузами: '+durationText(r.duration):''}">${durationText(recordedSeconds(r))}</strong></div><div><span>РАЗМЕР</span><strong>${sizeText(r.size||0)}</strong></div><div><span>СТОИМОСТЬ · ОЦЕНКА</span><strong>${money((r.estimatedUSD||0)*settings.rate)} ₽</strong></div></div>
-   <div class="record-card-actions">${r.trashed?`<button class="btn btn-outline btn-small" data-restore="${h(r.id)}" data-version="${r.version}">Восстановить ${icon('refresh')}</button>`:`<button class="btn ${r.status==='completed'?'btn-primary':'btn-outline'} btn-small" data-open="${h(r.id)}">${r.status==='completed'?'Открыть текст':'Открыть запись'} ${icon('arrow')}</button>
-   <div class="card-icon-actions"><button class="icon-btn" data-rename="${h(r.id)}" title="Переименовать" aria-label="Переименовать запись">${icon('file')}</button><button class="icon-btn" data-delete="${h(r.id)}" title="Удалить запись" aria-label="Удалить запись">${icon('trash')}</button></div>`}</div></article>`).join(''):
+  $('#library-list').innerHTML=records.length?records.map(r=>{const picked=selection.ids.has(r.id);return `
+   <article class="record-card glass${picked?' is-selected':''}" data-card="${h(r.id)}">${selection.active&&!r.trashed?`<label class="lib-check" title="Выбрать"><input type="checkbox" data-select="${h(r.id)}"${picked?' checked':''} aria-label="Выбрать «${h(r.title)}»"><span aria-hidden="true">${icon('check')}</span></label>`:''}
+   <h3 title="${h(r.title)}">${h(r.title)}</h3>
+   <div class="record-card-meta"><div><span>Длительность</span><strong title="${pausedSeconds(r)?'С паузами: '+durationText(r.duration):''}">${durationText(recordedSeconds(r))}</strong></div><div><span>Размер</span><strong>${sizeText(r.size||0)}</strong></div><div><span>Дата</span><strong>${fmtDate(r.createdAt)}</strong></div><div><span>Стоимость</span><strong>${money((r.estimatedUSD||0)*settings.rate)} ₽</strong></div></div>
+   <div class="record-card-actions">${r.trashed?`<button class="btn btn-outline btn-small" data-restore="${h(r.id)}" data-version="${r.version}">Восстановить ${icon('refresh')}</button>`:`<div class="card-icon-actions"><button class="morph-btn" data-rename="${h(r.id)}" aria-label="Переименовать запись">${icon('pencil')}<span>Переименовать</span></button><button class="morph-btn morph-danger" data-delete="${h(r.id)}" aria-label="Удалить запись">${icon('trash')}<span>Удалить</span></button></div>
+   <button class="btn ${r.status==='completed'?'btn-primary':'btn-outline'} btn-small" data-open="${h(r.id)}">${r.status==='completed'?'Открыть текст':'Открыть запись'} ${icon('arrow')}</button>`}</div></article>`}).join(''):
    `<div class="glass" style="grid-column:1/-1;border-radius:18px"><div class="empty-state">${icon('library')}<strong>${filter==='trash'?'Корзина пуста':($('#library-search').value.trim()?'Ничего не найдено':'Записей пока нет')}</strong><p>${filter==='trash'?'Здесь можно восстановить удалённые записи.':$('#library-search').value.trim()?`По запросу «${h($('#library-search').value.trim())}» ничего нет. Очистите поиск или измените фильтр.`:state.records.length?'Измените фильтр.':'Создайте запись или импортируйте аудио.'}</p>${filter==='trash'?'':`<button class="btn btn-outline btn-small" data-go="record">Студия записи ${icon('arrow')}</button>`}</div></div>`;
 }
 /** «~3 мин» from the pace so far (segments done since this job started on this screen). */
@@ -895,10 +1090,29 @@ function chosenMime(){
  const opts=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'];
  return opts.find(t=>MediaRecorder.isTypeSupported(t))||'';
 }
+/** Settings → «Запись» → «Обратный отсчёт»: 3-2-1 over the timer; any click or Esc cancels. */
+async function countdownBeforeRecording(){
+ const seconds=Number(prefs.get('countdown'))||0;if(!seconds)return true;
+ const box=$('#record-countdown');box.hidden=false;let cancelled=false;const cancel=()=>{cancelled=true};
+ addEventListener('keydown',cancel,{once:true});box.onclick=cancel;
+ try{for(let n=seconds;n>0&&!cancelled;n--){box.textContent=String(n);box.classList.remove('tick');void box.offsetWidth;box.classList.add('tick');await new Promise(r=>setTimeout(r,1000))}}
+ finally{box.hidden=true;removeEventListener('keydown',cancel)}
+ if(cancelled)notify('Запись не начата.');return !cancelled;
+}
+/** Settings → «Проверять звук перед каждой записью»: five seconds of level, then the take starts. */
+async function soundCheckBeforeRecording(){
+ return await new Promise(resolve=>{
+  modal('Проверка звука','<p>Скажите несколько слов: шкала ниже должна двигаться.</p><div class="level-track modal-level"><div id="modal-level-fill"></div></div><p class="field-hint" id="modal-level-hint">Слушаем 5 секунд…</p>',[{text:'Звук есть — начать',primary:true,run:()=>done(true)}]);
+  let settled=false,timer=0;const done=value=>{if(settled)return;settled=true;clearInterval(timer);stopLevelCheck();resolve(value)};
+  $('#modal-actions').firstElementChild.onclick=()=>{closeModal();done(false)};
+  state.previewRequested=true;state.previewDone=null;syncLevelPreview();const started=Date.now();let heard=false;
+  timer=setInterval(()=>{const fill=$('#level-fill'),target=$('#modal-level-fill');if(!target){done(false);return}target.style.width=fill?.style.width||'0%';if(parseFloat(fill?.style.width||'0')>25)heard=true;const left=Math.max(0,5-Math.floor((Date.now()-started)/1000));setText('#modal-level-hint',heard?'Звук есть ✓':left?`Слушаем ${left} с…`:'Звук не слышен — проверьте микрофон в «Источниках записи».')},120);
+ });
+}
 async function beginRecord(){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
  if(storageDetails().local&&!storageDetails().libraryConfigured&&!await ensureArchive('record'))return;
- if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');if(!nativeController.snapshot.connected){try{await nativeController.connect()}catch(error){notify(`Модуль записи не отвечает${error?.code?' ('+error.code+')':''}. Откройте «Настройки → Предполётная проверка».`,'error');void preflight?.run({force:true}).catch(()=>{});return}}const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}await startWithAutopilot(await autopilotBeforeStart(await captureSources.selection()))}catch(error){if(error?.name!=='AbortError')void notifyCaptureError(error.message||'Не удалось начать запись.',error.code)}return}
+ if(storageDetails().local){try{if(!nativeController)throw new Error('Подключите папку архива перед записью.');if(!nativeController.snapshot.connected){try{await nativeController.connect()}catch(error){notify(`Модуль записи не отвечает${error?.code?' ('+error.code+')':''}. Откройте «Настройки → Предполётная проверка».`,'error');void preflight?.run({force:true}).catch(()=>{});return}}const blocked=await preflight?.gate();if(blocked){notify(`${blocked.title}. ${blocked.action||blocked.detail||''}`.trim(),'error');void preflight.run({force:true}).catch(()=>{});return}if(prefs.get('checkSoundEveryTime')&&!await soundCheckBeforeRecording())return;if(!await countdownBeforeRecording())return;await startWithAutopilot(await autopilotBeforeStart(await captureSources.selection()))}catch(error){if(error?.name!=='AbortError')void notifyCaptureError(error.message||'Не удалось начать запись.',error.code)}return}
  if(state.recordBusy||state.capture)return;
  state.recordBusy=true;
  let capture=null;
@@ -1066,7 +1280,7 @@ function connectGroq(onConnected){
   host.querySelector('input')?.focus();
  }).catch(error=>notify(error.message,'error'));
 }
-async function startTranscription(rec){
+async function startTranscription(rec,{confirmed=false}={}){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
  if(!rec||rec.status==='recording'||!rec.size){notify('Нет доступного аудиофайла.','error');return}
  if(['queued','processing','uploading'].includes(rec.status)){go('jobs');return}
@@ -1085,6 +1299,7 @@ async function startTranscription(rec){
   modal(storageDetails().local&&!state.health?.groq?'Подключите распознавание':'Обработка пока недоступна',storageDetails().local?'Подключите Groq в настройках. Запись уже сохранена; после подключения можно продолжить с неё.':'Проверьте подключение Groq и обработчик аудио на сервере приложения.',
    [{text:'Открыть настройки',primary:true,run:()=>go('settings')}]);return;
  }
+ if(confirmed){await uploadTranscription(rec,false,selection);return} // the person already agreed for the whole batch
  const est=rec.duration?money((Math.max(10,rec.duration)/3600)*MODEL_PRICE*settings.rate):'определяется после анализа файла';
  modal('Отправить аудио в Groq?',`Вариант: ${selection.title}.\n\nАудио будет передано через сервер приложения в Groq для распознавания русской речи.\n\nОриентировочная стоимость: ${est}${rec.duration?' ₽':''} (фактическая сумма может отличаться).\n\nПодтвердите отправку, если участники встречи дали необходимые согласия.`,
   [{text:'Отправить и обработать',primary:true,run:()=>uploadTranscription(rec,false,selection)}]);
@@ -1160,7 +1375,7 @@ async function pollJobs(){
      // Client has durably persisted transcript, so delete the server copy.
      const ack=await jobFetch(`/api/jobs/${r.jobId}/ack`,{method:'POST'}).catch(()=>null);
      if(ack?.ok||ack?.status===404)await patchRecording(r.id,{serverAcked:true});
-     notifyLater(`Расшифровка «${r.title}» готова`);changed=true;if(document.hidden)markDoneWhileAway();
+     notifyLater(`Расшифровка «${r.title}» готова`);transcriptionDone(r);changed=true;if(document.hidden)markDoneWhileAway();
     }else{
      const nextStatus=job.status;
      if(JSON.stringify(r.job)!==JSON.stringify({stage:job.stage,completed:job.completed,total:job.total,error:job.error})||
@@ -1209,10 +1424,10 @@ function renameRecord(rec){
 }
 function deleteRecord(rec){
  if(storageDetails().local){
-  // Reversible, so no confirmation dialog: move to trash and offer «Вернуть» (HIG: prefer undo over confirm).
-  void (async()=>{try{const result=await removeRecording(rec.id);await refresh();
+  // Asked first (the person wants a clear «Вы уверены?»), and still undoable from the trash.
+  modal('Вы уверены?',`<p>Запись «${h(rec.title)}» будет перемещена в корзину. Её можно вернуть.</p>`,[{text:'Удалить',primary:true,danger:true,run:()=>void (async()=>{try{const result=await removeRecording(rec.id);await refresh();
    notify(`«${rec.title.length>40?rec.title.slice(0,39)+'…':rec.title}» в корзине`,'info',{text:'Вернуть',run:async()=>{await restoreRecording(rec.id,result.version);await refresh();notify('Запись восстановлена.')}});
-  }catch(e){notify(e.message,'error')}})();return;
+  }catch(e){notify(e.message,'error')}})()}]);return;
  }
  modal('Удалить запись?',`«${h(rec.title)}» будет удалена вместе с локальным аудио и транскриптом. Если запись отправлялась в Groq, приложение также удалит связанные временные файлы локального сервера.\n\nУдаление нельзя отменить.`,
  [{text:'Удалить безвозвратно',primary:true,run:async()=>{
@@ -1301,6 +1516,8 @@ function renderInsight(rec){
  const smart=$('#smart-speed'),saved=savedSeconds(view?.skips);smart.hidden=saved<5;
  smart.setAttribute('aria-pressed',String(smartSpeed));smart.textContent=smartSpeed?`Без пауз · −${shortTime(saved)}`:'Без пауз';
 }
+let tourOpen=false;
+function startTour(){if(tourOpen)return;tourOpen=true;closeModal();document.querySelectorAll('#toast-area .toast').forEach(toast=>{if(/тур/.test(toast.textContent))toast.remove()});runTour({go,reduceMotion:()=>document.body.classList.contains('reduce-motion')||matchMedia('(prefers-reduced-motion: reduce)').matches,onDone:()=>{tourOpen=false;prefs.set('tourDone',true)}})}
 function plural(n,one,few,many){const a=n%10,b=n%100;return a===1&&b!==11?one:a>=2&&a<=4&&(b<12||b>14)?few:many}
 /** Smart Speed: while playing, a long pause between phrases is jumped over (keeps 0.45 s of air). */
 function smartSkip(time){
@@ -1587,7 +1804,7 @@ async function importPortableLibrary(){
 async function checkHealth(){
  try{
   const res=await fetch('/api/health',{signal:AbortSignal.timeout(4500),cache:'no-store'});if(!res.ok)throw new Error('Сервер недоступен');
-  state.health=await res.json();applyAccent(state.health.accent);offerUpdate(state.health.update);if(state.health.version)setText('#sidebar-version',state.health.version);
+  state.health=await res.json();applyAccent(state.health.accent);offerUpdate(state.health.update);if(state.health.version){setText('#sidebar-version',state.health.version);setText('#about-version','MONO '+state.health.version)}
   $('#settings-health').textContent=`FFmpeg: ${state.health.ffmpeg?'доступен':'нет'} · FFprobe: ${state.health.ffprobe?'доступен':'нет'} · Groq: ${state.health.groq?'ключ задан':'не настроен'}`;
  }catch{
   state.health=null;$('#settings-health').textContent='Сервер недоступен. Запись, локальная библиотека и редактор работают автономно.';
@@ -1597,6 +1814,7 @@ function wire(){
  $$('.nav-link[data-view]').forEach(b=>b.addEventListener('click',()=>go(b.dataset.view)));
  document.addEventListener('click',e=>{
   const goButton=e.target.closest('[data-go]');if(goButton){go(goButton.dataset.go);return}
+  if(selection.active){const card=e.target.closest('[data-card]');if(card&&!e.target.closest('[data-restore]')){const id=card.dataset.card,rec=state.records.find(r=>r.id===id);if(rec&&!rec.trashed){e.preventDefault();selection.ids.has(id)?selection.ids.delete(id):selection.ids.add(id);card.classList.toggle('is-selected',selection.ids.has(id));const box=card.querySelector('[data-select]');if(box)box.checked=selection.ids.has(id);reflectSelection()}return}}
   const open=e.target.closest('[data-open]');if(open){void openRecord(open.dataset.open);return}
   const renamed=e.target.closest('[data-rename]');if(renamed){renameRecord(state.records.find(r=>r.id===renamed.dataset.rename));return}
   const deleted=e.target.closest('[data-delete]');if(deleted){deleteRecord(state.records.find(r=>r.id===deleted.dataset.delete));return}
@@ -1609,10 +1827,18 @@ function wire(){
     const rec=state.records.find(r=>r.id===state.editorId);if(rec)renderEditorSegments(rec);
   }
  });
- $('#theme-toggle').onclick=()=>{settings.theme=document.body.dataset.theme==='dark'?'light':'dark';saveSettings();applyTheme();$('#setting-theme').value=settings.theme;syncControls();syncSegmented()};
+
  for(const id of ['hero-import','record-import','library-import'])$('#'+id).onclick=()=>withInput(importFile);
- $('#start-record').onclick=()=>{stopLevelCheck();return beginRecord()};$('#mark-record').onclick=markMoment;
- document.addEventListener('visibilitychange',syncLevelPreview);
+ $('#start-record').onclick=()=>{stopLevelCheck();return beginRecord()};
+ $('#start-tour')?.addEventListener('click',startTour);
+ $('#library-select-mode').onclick=()=>setSelecting(!selection.active);$('#bulk-done').onclick=()=>setSelecting(false);
+ $('#bulk-all').onclick=()=>{if(selection.ids.size&&selection.ids.size===libraryVisible.length)selection.ids.clear();else libraryVisible.forEach(id=>selection.ids.add(id));state.librarySignature=null;void renderLibrary();reflectSelection()};
+ $('#bulk-transcribe').onclick=()=>void bulkTranscribe();$('#bulk-rename').onclick=()=>void bulkRename();$('#bulk-export').onclick=()=>void bulkExport();$('#bulk-delete').onclick=bulkDelete;
+ $('#library-sort').addEventListener('change',()=>{$('#library-sort').dataset.touched='1'});applyLibraryPrefs();reflectSelection();
+ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&selection.active&&$('#modal').hidden){setSelecting(false)}});
+ // Paused with audio: keep this take in the library and start a fresh one.
+ $('#new-record').onclick=async()=>{const button=$('#new-record');button.disabled=true;try{await endRecord();for(let i=0;i<150&&(captureActive(nativeController?.snapshot)||state.capture);i++)await new Promise(r=>setTimeout(r,100));notify('Первая запись сохранена в библиотеке. Начинаем новую.');await beginRecord()}finally{button.disabled=false}};$('#mark-record').onclick=markMoment;
+ document.addEventListener('visibilitychange',syncLevelPreview);document.addEventListener('visibilitychange',()=>floatingRecorder.update(floatingRecorder.active,floatingRecorder.value));
  $('#level-check').onclick=()=>{if(state.previewUntil>Date.now()||levelPreview.wanted){stopLevelCheck();return}state.previewRequested=true;state.previewDone=null;syncLevelPreview()};
  document.addEventListener('keydown',e=>{if(e.key!=='?'||e.ctrlKey||e.metaKey||!$('#modal').hidden||e.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;e.preventDefault();showShortcuts()});
  document.addEventListener('keydown',e=>{if(e.defaultPrevented||e.ctrlKey||e.metaKey||e.altKey||e.repeat||e.code!=='KeyB'||!state.capture)return;if(e.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;e.preventDefault();markMoment()});$('#pause-record').onclick=pauseRecord;$('#stop-record').onclick=endRecord;
@@ -1632,7 +1858,7 @@ function wire(){
  a.addEventListener('loadedmetadata',()=>{if(!audioReview)$('#player-total').textContent=shortTime(a.duration)});
  $('#player-seek').oninput=e=>{if(audioReview){void audioReview.player.seek(audioReview.player.snapshot.duration*Number(e.target.value)/1000).catch(error=>{if(error.name!=='AbortError')notify(error.message,'error')})}else if(Number.isFinite(a.duration))a.currentTime=a.duration*Number(e.target.value)/1000};
  $('#player-speed').onchange=e=>{if(audioReview)audioReview.player.setRate(Number(e.target.value));else a.playbackRate=Number(e.target.value)};
- $('#setting-theme').value=settings.theme;$('#setting-theme').onchange=e=>{settings.theme=e.target.value;saveSettings();applyTheme();syncSegmented()};mountSegmented();
+ $('#setting-theme').value=settings.theme;$('#setting-theme').onchange=e=>{settings.theme=e.target.value;saveSettings();applyTheme();syncSegmented()};mountSegmented();bindPreferences();
  {const prompt=$('#setting-prompt'),count=$('#setting-prompt-count'),update=()=>{count.textContent=`${prompt.value.length} / ${prompt.maxLength}`};prompt.addEventListener('input',update);update()}
  $('#setting-profile').value=settings.profile;$('#setting-profile').onchange=e=>{settings.profile=e.target.value;saveSettings()};
  $('#setting-prompt').value=settings.prompt;$('#setting-prompt').dispatchEvent(new Event('input'));$('#setting-prompt').oninput=e=>{settings.prompt=e.target.value;saveSettings()};
@@ -1689,8 +1915,10 @@ function wire(){
  matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(settings.theme==='system')applyTheme()});
 }
 async function init(){
+ guardSingleWindow({onFocus:()=>{try{window.focus()}catch{}document.body.classList.add('window-called');setTimeout(()=>document.body.classList.remove('window-called'),900)},onDuplicate:showDuplicateWindow});
  applyTheme();wire();enhanceUI();await openDB();
- const local=await localLibraryClient();if(local)credentialForm=mountCredentials($('#groq-credentials'),{client:new CredentialsClient(local),onChange:value=>{$('#resume-transcription').hidden=!value.configured||!pendingTranscriptionId;void checkHealth()}});else $('#groq-settings-card').hidden=true;
+ const local=await localLibraryClient();if(local)credentialForm=mountCredentials($('#groq-credentials'),{client:new CredentialsClient(local),onChange:value=>{$('#resume-transcription').hidden=!value.configured||!pendingTranscriptionId;groqConfigured=Boolean(value.configured||value.managed);const guide=$('#groq-guide');if(guide&&!guide.dataset.touched)guide.open=!groqConfigured;void checkHealth()}});else $('#groq-settings-card').hidden=true;
+ $('#groq-guide summary')?.addEventListener('click',()=>{$('#groq-guide').dataset.touched='1'},{once:true});
  $('#resume-transcription').onclick=async()=>{const id=pendingTranscriptionId;if(!id)return;await checkHealth();const rec=state.records.find(r=>r.id===id);if(rec){pendingTranscriptionId=null;$('#resume-transcription').hidden=true;go('editor',id);void startTranscription(rec)}};
  const storage=storageDetails(),available=!storage.local||storage.libraryAvailable;
  const orphaned=available?await listRecordings():[];
@@ -1706,6 +1934,9 @@ async function init(){
  if(local)startAudioCare();
  if(local)await showSetup();
  if(local&&!setupWindow&&storageDetails().libraryAvailable)void offerLegacyImport();
+ // Offers nobody asked for are left out of automated runs (navigator.webdriver): they would cover the window under test.
+ if(local&&!setupWindow&&!navigator.webdriver)void remindGroq(local);
+ if(local&&!setupWindow&&!navigator.webdriver&&!prefs.get('tourDone'))setTimeout(()=>notifyLater('В MONO много нового — посмотрите короткий тур.','info',{text:'Показать тур',run:startTour}),2500);
  announceRecovered();
  if(storage.transfer?.state==='running')void runLibraryTransfer(null,storage.transfer);
  else if(state.view!=='settings'&&(storage.transfer||storage.transferRecoveryError)){
