@@ -325,3 +325,25 @@ test('Play at the end starts over; settings fill the width with an index and a t
  await page.waitForFunction(()=>{const value=Number(document.querySelector('#player-seek').value);return value>0&&value<700},null,{timeout:5000});
  assert.deepEqual(page.errors,[]);
 });
+
+test('after closing MONO in the middle of a record, the next start opens that record at the same place; after finishing, it opens the overview',{skip},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('impulse')});const page=await open(t,server);
+ const {execFileSync}=await import('node:child_process');const dir=mkdtempSync(path.join(tmpdir(),'mono-resume-')),wav=path.join(dir,'long.wav');
+ execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','sine=frequency=220:duration=30','-ar','16000',wav]);
+ await page.click('.nav-link[data-view=library]');const [chooser]=await Promise.all([page.waitForEvent('filechooser'),page.click('#library-import')]);await chooser.setFiles(wav);
+ let list=[];for(let i=0;i<60&&!list.length;i++){list=await records(page);if(!list.length)await new Promise(r=>setTimeout(r,500))}const [record]=list;assert.ok(record);
+ await page.evaluate(id=>{location.hash='#editor/'+id},record.id);await page.waitForSelector('#player-toggle');
+ await page.waitForFunction(()=>document.querySelector('#player-total')?.textContent?.includes('00:30'),null,{timeout:15000});
+ await page.evaluate(()=>{const s=document.querySelector('#player-seek');s.value='400';s.dispatchEvent(new Event('input',{bubbles:true}));s.dispatchEvent(new Event('change',{bubbles:true}))});
+ await page.waitForTimeout(2600);
+ const context=page.context();await page.close();
+ // the next start: the launcher opens the plain address, without a view in it
+ const next=await context.newPage();next.errors=[];next.on('pageerror',error=>next.errors.push(error.message));await next.goto(server.url+'/');
+ await next.waitForFunction(id=>location.hash==='#editor/'+encodeURIComponent(id),record.id,{timeout:15000});
+ await next.waitForFunction(()=>{const v=Number(document.querySelector('#player-seek').value);return v>300&&v<500},null,{timeout:10000});
+ // finishing: back to the library, close, start again → overview
+ await next.click('#view-editor .back-link');await next.waitForFunction(()=>location.hash==='#library');await next.close();
+ const third=await context.newPage();await third.goto(server.url+'/');await third.waitForFunction(()=>document.querySelector('#nav-count'));await third.waitForTimeout(1500);
+ assert.ok(['','#dashboard','#library'].includes(await third.evaluate(()=>location.hash))&&!(await third.evaluate(()=>location.hash)).startsWith('#editor'));
+ assert.deepEqual(next.errors,[]);
+});

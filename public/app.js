@@ -684,6 +684,37 @@ function statusLabel(r){
  if(r.status==='migrating')return 'Перенос не завершён';
   return 'Аудио сохранено';
 }
+/** Session: where the person is, so that closing MONO and starting it again continues the work.
+ * Unfinished work = a record left open in the editor (or a transcription still running). Someone who
+ * went back to the library or the overview has finished, and MONO starts on the overview. */
+const session={
+ key:'mono-session-2',restoring:false,
+ read(){try{return JSON.parse(localStorage.getItem(this.key)||'null')}catch{return null}},
+ save(patch){if(this.restoring)return;try{const value={...(this.read()||{}),...patch,at:Date.now()};localStorage.setItem(this.key,JSON.stringify(value))}catch{}},
+ resumable(records){
+  const last=this.read();if(!last||Date.now()-(last.at||0)>30*24*3600*1000)return null;
+  if(last.view==='editor'&&last.id){const record=records.find(r=>r.id===last.id);if(record&&!record.trashed)return {hash:`editor/${encodeURIComponent(last.id)}`,...last}}
+  if(last.view==='jobs'&&records.some(r=>['uploading','queued','processing'].includes(r.status)))return {hash:'jobs',...last};
+  return null;
+ },
+ async restore(last){
+  this.restoring=true;
+  try{
+   if(last.view==='editor'){
+    for(let i=0;i<60&&!(state.editorId===last.id&&document.querySelector('#editor-segments,#view-editor .editor-workspace'));i++)await new Promise(r=>setTimeout(r,100));
+    await new Promise(r=>setTimeout(r,250));
+    if(last.time>0){const time=last.time;if(audioReview?.player)await audioReview.player.seek(time).catch(()=>{});else{const a=$('#audio-element');const apply=()=>{try{a.currentTime=time}catch{}};a.readyState>=1?apply():a.addEventListener('loadedmetadata',apply,{once:true})}}
+   }
+   if(last.scroll>0)$('#main').scrollTop=last.scroll;
+  }finally{this.restoring=false}
+ },
+ watch(){
+  if(this.watching)return;this.watching=true;let queued=0;
+  $('#main').addEventListener('scroll',()=>{if(queued)return;queued=setTimeout(()=>{queued=0;this.save({scroll:Math.round($('#main').scrollTop)})},400)},{passive:true});
+  setInterval(()=>{if(state.view!=='editor'||document.hidden)return;const time=audioReview?.player?audioReview.player.time:$('#audio-element')?.currentTime;if(Number.isFinite(time))this.save({time:Math.round(time*10)/10})},2000);
+  addEventListener('pagehide',()=>{const time=audioReview?.player?audioReview.player.time:$('#audio-element')?.currentTime;this.save({scroll:Math.round($('#main').scrollTop),...(state.view==='editor'&&Number.isFinite(time)?{time:Math.round(time*10)/10}:{})})});
+ }
+};
 function escapeNext(){return location.hash.slice(1).split('/')[0]}
 function go(view,id=null){
   location.hash=view==='editor'&&id?`#editor/${encodeURIComponent(id)}`:`#${view}`;
@@ -699,7 +730,8 @@ function renderRoute({preserveDrawer=false}={}){
     else if(state.editorId!==id||state.view!=='editor'){state.editorId=id;state.editorPage=0;void renderEditor(id).catch(e=>notify(e.message,'error'))}
   }
  if(state.view==='editor'&&view!=='editor'){if(audioReview){audioReview.player.pause();void audioReview.cancel(true).catch(e=>notify(e.message,'error'))}else $('#audio-element').pause()}
-  state.view=view;try{if(view!=='editor')localStorage.setItem('mono-last-view',view)}catch{}
+  const prior=state.view;state.view=view;try{if(view!=='editor')localStorage.setItem('mono-last-view',view)}catch{}
+  if(prior!==view||(view==='editor'&&session.read()?.id!==state.editorId))session.save({view,id:view==='editor'?state.editorId:null,scroll:0,time:0});
   if(view==='settings')document.querySelectorAll('.archive-recovery-notice').forEach(notice=>notice.remove());
   $$('.view').forEach(el=>el.classList.toggle('active',el.id==='view-'+view));
   $$('.nav-link[data-view]').forEach(el=>(el.classList.toggle('selected',el.dataset.view===view),el.setAttribute('aria-current',el.dataset.view===view?'page':'false')));
@@ -1666,9 +1698,9 @@ async function init(){
   await patchRecording(r.id,{status:'interrupted',duration:r.duration||Math.max(0,((r.lastChunkAt||Date.parse(r.createdAt))-Date.parse(r.createdAt))/1000)});
  }
  if(available)await refresh();
- // Reopen where the person left off (a fresh launch has no hash).
- try{const last=localStorage.getItem('mono-last-view');if(!location.hash&&last&&['dashboard','record','library','jobs','settings'].includes(last))history.replaceState(null,'','#'+last)}catch{}
- renderRoute({preserveDrawer:true});await checkHealth();
+ // A fresh launch has no hash: reopen the record the person was working on, as they left it.
+ const resume=!location.hash?session.resumable(state.records):null;if(resume)history.replaceState(null,'','#'+resume.hash);
+ renderRoute({preserveDrawer:true});if(resume)void session.restore(resume);session.watch();await checkHealth();
  updateStorageSettings();
  if(local&&available)await initializeNative(local).catch(error=>notify(error.message,'error'));
  if(local)startAudioCare();
