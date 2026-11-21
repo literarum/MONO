@@ -386,7 +386,8 @@ async function backgroundAudioCare(reason='timer'){
   announceNewWarnings(result);
   const privacy=result?.checks?.find(check=>check.id==='mic-privacy');
   if(privacy&&!audioCare.told.has('privacy')){audioCare.told.add('privacy');notify(privacy.title+'. '+privacy.action,'error',fixFor('ACCESS_DENIED'))}
- }finally{audioCare.running=false}
+ }catch{/* the core is restarting: the connection banner already says so; the next round retries */}
+ finally{audioCare.running=false}
  if(reason==='timer'&&performance.now()>10*60e3)void weeklyScrub().catch(()=>{}); // never competes with start-up
 }
 function startAudioCare(){
