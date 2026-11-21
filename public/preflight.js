@@ -54,7 +54,7 @@ export const recentErrors=()=>blackBox.slice(-20);
 export function remember(kind,message){blackBox.push({at:new Date().toISOString(),kind,message:String(message||'').replace(/[A-Za-z]:\\[^\s]+|\/(?:home|Users)\/[^\s]+/g,'(путь)').slice(0,240)});if(blackBox.length>30)blackBox.shift()}
 if(typeof addEventListener==='function'){addEventListener('error',event=>remember('error',event.message));addEventListener('unhandledrejection',event=>remember('rejection',event.reason?.code||event.reason?.message||event.reason))}
 const SUMMARY={ok:'Всё готово к записи',advisory:'Готово к записи',caution:'Есть ограничения',warning:'Нужно действие'};
-export function mountPreflight(host,{model,onError=()=>{},compact=false,onDeep=null}){
+export function mountPreflight(host,{model,onError=()=>{},compact=false,onDeep=null,onOpen=null}){
  host.classList.add('preflight');
  host.innerHTML=`<div class="preflight-head"><span class="preflight-light" aria-hidden="true"></span><strong class="preflight-summary" role="status" aria-live="polite">Проверяем системы…</strong></div><ul class="preflight-list"></ul><div class="inline-actions"><button type="button" class="btn btn-outline btn-small preflight-run">Проверить снова</button>${compact?'':'<button type="button" class="btn btn-outline btn-small preflight-copy">Скопировать диагностику</button>'}${!compact&&onDeep?'<button type="button" class="btn btn-primary btn-small preflight-deep">Глубокая диагностика</button>':''}</div>`;
  const list=host.querySelector('.preflight-list'),summary=host.querySelector('.preflight-summary'),button=host.querySelector('.preflight-run');
@@ -63,7 +63,10 @@ export function mountPreflight(host,{model,onError=()=>{},compact=false,onDeep=n
   const visible=compact?result.checks.filter(item=>item.level!=='ok'):result.checks;
   list.replaceChildren(...visible.map(item=>{const row=document.createElement('li');row.className='preflight-item';row.dataset.level=item.level;const title=document.createElement('strong');title.textContent=item.title;const detail=document.createElement('span');detail.textContent=[item.detail,item.action].filter(Boolean).join(' ');row.append(title,detail);
    if(item.fix&&model.fix){const fix=document.createElement('button');fix.type='button';fix.className='btn btn-primary btn-small preflight-fix';fix.textContent='Исправить';fix.onclick=async()=>{fix.disabled=true;try{await model.fix(item.fix)}catch(error){onError(error)}finally{fix.disabled=false}};row.append(fix)}
+   // A limitation leads to the place where it is fixed (with a hint): the whole row is a button.
+   if(onOpen&&item.level!=='ok'){row.classList.add('is-actionable');row.tabIndex=0;row.setAttribute('role','button');row.setAttribute('aria-label',`${item.title}: показать, как исправить`);const go=event=>{if(event.target.closest('.preflight-fix'))return;onOpen(result,item.id)};row.addEventListener('click',go);row.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();go(event)}});const more=document.createElement('span');more.className='preflight-more';more.textContent='Как исправить ›';row.append(more)}
    return row}));
+  if(onOpen){const head=host.querySelector('.preflight-head');const actionable=result.checks.some(item=>item.level==='caution'||item.level==='warning');head.classList.toggle('is-actionable',actionable);head.onclick=actionable?()=>onOpen(result,null):null;head.tabIndex=actionable?0:-1;head.onkeydown=actionable?event=>{if(event.key==='Enter'){event.preventDefault();onOpen(result,null)}}:null}
   list.hidden=!visible.length;
  };
  const unsubscribe=model.subscribe(render);

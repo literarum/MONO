@@ -22,6 +22,14 @@ export async function openOnboarding({library,storage,configure,choose,ensureNat
  // The folder step is done once the archive is configured. The capture module starts in the background
  // (its first launch on Windows can take many seconds) and is awaited only by the sound step.
  const archiveReady=async()=>{await onArchive();if(closed)return;void ensureNative().catch(()=>{});await next()};
+ // Declining Groq is fine; the person is shown exactly where to connect it later.
+ function later(){
+  cleanup();body.replaceChildren();actions.replaceChildren();message.textContent='';
+  title.textContent='Хорошо, подключите позже';intro.textContent='Записывать и слушать можно уже сейчас. Когда захотите превращать записи в текст, Groq подключается в два щелчка:';
+  const path=document.createElement('div');path.className='setup-path';path.innerHTML='<span class="setup-path-step"><svg><use href="#i-settings"/></svg>Настройки</span><span class="setup-path-arrow" aria-hidden="true">›</span><span class="setup-path-step">Groq</span><span class="setup-path-arrow" aria-hidden="true">›</span><span class="setup-path-step is-final">Вставить ключ и «Подключить»</span>';body.append(path);
+  const tip=document.createElement('p');tip.className='field-hint';tip.textContent='Там же — пошаговая инструкция, как бесплатно получить ключ. MONO напомнит о подключении при следующем запуске (напоминание можно выключить в настройках).';body.append(tip);
+  button('Понятно',next,true);title.focus({preventScroll:true});
+ }
  async function render(){
   // Nothing left to set up (e.g. the archive was reconnected and setup is already complete): close,
   // never leave an empty panel with the previous step's title.
@@ -37,7 +45,7 @@ export async function openOnboarding({library,storage,configure,choose,ensureNat
    const formHost=document.createElement('div');body.append(formHost);form=mountCredentials(formHost,{client:keys,onChange:value=>{key=value;continueButton.hidden=!value.configured}});
    if(helpTemplate)body.append(helpTemplate.cloneNode(true));
    const continueButton=button('Продолжить',next,true);continueButton.hidden=!key.configured;
-   button('Подключить позже',async()=>{await save({keySkipped:true});await next()});
+   button('Подключить позже',async()=>{await save({keySkipped:true});later()});
   }else if(step==='sound'){
    title.textContent='Проверим звук';intro.textContent='Выберите источник и запишите пять секунд.';
    message.textContent='Запускаем модуль записи…';let native=null,failure=null;

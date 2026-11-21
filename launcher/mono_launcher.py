@@ -585,12 +585,22 @@ def focus_window(url: str, token: str, timeout: float = 2.0) -> bool:
         return False
 
 
+# Settings → «Работа в фоне», as the server last reported them.
+BACKGROUND = {"lingerSeconds": 10, "finishWork": True}
+
+
 def browser_clients(url: str, token: str, timeout: float = 2.0) -> tuple[int, int] | None:
-    """(open MONO pages, background tasks still running), or None if the server did not answer."""
+    """(open MONO pages, background tasks still running), or None if the server did not answer.
+    Also refreshes BACKGROUND from the answer."""
     request = urllib.request.Request(url + "/api/launcher/clients", headers={"X-Mono-Launcher-Token": token})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             answer = json.loads(response.read(4096))
+            linger = answer.get("lingerSeconds")
+            if isinstance(linger, int) and linger in (10, 60, 300, 1800):
+                BACKGROUND["lingerSeconds"] = linger
+            if isinstance(answer.get("finishWork"), bool):
+                BACKGROUND["finishWork"] = answer["finishWork"]
             return int(answer.get("pages", 0)), int(answer.get("busy", 0))
     except (OSError, ValueError, TypeError, urllib.error.URLError, http.client.HTTPException):
         return None
@@ -598,16 +608,17 @@ def browser_clients(url: str, token: str, timeout: float = 2.0) -> tuple[int, in
 
 def browser_pages(url: str, token: str, timeout: float = 2.0) -> int | None:
     """How many MONO pages are open (their live event streams), or None if the server did not answer.
-    A transcription still being sent or saved counts as a page, so closing the window does not cut it."""
+    A transcription still being sent or saved counts as a page (unless the person turned that off),
+    so closing the window does not cut it."""
     answer = browser_clients(url, token, timeout)
     if answer is None:
         return None
     pages, busy = answer
-    return pages or (1 if busy else 0)
+    return pages or (1 if busy and BACKGROUND["finishWork"] else 0)
 
 
 def serve_browser(url: str, logger: logging.Logger, pages, *, first_wait: float = 180, idle_wait: float = 10,
-                  poll: float = 1.0, clock=time.monotonic, sleep=time.sleep) -> None:
+                  poll: float = 1.0, clock=time.monotonic, sleep=time.sleep, linger=None) -> None:
     """Browser mode: MONO runs while its window is open and quits completely soon after it is closed.
     `idle_wait` seconds without a page (a reload reconnects within one or two) end it; so does no page
     at all within `first_wait` seconds of the start. The gap is counted in polls as well as in time,
@@ -632,7 +643,7 @@ def serve_browser(url: str, logger: logging.Logger, pages, *, first_wait: float 
             empty = 0
         else:
             empty += 1
-            limit = idle_wait if seen else first_wait
+            limit = (linger() if linger else idle_wait) if seen else first_wait
             if now - last > limit and empty * poll >= limit:
                 logger.info("Browser mode: no MONO page open for %.0f s; quitting", now - last)
                 return
@@ -678,7 +689,7 @@ def launch_window(folder: Path, url: str, logger: logging.Logger,
             pass
     logger.info("GUI: a window of the person's own browser")
     open_in_browser(url)
-    serve_browser(url, logger, pages or (lambda: None))
+    serve_browser(url, logger, pages or (lambda: None), linger=lambda: BACKGROUND["lingerSeconds"])
 
 
 def current_engine(folder: Path) -> str | None:

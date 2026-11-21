@@ -3,12 +3,12 @@ import copy,re
 from local_core.paths import atomic_json
 from local_core.protocol import CoreError
 
-DEFAULTS={'version':1,'onboarding':{'completed':False,'keySkipped':False,'soundTested':False},'capture':{'mode':'browser','inputId':None,'outputId':None},'dismissedHints':[]}
+DEFAULTS={'version':1,'onboarding':{'completed':False,'keySkipped':False,'soundTested':False},'capture':{'mode':'browser','inputId':None,'outputId':None},'dismissedHints':[],'background':{'lingerSeconds':10,'finishWork':True,'keepAwake':True}}
 def invalid():raise CoreError('INVALID_PREFERENCES','Проверьте настройки приложения')
 class Preferences:
     def __init__(self,config):self.config=config
     def validate(self,patch):
-        if not isinstance(patch,dict) or set(patch)-{'onboarding','capture','dismissedHints'}:invalid()
+        if not isinstance(patch,dict) or set(patch)-{'onboarding','capture','dismissedHints','background'}:invalid()
         if 'onboarding' in patch:
             value=patch['onboarding']
             if not isinstance(value,dict) or set(value)-set(DEFAULTS['onboarding']) or any(type(item) is not bool for item in value.values()):invalid()
@@ -18,6 +18,11 @@ class Preferences:
             if 'mode' in value and value['mode'] not in ['mic','system','both','browser']:invalid()
             for key in ['inputId','outputId','browserInputId']:
                 if key in value and value[key] is not None and (not isinstance(value[key],str) or not 1<=len(value[key])<=4096):invalid()
+        if 'background' in patch:
+            value=patch['background']
+            if not isinstance(value,dict) or set(value)-set(DEFAULTS['background']):invalid()
+            if 'lingerSeconds' in value and (type(value['lingerSeconds']) is not int or value['lingerSeconds'] not in [10,60,300,1800]):invalid()
+            if any(key in value and type(value[key]) is not bool for key in ['finishWork','keepAwake']):invalid()
         if 'dismissedHints' in patch:
             values=patch['dismissedHints']
             if not isinstance(values,list) or len(values)>100 or any(not isinstance(item,str) or not re.fullmatch('[a-z0-9-]{1,100}',item) for item in values) or len(set(values))!=len(values):invalid()

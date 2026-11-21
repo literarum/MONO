@@ -20,6 +20,7 @@ import {LevelPreview,addBookmark,SaveClock,BatteryWatch,DEFAULT_TITLE,suggestTit
 import {speakerFor,SPEAKER_NAMES} from './speakers.js';
 import {paragraphs,isDoubtful,nextDoubtful,silenceSkips,skipTarget,savedSeconds,cleanText,transcriptStats,learnTerms,rememberTerms,promptWithTerms} from './intelligence.js';
 import {guardSingleWindow} from './window-guard.js';
+import {prefs,PREF_DEFAULTS,ACCENTS,applyVisualPrefs} from './prefs.js';
 import {RETRYABLE as AUTOPILOT_RETRY,recoverySteps,pickInput,needsRepair,REPAIR} from './autopilot.js';
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -37,9 +38,12 @@ const money=n=>new Intl.NumberFormat('ru-RU',{minimumFractionDigits:2,maximumFra
 const MODEL_PRICE=.04;
 const DEFAULTS={theme:'system',profile:'standard',rate:83.0784,prompt:''};
 const settings={...DEFAULTS,...readSettings()};
+// The theme follows Windows unless the person chose one in Settings; the old top-bar switch saved a
+// fixed theme without asking, so that choice is reset to «Как в системе» once.
+try{if(localStorage.getItem('mono-theme-system-1')!=='1'){settings.theme='system';localStorage.setItem('mono-theme-system-1','1');localStorage.setItem('mono-settings',JSON.stringify(settings))}}catch{}
 const state={records:[],view:'dashboard',recorder:null,recordingId:null,capture:null,health:null,
   editorId:null,editorPage:0,playerURL:null,pollBusy:false,recordBusy:false,pendingEdits:new Map(),failedEdits:new Map(),visibleSegments:new Map()};
-let credentialForm=null,pendingTranscriptionId=null;
+let credentialForm=null,pendingTranscriptionId=null,groqConfigured=null;
 let nativeController=null,captureSources=null,nativeCompleted=null,nativeFrame=0,nativeInitializing=null,setupWindow=null,setupOpening=null;
 let mediaInterlock=null,audioReview=null,preflight=null;
 const levelPreview=new LevelPreview(),saveClock=new SaveClock(),battery=new BatteryWatch({onWarn:message=>notify(message,'error')});
@@ -111,8 +115,8 @@ function captureHealthHint(value){
  const quiet=levels.length&&levels.every(level=>level.rms>0.001&&level.rms<0.004);
  if(!quiet)captureHealth.quietSince=0;else if(!captureHealth.quietSince)captureHealth.quietSince=now;
  if(captureHealth.quietSince&&now-captureHealth.quietSince>20000&&!captureHealth.levelTried){captureHealth.levelTried=true;void raiseQuietInput()}
- if(now-captureHealth.lastSound>10000){if(!captureHealth.repairTried){captureHealth.repairTried=true;healthEvent('SILENCE',inputName());void silenceRepair(value)}return ' · ⚠ Микрофон молчит больше 10 с — проверьте выбранный вход и его громкость'}
- if(now<captureHealth.clipUntil)return ' · ⚠ Перегрузка входа — уменьшите усиление микрофона или отодвиньтесь';
+ if(now-captureHealth.lastSound>10000){if(!captureHealth.repairTried){captureHealth.repairTried=true;healthEvent('SILENCE',inputName());void silenceRepair(value)}return prefs.get('silenceWarning')?' · ⚠ Микрофон молчит больше 10 с — проверьте выбранный вход и его громкость':''}
+ if(now<captureHealth.clipUntil&&prefs.get('clipWarning'))return ' · ⚠ Перегрузка входа — уменьшите усиление микрофона или отодвиньтесь';
  return '';
 }
 /** Ten seconds of silence while recording: if Windows muted the microphone or set its level
@@ -163,13 +167,13 @@ function onNativeState(value){
  $('#stop-record').disabled=value.state==='stopping';$('#pause-record').innerHTML=icon(value.state==='paused'?'play':'pause')+(value.state==='paused'?' Продолжить':' Пауза');
  setText('#record-saved',!value.connected?(active?'Связь потеряна. Остановка и сохранение не подтверждены.':'Подключаемся к модулю записи…'+(nativeController?.lastError?.code?` (${nativeController.lastError.code})`:'')):value.state==='requesting'?'Подключаем источник звука…':value.state==='stopping'?'Завершаем запись и проверяем сохранение…':active?'Подтверждено в архиве '+(value.state==='recording'?saveClock.text():'')+captureHealthHint(value):state.footerNote?state.footerNote:value.errorCode?captureFailureMessage(value):'');
  updateRecordUI();
- if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId));syncLevelPreview();
+ if(!active&&value.recordId&&nativeCompleted!==value.recordId){nativeCompleted=value.recordId;void saveMarks(value.recordId).then(()=>applyContinuationTitle(value.recordId)).then(()=>applyTitleTemplate(value.recordId));syncLevelPreview();
   if(wasActive&&value.state==='interrupted')markRecoveredSeen(value.recordId);
   if(wasActive&&value.errorCode)healthEvent('CAPTURE_ERROR',[value.errorCode,value.failureDetails?.stage,value.failureDetails?.nativeCode].filter(Boolean).join(' ')); // the journal sees module failures too
   // A start that never captured audio leaves an empty «Прервано · 0 с» record: it is noise, not a meeting.
   if(wasActive&&value.state==='interrupted'&&!(Number(value.savedBytes)>0)&&!(Number(value.savedFrames)>0)&&!(Number(value.duration)>0)){const empty=value.recordId;setTimeout(()=>{void getRecording(empty,{transcript:false}).then(r=>r&&!(r.size>0)&&!(r.duration>0)?removeRecording(empty).then(()=>refresh()):null).catch(()=>{})},1500)}
   if(wasActive&&value.state==='interrupted'&&!(Number(value.savedBytes)>0)&&AUTOPILOT_RETRY.has(value.errorCode)&&autopilot.selection&&autopilot.steps.length){void autopilotRetry(value.errorCode).then(handled=>{if(!handled)void notifyCaptureError(captureFailureMessage(value),value.errorCode)});void refresh().catch(()=>{});return}
-  if(wasActive&&value.state==='interrupted'&&value.errorCode==='DEVICE_LOST'&&(Number(value.savedBytes)>0||Number(value.savedFrames)>0)){void continueAfterDeviceChange(value.recordId);return}void refresh().catch(e=>notify(e.message,'error'));if(wasActive&&!setupWindow)notify(value.state==='ready'?'Запись сохранена в библиотеке.':captureFailureMessage(value),value.state==='ready'?'info':'error',value.state==='ready'?{text:state.health?.groq?'Расшифровать':'Открыть',run:async()=>{go('editor',value.recordId);if(state.health?.groq){await refresh();const rec=state.records.find(r=>r.id===value.recordId);if(rec)void startTranscription(rec)}}}:fixFor(value.errorCode))}
+  if(wasActive&&value.state==='interrupted'&&value.errorCode==='DEVICE_LOST'&&(Number(value.savedBytes)>0||Number(value.savedFrames)>0)){void continueAfterDeviceChange(value.recordId);return}void refresh().catch(e=>notify(e.message,'error'));if(wasActive&&!setupWindow)notify(value.state==='ready'?'Запись сохранена в библиотеке.':captureFailureMessage(value),value.state==='ready'?'info':'error',value.state==='ready'?{text:state.health?.groq&&prefs.get('offerTranscription')?'Расшифровать':'Открыть',run:async()=>{go('editor',value.recordId);if(state.health?.groq&&prefs.get('offerTranscription')){await refresh();const rec=state.records.find(r=>r.id===value.recordId);if(rec)void startTranscription(rec)}}}:fixFor(value.errorCode))}
 }
 /** Autopilot (Apple: recover quietly; ask only when nothing else can help).
  * Before a microphone take: Windows' own view of the microphone. A muted endpoint or a
@@ -275,7 +279,7 @@ async function initializeNative(local){
   const help=document.createElement('article');help.className='glass settings-card';mountHelp(help);$('#view-settings .settings-grid').append(help);
   // Pre-flight check: compact (problems only) in the studio, full in settings.
   preflight=new Preflight(local);$('#system-health-card').hidden=true; // the pre-flight check below covers the same systems in depth
-  const studioCheck=document.createElement('div');studioCheck.className='glass side-card';$('.studio-side').prepend(studioCheck);mountPreflight(studioCheck,{model:preflight,compact:true,onError:()=>{}});
+  const studioCheck=document.createElement('div');studioCheck.className='glass side-card';$('.studio-side').prepend(studioCheck);mountPreflight(studioCheck,{model:preflight,compact:true,onError:()=>{},onOpen:openLimitation});
   const settingsCheck=document.createElement('article');settingsCheck.className='glass settings-card';settingsCheck.innerHTML='<div class="settings-card-icon"><svg><use href="#i-check"/></svg></div><h2>Предполётная проверка</h2><div></div>';$('#view-settings .settings-grid').prepend(settingsCheck);mountPreflight(settingsCheck.lastElementChild,{model:preflight,onError:error=>notify(error.message,'error'),onDeep:()=>void runDeepDiagnostics()});mountSystemStatus(preflight);
  }
  await nativeController.connect();
@@ -306,8 +310,8 @@ function saveSettings(){try{localStorage.setItem('mono-settings',JSON.stringify(
 function applyTheme(){
   const dark=settings.theme==='system'?(!matchMedia('(prefers-color-scheme: light)').matches):settings.theme==='dark';
   document.body.dataset.theme=dark?'dark':'light';
-  $('#theme-toggle').innerHTML=icon(dark?'sun':'moon');
-  document.querySelector('meta[name="theme-color"]').content=dark?'#08090b':'#f1f1ef';
+
+  document.querySelector('meta[name="theme-color"]').content=dark?'#0b1a33':'#e8f0fb';
 }
 /** During a take, once a minute: will the disk hold the rest of it? (warn at ~30 and ~5 min) */
 const diskWatch={timer:0,warned:new Set()};
@@ -375,6 +379,21 @@ function startAudioCare(){
  setInterval(()=>{if(!document.hidden)void backgroundAudioCare('timer')},180000);
 }
 /** A transcript finished while the window was in the background: the title says so until return. */
+/** A transcription is ready: a soft two-note chime and, while MONO is in the background, a Windows
+ * notification — each only if the person kept it on in Settings → «Работа в фоне». */
+let doneAnnounced=new Set();
+function transcriptionDone(record){
+ if(doneAnnounced.has(record.id))return;doneAnnounced.add(record.id);void renderUsage();
+ if(prefs.get('doneSound'))try{const context=new AudioContext(),now=context.currentTime;for(const [i,f] of [[0,880],[1,1318.5]]){const osc=context.createOscillator(),gain=context.createGain();osc.type='sine';osc.frequency.value=f;gain.gain.setValueAtTime(0,now+i*.14);gain.gain.linearRampToValueAtTime(.09,now+i*.14+.02);gain.gain.exponentialRampToValueAtTime(.0001,now+i*.14+.5);osc.connect(gain).connect(context.destination);osc.start(now+i*.14);osc.stop(now+i*.14+.55)}setTimeout(()=>void context.close(),1200)}catch{}
+ if(prefs.get('doneNotification')&&document.hidden&&'Notification' in window&&Notification.permission==='granted')try{const note=new Notification('Расшифровка готова',{body:record.title||'Запись',icon:'/icon-192.png',tag:'mono-'+record.id});note.onclick=()=>{window.focus();go('editor',record.id);note.close()}}catch{}
+}
+/** The name a new recording gets, from Settings → «Запись». The core names it «Запись 21.11.2026 14:05». */
+async function applyTitleTemplate(id){
+ const template=prefs.get('titleTemplate');if(template==='date')return;
+ try{const rec=await getRecording(id,{transcript:false});if(!rec||!DEFAULT_TITLE.test(rec.title||''))return;const at=new Date(rec.createdAt||Date.now());
+  const day=at.toLocaleDateString('ru-RU',{day:'numeric',month:'long'}),time=at.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+  await patchRecording(id,{title:template==='meeting'?`Встреча · ${day}, ${time}`:`Голосовая заметка · ${day}, ${time}`});await refresh()}catch{}
+}
 function markDoneWhileAway(){if(!document.title.startsWith('✓')){const previous=document.title;document.title='✓ Расшифровка готова — MONO';document.addEventListener('visibilitychange',()=>{if(!document.hidden&&document.title.startsWith('✓'))document.title=previous},{once:true})}}
 /** «?» — every keyboard shortcut in one sheet. */
 function showShortcuts(){
@@ -406,7 +425,9 @@ function offerUpdate(update){
  notifyLater(`Доступна версия MONO ${update.version}. Установка поверх сохранит записи и настройки.`,'info',{text:'Скачать',run:()=>{window.open(update.url,'_blank','noopener')}});
 }
 /** Windows accent colour as the app tint, when it is readable on both themes (WCAG 3:1 for UI). */
+let systemAccent=null;
 function applyAccent(accent){
+ systemAccent=accent;const chosen=ACCENTS[prefs.get('accent')];if(chosen){document.body.style.setProperty('--tint',chosen);document.body.style.setProperty('--tint-strong',chosen);return}
  const match=/^#([0-9a-f]{6})$/i.exec(accent||'');if(!match){document.body.style.removeProperty('--tint');document.body.style.removeProperty('--tint-strong');return}
  const n=parseInt(match[1],16),lin=c=>(c/=255)<=.03928?c/12.92:((c+.055)/1.055)**2.4,L=.2126*lin(n>>16&255)+.7152*lin(n>>8&255)+.0722*lin(n&255);
  const contrast=(a,b)=>(Math.max(a,b)+.05)/(Math.min(a,b)+.05);
@@ -430,7 +451,7 @@ function notify(message,type='info',action=null){
     entry={el,timer:null};active.set(key,entry);
   }
   clearTimeout(entry.timer);
-  if(!(type==='error'&&action?.sticky))entry.timer=setTimeout(()=>{entry.el.remove();if(active.get(key)===entry)active.delete(key)},action?12000:type==='error'?9000:6500);
+  if(!(type==='error'&&action?.sticky))entry.timer=setTimeout(()=>{leaveToast(entry.el);if(active.get(key)===entry)active.delete(key)},(action?12000:type==='error'?9000:6500)*(typeof prefs!=='undefined'&&prefs.get('toastDuration')==='long'?1.8:1));
 }
 /** «Busy» microphone: name the app Windows says is using it, instead of a generic guess. */
 async function notifyCaptureError(message,code){
@@ -468,6 +489,8 @@ function fixFor(code){
  if(code&&storageDetails().local)return {text:'Диагностика',run:()=>void runDeepDiagnostics()};
  return null;
 }
+/** A notice leaves the way it came: it slides back and fades (no animation API — it just goes). */
+function leaveToast(el){const reduce=typeof document!=='undefined'&&document.body?.classList?.contains?.('reduce-motion');if(!el.animate||reduce){el.remove();return}const run=el.animate([{opacity:1,transform:'none'},{opacity:0,transform:'translateY(8px) scale(.98)'}],{duration:220,easing:'cubic-bezier(.4,0,1,1)'});run.onfinish=()=>el.remove()}
 let modalReturnFocus=null;
 function modal(title,body,actions=[]){
   modalReturnFocus=document.activeElement;
@@ -610,7 +633,44 @@ let windowState=null;
 async function loadWindowState(){try{const local=await localLibraryClient();windowState=local?await local.json('/window'):null}catch{windowState=null}return windowState}
 /** Settings read top to bottom by importance: connection and recognition first, the system check and
  * help last; an unfinished archive copy always comes first. */
-const SETTINGS_ORDER=['Незавершённое копирование','Подключение Groq','Распознавание','Обработка аудио','Источники записи','Оформление','Архив и резервные копии','Обновление','Страховочная дорожка','Расходы','Предполётная проверка','Состояние системы','Как пользоваться MONO'];
+const SETTINGS_ORDER=['Незавершённое копирование','Подключение Groq','Расходы','Распознавание','Обработка аудио','Источники записи','Запись','Оформление','Библиотека','Работа в фоне','Архив и резервные копии','Обновление','Страховочная дорожка','Предполётная проверка','Состояние системы','Как пользоваться MONO','О MONO'];
+/** Every control with data-pref / data-server-pref is bound to its setting: the control shows the
+ * value, a change saves it and applies it at once. Server settings are those the launcher reads. */
+let serverPrefs={};
+const typed=(key,raw)=>typeof PREF_DEFAULTS[key]==='number'||/lingerSeconds/.test(key)?Number(raw):raw;
+function prefValue(control){const server=control.dataset.serverPref;if(server){const [group,key]=server.split('.');return serverPrefs?.[group]?.[key]}return prefs.get(control.dataset.pref)}
+function syncPreferenceControls(){
+ for(const control of document.querySelectorAll('[data-pref],[data-server-pref]')){
+  const value=prefValue(control);
+  if(control.matches('input[type=checkbox]'))control.checked=Boolean(value);
+  else if(control.matches('select')){control.value=String(value);}
+  else for(const button of control.querySelectorAll('button[data-value]')){const on=button.dataset.value===String(value);button.setAttribute('aria-checked',String(on));button.tabIndex=on?0:-1}
+ }
+ syncControls();
+}
+async function savePreference(control,raw){
+ const server=control.dataset.serverPref;
+ if(server){const [group,key]=server.split('.'),value=control.matches('input[type=checkbox]')?raw:typed(server,raw);const local=await localLibraryClient();if(!local)return;
+  try{serverPrefs=await local.json('/preferences',{method:'PATCH',body:{[group]:{[key]:value}}});notifyQuiet('Сохранено')}catch(error){notify(error.message,'error')}syncPreferenceControls();return}
+ const key=control.dataset.pref;prefs.set(key,control.matches('input[type=checkbox]')?raw:typed(key,raw));
+}
+function bindPreferences(){
+ for(const control of document.querySelectorAll('[data-pref],[data-server-pref]')){
+  if(control.dataset.bound)continue;control.dataset.bound='1';
+  if(control.matches('input[type=checkbox]'))control.addEventListener('change',()=>void savePreference(control,control.checked));
+  else if(control.matches('select'))control.addEventListener('change',()=>void savePreference(control,control.value));
+  else{const buttons=[...control.querySelectorAll('button[data-value]')];
+   control.addEventListener('click',event=>{const button=event.target.closest('button[data-value]');if(button)void savePreference(control,button.dataset.value)});
+   control.addEventListener('keydown',event=>{const step={ArrowRight:1,ArrowDown:1,ArrowLeft:-1,ArrowUp:-1}[event.key];if(!step)return;event.preventDefault();const index=buttons.findIndex(button=>button.getAttribute('aria-checked')==='true'),next=buttons[(index+step+buttons.length)%buttons.length];void savePreference(control,next.dataset.value);next.focus()})}
+ }
+ prefs.subscribe((key,value)=>{if(key==='doneNotification'&&value&&'Notification' in window&&Notification.permission!=='granted')void Notification.requestPermission().then(permission=>{if(permission!=='granted'){prefs.set('doneNotification',false);notify('Windows не разрешил уведомления от MONO. Разрешить можно в настройках сайта: значок замка в адресной строке → Уведомления.')}})});
+ prefs.subscribe(key=>{if([null,'accent','glass','motion','textSize','showDoubts'].includes(key)){applyVisualPrefs();applyAccent(systemAccent);document.body.classList.toggle('hide-doubts',!prefs.get('showDoubts'))}if([null,'libraryView','librarySort'].includes(key)&&typeof renderLibrary==='function'){applyLibraryPrefs();void renderLibrary()}syncPreferenceControls()});
+ applyVisualPrefs();document.body.classList.toggle('hide-doubts',!prefs.get('showDoubts'));syncPreferenceControls();
+ void localLibraryClient().then(async local=>{if(!local)return;try{serverPrefs=await local.json('/preferences')}catch{}syncPreferenceControls()});
+ $('#reset-prefs')?.addEventListener('click',()=>modal('Сбросить настройки?','<p>Оформление, запись, библиотека и уведомления вернутся к исходным. Записи, папка архива и ключ Groq останутся как есть.</p>',[{text:'Сбросить',primary:true,run:()=>{prefs.reset();settings.theme='system';saveSettings();applyTheme();$('#setting-theme').value='system';syncSegmented();notify('Настройки сброшены.')}}]));
+}
+let quietTimer=0;
+function notifyQuiet(text){const pill=$('#saved-pill');if(!pill)return;pill.textContent=text;pill.classList.add('is-on');clearTimeout(quietTimer);quietTimer=setTimeout(()=>pill.classList.remove('is-on'),1400)}
 /** Segmented controls mirror a hidden <select> (the select keeps the value and its change handler). */
 function syncSegmented(){for(const group of document.querySelectorAll('.segmented[data-for]')){const select=document.getElementById(group.dataset.for);for(const button of group.querySelectorAll('button')){const on=button.dataset.value===select.value;button.setAttribute('aria-checked',String(on));button.tabIndex=on?0:-1}}}
 function mountSegmented(){
@@ -622,14 +682,26 @@ function mountSegmented(){
  syncSegmented();
 }
 /** The settings index: one entry per visible card, in the cards' order; the entry of the card in view is highlighted. */
-let settingsSpy=null;
+let settingsSpy=null,spotlightTimer=0;
+/** Bring one settings card forward: it scrolls into view, the others dim for a moment and the card
+ * glows, so the eye lands exactly where the person asked to go. A hint can be shown above it. */
+function spotlightSetting(id,{hint=null}={}){
+ const run=()=>{const card=document.getElementById(id);if(!card)return;const grid=card.parentElement;
+  card.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches||document.body.classList.contains('reduce-motion')?'auto':'smooth',block:'start'});
+  for(const other of grid.querySelectorAll('.is-spotlit'))other.classList.remove('is-spotlit');grid.classList.add('has-spotlight');void card.offsetWidth;card.classList.add('is-spotlit');
+  card.querySelector(':scope>.spotlight-hint')?.remove();if(hint){const box=document.createElement('div');box.className='spotlight-hint';box.setAttribute('role','note');box.innerHTML=hint;card.querySelector(':scope>h2')?.after(box)}
+  clearTimeout(spotlightTimer);spotlightTimer=setTimeout(()=>{grid.classList.remove('has-spotlight');card.classList.remove('is-spotlit')},hint?6000:2400);
+  const end=()=>{clearTimeout(spotlightTimer);grid.classList.remove('has-spotlight');card.classList.remove('is-spotlit');removeEventListener('pointerdown',end,true)};addEventListener('pointerdown',end,true);
+ };
+ if(state.view!=='settings'){go('settings');requestAnimationFrame(()=>requestAnimationFrame(run))}else run();
+}
 function renderSettingsIndex(){
  const index=$('#settings-index'),grid=$('#view-settings .settings-grid');if(!index||!grid)return;
  const cards=[...grid.children].filter(card=>!card.hidden&&card.querySelector('h2')).sort((a,b)=>Number(a.style.order||0)-Number(b.style.order||0));
  const slug=text=>'set-'+text.toLowerCase().replace(/[^a-zа-яё0-9]+/gi,'-').replace(/^-|-$/g,'');
  index.replaceChildren(...cards.map(card=>{const title=card.querySelector('h2').textContent.trim();card.id||=slug(title);const link=document.createElement('a');link.href='#settings';link.dataset.target=card.id;link.dataset.tone=card.dataset.tone||'';
   const icon=card.querySelector('.settings-card-icon svg use')?.getAttribute('href')||'#i-settings';link.innerHTML=`<span class="settings-index-icon"><svg><use href="${icon}"/></svg></span><span></span>`;link.lastElementChild.textContent=SETTINGS_SHORT[title]||title;link.title=title;
-  link.onclick=event=>{event.preventDefault();card.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});mark(card.id)};return link}));
+  link.onclick=event=>{event.preventDefault();spotlightSetting(card.id);mark(card.id)};return link}));
  const mark=id=>{for(const link of index.children)link.classList.toggle('active',link.dataset.target===id)};
  settingsSpy?.disconnect();settingsSpy=new IntersectionObserver(entries=>{const visible=entries.filter(entry=>entry.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top)[0];if(visible)mark(visible.target.id)},{root:$('#main'),rootMargin:'-10% 0px -70% 0px'});
  for(const card of cards)settingsSpy.observe(card);if(cards[0])mark(cards[0].id);
@@ -637,21 +709,49 @@ function renderSettingsIndex(){
 /** The status light in the top bar, like a master caution: MONO checks its systems at start, every
  * five minutes, when the window comes back and when a device is plugged in; one glance says whether a
  * recording can start, and a click opens the full check. */
+let lastPreflight=null;
+/** Where each limitation is fixed, and how — in plain words. The deep check is offered under the hint. */
+const LIMITATION_FIX={
+ groq:{card:'groq-settings-card',how:'Расшифровке нужен ключ Groq — он бесплатный. Нажмите <b>«Получить ключ на сайте Groq»</b>, скопируйте ключ и вставьте его в поле ниже. Пошаговая инструкция — чуть ниже, в «Как получить ключ».'},
+ 'mic-permission':{card:'set-источники-записи',how:'Браузер пока не дал MONO доступ к микрофону. Нажмите <b>«Проверить звук»</b> в этом разделе и в появившемся окне выберите <b>«Разрешить»</b>. Если окно не появляется: значок замка слева в адресной строке → Микрофон → «Разрешить».'},
+ 'mic-device':{card:'set-источники-записи',how:'Windows не видит ни одного микрофона. Подключите микрофон или гарнитуру — MONO заметит его сам, ничего нажимать не нужно.'},
+ 'mic-muted':{card:'set-источники-записи',how:'Микрофон выключен в Windows. Нажмите <b>«Исправить»</b> в проверке ниже — MONO включит его сам.'},
+ 'mic-level':{card:'set-источники-записи',how:'Громкость микрофона в Windows почти на нуле. Нажмите <b>«Исправить»</b> в проверке — MONO поднимет её до нормального уровня.'},
+ 'mic-disabled':{card:'set-источники-записи',how:'Микрофон отключён в Windows. Откройте <b>Параметры → Система → Звук → Все звуковые устройства</b>, выберите микрофон и нажмите <b>«Разрешить»</b>.'},
+ 'mic-privacy':{card:'set-источники-записи',how:'Windows запрещает приложениям слышать микрофон. Откройте <b>Параметры → Конфиденциальность и защита → Микрофон</b> и включите доступ для приложений и классических приложений.'},
+ 'mic-handsfree':{card:'set-источники-записи',how:'Bluetooth-гарнитура в режиме громкой связи звучит глухо. Для лучшего качества выберите встроенный или проводной микрофон.'},
+ 'window-audio':{card:'set-источники-записи',how:'Это окно не умеет записывать звук. Откройте MONO значком на рабочем столе — он запускается в Chrome или Edge.'},
+ disk:{card:'set-архив-и-резервные-копии',how:'На диске мало места. Освободите место или перенесите архив на другой диск: строка <b>«Папка архива» → «Перенести…»</b>.'},
+ onedrive:{card:'set-архив-и-резервные-копии',how:'Архив лежит в OneDrive: при нехватке места записи могут остаться только в облаке. В Проводнике щёлкните папку архива правой кнопкой → <b>«Всегда сохранять на этом устройстве»</b>.'},
+ library:{card:'set-архив-и-резервные-копии',how:'Папка архива недоступна. Подключите диск с архивом или выберите папку заново: <b>«Другая папка архива» → «Подключить…»</b>.'},
+ transfer:{card:'transfer-recovery',how:'Копирование архива не закончено. Нажмите <b>«Продолжить»</b> или отмените его.'},
+ 'audio-tools':{card:'set-предполётная-проверка',how:'Не найдены программы обработки звука. Переустановите MONO из архива — они входят в комплект.'},
+ core:{card:'set-предполётная-проверка',how:'Ядро архива отвечает медленно. Подождите минуту и нажмите <b>«Проверить снова»</b>; если не помогло — перезапустите MONO.'}
+};
+function openLimitation(result,id=null){
+ const order=['warning','caution','advisory'],checks=result?.checks||[];
+ const item=id?checks.find(check=>check.id===id):order.map(level=>checks.find(check=>check.level===level&&LIMITATION_FIX[check.id])).find(Boolean);
+ const fix=item&&LIMITATION_FIX[item.id];
+ if(!fix){spotlightSetting('set-предполётная-проверка');return}
+ const deep='<div class="spotlight-deep">Не помогло? <button type="button" class="btn-plain" data-deep-check>Глубокая диагностика ›</button></div>';
+ spotlightSetting(fix.card,{hint:`<strong>${h(item.title)}</strong><p>${fix.how}</p>${deep}`});
+ requestAnimationFrame(()=>requestAnimationFrame(()=>document.querySelector('[data-deep-check]')?.addEventListener('click',()=>{spotlightSetting('set-предполётная-проверка',{hint:'<strong>Глубокая диагностика</strong><p>Нажмите <b>«Глубокая диагностика»</b> внизу этого блока: MONO проверит микрофон, звук и архив по шагам и подскажет, что именно мешает.</p>'});setTimeout(()=>document.querySelector('.preflight-deep')?.focus({preventScroll:true}),500)},{once:true})));
+}
 function mountSystemStatus(model){
  const button=$('#system-status');if(!button||button.dataset.ready)return;button.dataset.ready='1';button.hidden=false;
  const text=button.querySelector('.system-status-text');
  const LABEL={ok:'Системы в норме',advisory:'Системы в норме',caution:'Есть ограничения',warning:'Нужно действие'};
- model.subscribe(result=>{const notable=result.checks.filter(item=>['caution','warning'].includes(item.level));button.dataset.level=result.level;
+ model.subscribe(result=>{lastPreflight=result;const notable=result.checks.filter(item=>['caution','warning'].includes(item.level));button.dataset.level=result.level;
   text.textContent=notable.length>1?`${LABEL[result.level]} · ${notable.length}`:LABEL[result.level]||'Системы';
   button.title=notable.length?notable.map(item=>'• '+item.title).join('\n'):'Все проверки пройдены. Нажмите, чтобы открыть подробности.'});
- button.onclick=()=>{go('settings');requestAnimationFrame(()=>document.getElementById('set-предполётная-проверка')?.scrollIntoView({block:'start'}))};
+ button.onclick=()=>openLimitation(lastPreflight);
  const again=()=>void model.run().catch(()=>{});
  setInterval(()=>{if(!document.hidden)void model.run({force:true}).catch(()=>{})},5*60*1000);
  addEventListener('focus',again);addEventListener('online',again);navigator.mediaDevices?.addEventListener?.('devicechange',()=>void model.run({force:true}).catch(()=>{}));
  again();
 }
 const SETTINGS_ICONS={'Как пользоваться MONO':'#i-sparkle','Незавершённое копирование':'#i-refresh'};
-const SETTINGS_SHORT={'Подключение Groq':'Groq','Архив и резервные копии':'Архив','Страховочная дорожка':'Страховка','Предполётная проверка':'Проверка','Как пользоваться MONO':'Справка','Незавершённое копирование':'Копирование','Источники записи':'Источники'};
+const SETTINGS_SHORT={'Работа в фоне':'В фоне','Обработка аудио':'Обработка','Подключение Groq':'Groq','Архив и резервные копии':'Архив','Страховочная дорожка':'Страховка','Предполётная проверка':'Проверка','Как пользоваться MONO':'Справка','Незавершённое копирование':'Копирование','Источники записи':'Источники'};
 const SETTINGS_TONES={'Источники записи':'red','Страховочная дорожка':'pink','Предполётная проверка':'green','Как пользоваться MONO':'blue','Незавершённое копирование':'orange'};
 function orderSettings(){
  const grid=$('#view-settings .settings-grid');if(!grid)return;
@@ -661,6 +761,32 @@ function orderSettings(){
 }
 /** Offline update: the person picks a .monoupdate file; MONO checks its signature and every file's
  * hash, unpacks it beside the app, and MONO.exe switches to it on the next start. */
+/** Groq spend: what the records now in the library cost, and the all-time total (the ledger keeps
+ * deleted records too). Rubles use the person's rate. */
+async function renderUsage(){
+ const host=$('#groq-usage');if(!host)return;let usage=null;
+ try{const response=await fetch('/api/usage',{cache:'no-store'});if(response.ok)usage=await response.json()}catch{}
+ const set=(key,text)=>{const node=host.querySelector(`[data-usage="${key}"]`);if(node)node.textContent=text};
+ if(!usage){host.hidden=true;return}host.hidden=false;
+ const rub=usd=>`${money(usd*settings.rate)} ₽`,time=seconds=>{const m=Math.round(seconds/60);return m<60?`${m} мин`:`${Math.floor(m/60)} ч ${String(m%60).padStart(2,'0')} мин`};
+ const present=new Set(state.records.filter(r=>!r.trashed).map(r=>r.id));let usd=0,billed=0,audio=0,count=0;
+ for(const [id,entry] of Object.entries(usage.byRecord||{}))if(present.has(id)){usd+=entry.usd;billed+=entry.billedSeconds;audio+=entry.audioSeconds;count+=entry.transcriptions}
+ const total=usage.total||{};
+ set('library-rub',count||usd?rub(usd):'0 ₽');set('library-sub',count||usd?`${count} ${plural(count,'расшифровка','расшифровки','расшифровок')} · звук ${time(audio)} · оплачено ${Math.round(billed)} с`:'ещё не было');
+ set('total-rub',total.transcriptions||total.usd?rub(total.usd):'0 ₽');set('total-sub',total.transcriptions||total.usd?`${total.transcriptions} ${plural(total.transcriptions,'расшифровка','расшифровки','расшифровок')} · ${total.requests} ${plural(total.requests,'запрос','запроса','запросов')} · $${(total.usd||0).toFixed(3)}`:'ещё не было');
+}
+/** At start, without a Groq key (and setup already done): one calm offer per launch. Declining says
+ * where to connect it later; «Не напоминать» is the same switch as in Settings → Groq. */
+async function remindGroq(local){
+ if(prefs.get('groqReminder')===false)return;
+ let status=null;try{status=await new CredentialsClient(local).status()}catch{return}
+ if(status.configured||status.managed||status.errorCode)return;
+ const where='Подключить можно в любой момент: Настройки → Groq.';
+ modal('Подключить расшифровку?','<p>Groq превращает записи в текст. Это бесплатно: нужен только ключ — его можно получить за 3 минуты по пошаговой инструкции.</p><p class="field-hint">Записывать и слушать можно и без него.</p>',[
+  {text:'Подключить',primary:true,run:()=>{closeModal();go('settings');spotlightSetting('groq-settings-card')}},
+  {text:'Не сейчас',run:()=>{closeModal();notify(where)}},
+  {text:'Не напоминать',run:()=>{closeModal();prefs.set('groqReminder',false);syncPreferenceControls();notify(where+' Напоминания можно вернуть там же.')}}]);
+}
 async function renderUpdateCard(){
  const card=$('#update-card');if(!card)return;let info=null;
  try{const local=await localLibraryClient();info=local?await local.json('/update'):null}catch{}
@@ -733,7 +859,7 @@ function renderRoute({preserveDrawer=false}={}){
   const [requested,id]=location.hash.slice(1).split('/');
   let view=['dashboard','record','library','jobs','editor','settings'].includes(requested)?requested:'dashboard';
   if(state.view==='settings'&&view!=='settings')credentialForm?.clear();
-  if(view==='settings'&&state.view!=='settings'){void credentialForm?.refresh();orderSettings();void renderUpdateCard()}
+  if(view==='settings'&&state.view!=='settings'){void credentialForm?.refresh();orderSettings();void renderUpdateCard();void renderUsage()}
   if(view==='editor'){
     if(!id||!state.records.some(r=>r.id===id)){view='library';}
     else if(state.editorId!==id||state.view!=='editor'){state.editorId=id;state.editorPage=0;void renderEditor(id).catch(e=>notify(e.message,'error'))}
@@ -745,7 +871,7 @@ function renderRoute({preserveDrawer=false}={}){
   $$('.view').forEach(el=>el.classList.toggle('active',el.id==='view-'+view));
   $$('.nav-link[data-view]').forEach(el=>(el.classList.toggle('selected',el.dataset.view===view),el.setAttribute('aria-current',el.dataset.view===view?'page':'false')));
   const titles={dashboard:'Обзор',record:'Запись',library:'Библиотека',jobs:'Расшифровка',editor:'Редактор',settings:'Настройки'};
-  $('#current-breadcrumb').textContent=titles[view];
+  document.title=view==='dashboard'?'MONO':`${titles[view]} · MONO`;
   if(!preserveDrawer)closeDrawer('route');
   if(view==='library')renderLibrary();
   if(view==='jobs')renderJobs();
@@ -771,7 +897,7 @@ async function refresh(){
   state.records=(await listRecordings()).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   // Local archive: a transcript finishing in the background is announced once.
   if(storageDetails().local)for(const r of state.records){const before=lastStatus.get(r.id);lastStatus.set(r.id,r.status);
-   if(before&&['queued','processing','uploading'].includes(before)&&r.status==='completed'){notify(`Расшифровка «${r.title}» готова`,'info',{text:'Открыть',run:()=>go('editor',r.id)});if(document.hidden)markDoneWhileAway()}}
+   if(before&&['queued','processing','uploading'].includes(before)&&r.status==='completed'){notify(`Расшифровка «${r.title}» готова`,'info',{text:'Открыть',run:()=>go('editor',r.id)});transcriptionDone(r);if(document.hidden)markDoneWhileAway()}}
   void nameFromTranscripts().then(changed=>{if(changed){renderDashboard();if(state.view==='library')renderLibrary()}}).catch(()=>{});
   $('#nav-count').textContent=state.records.length;
   renderDashboard();
@@ -1169,7 +1295,7 @@ async function pollJobs(){
      // Client has durably persisted transcript, so delete the server copy.
      const ack=await jobFetch(`/api/jobs/${r.jobId}/ack`,{method:'POST'}).catch(()=>null);
      if(ack?.ok||ack?.status===404)await patchRecording(r.id,{serverAcked:true});
-     notifyLater(`Расшифровка «${r.title}» готова`);changed=true;if(document.hidden)markDoneWhileAway();
+     notifyLater(`Расшифровка «${r.title}» готова`);transcriptionDone(r);changed=true;if(document.hidden)markDoneWhileAway();
     }else{
      const nextStatus=job.status;
      if(JSON.stringify(r.job)!==JSON.stringify({stage:job.stage,completed:job.completed,total:job.total,error:job.error})||
@@ -1596,7 +1722,7 @@ async function importPortableLibrary(){
 async function checkHealth(){
  try{
   const res=await fetch('/api/health',{signal:AbortSignal.timeout(4500),cache:'no-store'});if(!res.ok)throw new Error('Сервер недоступен');
-  state.health=await res.json();applyAccent(state.health.accent);offerUpdate(state.health.update);if(state.health.version)setText('#sidebar-version',state.health.version);
+  state.health=await res.json();applyAccent(state.health.accent);offerUpdate(state.health.update);if(state.health.version){setText('#sidebar-version',state.health.version);setText('#about-version','MONO '+state.health.version)}
   $('#settings-health').textContent=`FFmpeg: ${state.health.ffmpeg?'доступен':'нет'} · FFprobe: ${state.health.ffprobe?'доступен':'нет'} · Groq: ${state.health.groq?'ключ задан':'не настроен'}`;
  }catch{
   state.health=null;$('#settings-health').textContent='Сервер недоступен. Запись, локальная библиотека и редактор работают автономно.';
@@ -1618,7 +1744,7 @@ function wire(){
     const rec=state.records.find(r=>r.id===state.editorId);if(rec)renderEditorSegments(rec);
   }
  });
- $('#theme-toggle').onclick=()=>{settings.theme=document.body.dataset.theme==='dark'?'light':'dark';saveSettings();applyTheme();$('#setting-theme').value=settings.theme;syncControls();syncSegmented()};
+
  for(const id of ['hero-import','record-import','library-import'])$('#'+id).onclick=()=>withInput(importFile);
  $('#start-record').onclick=()=>{stopLevelCheck();return beginRecord()};$('#mark-record').onclick=markMoment;
  document.addEventListener('visibilitychange',syncLevelPreview);
@@ -1641,7 +1767,7 @@ function wire(){
  a.addEventListener('loadedmetadata',()=>{if(!audioReview)$('#player-total').textContent=shortTime(a.duration)});
  $('#player-seek').oninput=e=>{if(audioReview){void audioReview.player.seek(audioReview.player.snapshot.duration*Number(e.target.value)/1000).catch(error=>{if(error.name!=='AbortError')notify(error.message,'error')})}else if(Number.isFinite(a.duration))a.currentTime=a.duration*Number(e.target.value)/1000};
  $('#player-speed').onchange=e=>{if(audioReview)audioReview.player.setRate(Number(e.target.value));else a.playbackRate=Number(e.target.value)};
- $('#setting-theme').value=settings.theme;$('#setting-theme').onchange=e=>{settings.theme=e.target.value;saveSettings();applyTheme();syncSegmented()};mountSegmented();
+ $('#setting-theme').value=settings.theme;$('#setting-theme').onchange=e=>{settings.theme=e.target.value;saveSettings();applyTheme();syncSegmented()};mountSegmented();bindPreferences();
  {const prompt=$('#setting-prompt'),count=$('#setting-prompt-count'),update=()=>{count.textContent=`${prompt.value.length} / ${prompt.maxLength}`};prompt.addEventListener('input',update);update()}
  $('#setting-profile').value=settings.profile;$('#setting-profile').onchange=e=>{settings.profile=e.target.value;saveSettings()};
  $('#setting-prompt').value=settings.prompt;$('#setting-prompt').dispatchEvent(new Event('input'));$('#setting-prompt').oninput=e=>{settings.prompt=e.target.value;saveSettings()};
@@ -1700,7 +1826,8 @@ function wire(){
 async function init(){
  guardSingleWindow({onFocus:()=>{try{window.focus()}catch{}document.body.classList.add('window-called');setTimeout(()=>document.body.classList.remove('window-called'),900)},onDuplicate:showDuplicateWindow});
  applyTheme();wire();enhanceUI();await openDB();
- const local=await localLibraryClient();if(local)credentialForm=mountCredentials($('#groq-credentials'),{client:new CredentialsClient(local),onChange:value=>{$('#resume-transcription').hidden=!value.configured||!pendingTranscriptionId;void checkHealth()}});else $('#groq-settings-card').hidden=true;
+ const local=await localLibraryClient();if(local)credentialForm=mountCredentials($('#groq-credentials'),{client:new CredentialsClient(local),onChange:value=>{$('#resume-transcription').hidden=!value.configured||!pendingTranscriptionId;groqConfigured=Boolean(value.configured||value.managed);const guide=$('#groq-guide');if(guide&&!guide.dataset.touched)guide.open=!groqConfigured;void checkHealth()}});else $('#groq-settings-card').hidden=true;
+ $('#groq-guide summary')?.addEventListener('click',()=>{$('#groq-guide').dataset.touched='1'},{once:true});
  $('#resume-transcription').onclick=async()=>{const id=pendingTranscriptionId;if(!id)return;await checkHealth();const rec=state.records.find(r=>r.id===id);if(rec){pendingTranscriptionId=null;$('#resume-transcription').hidden=true;go('editor',id);void startTranscription(rec)}};
  const storage=storageDetails(),available=!storage.local||storage.libraryAvailable;
  const orphaned=available?await listRecordings():[];
@@ -1716,6 +1843,7 @@ async function init(){
  if(local)startAudioCare();
  if(local)await showSetup();
  if(local&&!setupWindow&&storageDetails().libraryAvailable)void offerLegacyImport();
+ if(local&&!setupWindow)void remindGroq(local);
  announceRecovered();
  if(storage.transfer?.state==='running')void runLibraryTransfer(null,storage.transfer);
  else if(state.view!=='settings'&&(storage.transfer||storage.transferRecoveryError)){
