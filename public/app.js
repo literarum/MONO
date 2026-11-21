@@ -512,7 +512,7 @@ function modal(title,body,actions=[]){
   $('#modal-title').textContent=title;$('#modal-text').innerHTML=body;const container=$('#modal-actions');container.replaceChildren();
   const cancel=document.createElement('button');cancel.className='btn btn-outline';cancel.textContent='Отмена';cancel.onclick=closeModal;container.append(cancel);
   for(const action of actions){
-    const btn=document.createElement('button');btn.className='btn '+(action.primary?'btn-primary':'btn-outline');
+    const btn=document.createElement('button');btn.className='btn '+(action.danger?'btn-danger':action.primary?'btn-primary':'btn-outline');
     btn.textContent=action.text;btn.onclick=()=>{closeModal();void Promise.resolve().then(action.run).catch(e=>notify(e.message,'error'))};container.append(btn);
   }
   $('#modal').hidden=false;container.querySelector('button').focus();
@@ -941,6 +941,48 @@ function renderDashboard(){
     `<div class="empty-state">${icon('mic')}<strong>Здесь появятся ваши записи</strong><p>Начните запись или загрузите аудио,<br>чтобы создать первую транскрипцию.</p><button class="btn btn-outline btn-small" data-go="record">Открыть студию ${icon('arrow')}</button></div>`;
 }
 let libraryGeneration=0;
+/** Library: grid or list (Settings → Библиотека or the toggle), and a selection mode for bulk work. */
+const selection={active:false,ids:new Set()};let libraryVisible=[];
+function applyLibraryPrefs(){const list=$('#library-list');if(list)list.dataset.view=prefs.get('libraryView');const sort=$('#library-sort');if(sort&&!sort.dataset.touched){sort.value=prefs.get('librarySort');syncControls()}}
+function reflectSelection(){
+ const bar=$('#bulk-bar'),button=$('#library-select-mode');if(!bar)return;bar.hidden=!selection.active;button.setAttribute('aria-pressed',String(selection.active));button.classList.toggle('is-on',selection.active);
+ const n=selection.ids.size;setText('#bulk-count',n?`Выбрано: ${n}`:'Выберите записи');for(const id of ['bulk-transcribe','bulk-rename','bulk-export','bulk-delete'])$('#'+id).disabled=!n;
+ setText('#bulk-all',n&&n===libraryVisible.length?'Снять выбор':'Выбрать все');$('#library-list').classList.toggle('is-selecting',selection.active);
+}
+function setSelecting(on){selection.active=on;if(!on)selection.ids.clear();state.librarySignature=null;void renderLibrary();reflectSelection()}
+const chosenRecords=()=>state.records.filter(r=>selection.ids.has(r.id)&&!r.trashed);
+async function bulkTranscribe(){
+ const records=chosenRecords().filter(r=>r.status!=='completed'&&!['queued','processing','uploading'].includes(r.status)&&(r.size||0)>0);
+ if(!records.length){notify('Все выбранные записи уже расшифрованы или в очереди.');return}
+ if(!state.health?.groq){notify('Сначала подключите Groq.','error',{text:'Подключить',run:()=>spotlightSetting('groq-settings-card')});return}
+ const seconds=records.reduce((sum,r)=>sum+Math.max(10,r.duration||0),0),cost=money(seconds/3600*MODEL_PRICE*settings.rate);
+ modal('Расшифровать выбранные?',`<p>${records.length} ${plural(records.length,'запись','записи','записей')} (${durationText(seconds)}) будут отправлены в Groq по очереди. Оценка: ≈ ${cost} ₽.</p><p class="field-hint">Звук уходит в Groq только после этого подтверждения.</p>`,
+  [{text:'Отправить в Groq',primary:true,run:async()=>{for(const rec of records){try{await startTranscription(rec,{confirmed:true})}catch(error){notify(`«${rec.title}»: ${error.message}`,'error')}}notify(`В очереди на расшифровку: ${records.length}.`,'info',{text:'Открыть очередь',run:()=>go('jobs')});setSelecting(false)}}]);
+}
+async function bulkRename(){
+ const records=chosenRecords();let renamed=0,without=0;
+ for(const rec of records){if(rec.status!=='completed'){without++;continue}
+  try{const segments=storageDetails().local?(await transcriptPage(rec.id,{offset:0,limit:12})).segments:(await getRecording(rec.id))?.transcript?.segments;const title=suggestTitle(segments);if(!title||title===rec.title)continue;await getRecording(rec.id);await patchRecording(rec.id,{title});renamed++}catch(error){notify(`«${rec.title}»: ${error.message}`,'error')}}
+ await refresh();notify(renamed?`Переименовано по содержанию: ${renamed}.`+(without?` Без расшифровки (пропущены): ${without}.`:''):without?'Умное название берётся из текста: сначала расшифруйте эти записи.':'Названия уже соответствуют содержанию.');setSelecting(false);
+}
+async function bulkExport(){
+ const records=chosenRecords();if(!records.length)return;const local=await localLibraryClient();
+ const safe=name=>String(name||'Запись').replace(/[\\/:*?"<>|\u0000-\u001f]+/g,' ').trim().slice(0,100)||'Запись';
+ const textOf=async rec=>{if(rec.status!=='completed')return null;const segments=[];for(let offset=0;offset<20000;offset+=500){const page=storageDetails().local?await transcriptPage(rec.id,{offset,limit:500}):{segments:(await getRecording(rec.id))?.transcript?.segments||[]};segments.push(...(page?.segments||[]));if(!storageDetails().local||!page?.segments?.length||page.segments.length<500)break}return segments.map(s=>`[${shortTime(s.start||0)}] ${String(s.text||'').trim()}`).join('\n')};
+ let folder=null;try{if(window.showDirectoryPicker)folder=await window.showDirectoryPicker({mode:'readwrite',id:'mono-export'})}catch(error){if(error.name==='AbortError')return}
+ const toast=notify(`Экспорт: 0 из ${records.length}…`);let done=0;
+ for(const rec of records){
+  try{const base=safe(rec.title),response=local?await fetch(local.audioURL(rec.id)):null,blob=response?.ok?await response.blob():null,ext=(blob?.type||rec.mime||'').includes('flac')?'flac':(blob?.type||rec.mime||'').includes('wav')?'wav':(blob?.type||rec.mime||'').includes('mpeg')?'mp3':(blob?.type||rec.mime||'').includes('mp4')?'m4a':'webm',text=await textOf(rec);
+   const files=[...(blob?[[`${base}.${ext}`,blob]]:[]),...(text?[[`${base}.txt`,new Blob([text],{type:'text/plain;charset=utf-8'})]]:[])];
+   for(const [name,data] of files){if(folder){const handle=await folder.getFileHandle(name,{create:true}),writable=await handle.createWritable();await writable.write(data);await writable.close()}else{const a=document.createElement('a');a.href=URL.createObjectURL(data);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}}
+   done++;}catch(error){notify(`«${rec.title}»: ${error.message}`,'error')}}
+ notify(`Экспортировано: ${done} из ${records.length}${folder?` — в папку «${folder.name}»`:''}.`);setSelecting(false);void toast;
+}
+function bulkDelete(){
+ const records=chosenRecords();if(!records.length)return;
+ modal('Вы уверены?',`<p>${records.length===1?`Запись «${h(records[0].title)}» будет`:`${records.length} ${plural(records.length,'запись','записи','записей')} будут`} перемещены в корзину. Их можно вернуть из корзины.</p>`,
+  [{text:'Удалить',primary:true,danger:true,run:async()=>{let moved=0;for(const rec of records){try{await removeRecording(rec.id);moved++}catch(error){notify(`«${rec.title}»: ${error.message}`,'error')}}await refresh();notify(`В корзине: ${moved}.`);setSelecting(false)}}]);
+}
 async function renderLibrary(){
   const generation=++libraryGeneration;
   const q=$('#library-search').value.trim().toLowerCase(),filter=$('#library-filter').value,sort=$('#library-sort').value;
@@ -958,16 +1000,17 @@ async function renderLibrary(){
   if(sort==='name')records=records.sort((a,b)=>a.title.localeCompare(b.title,'ru'));
   if(sort==='longest')records=records.sort((a,b)=>(b.duration||0)-(a.duration||0));
   const totalSeconds=records.reduce((sum,r)=>sum+(r.duration||0),0);
-  $('#library-count').textContent=`${records.length} ${({one:'ЗАПИСЬ',few:'ЗАПИСИ'})[new Intl.PluralRules('ru-RU').select(records.length)]||'ЗАПИСЕЙ'}`+(totalSeconds>0?` · ${durationText(totalSeconds)}`:'');
-  const signature=JSON.stringify([q,filter,sort,settings.rate,records.map(r=>[r.id,r.version,r.status,r.title,r.trashed])]);
+  $('#library-count').textContent=`${records.length} ${({one:'запись',few:'записи'})[new Intl.PluralRules('ru-RU').select(records.length)]||'записей'}`+(totalSeconds>0?` · ${durationText(totalSeconds)}`:'');
+  libraryVisible=records.filter(r=>!r.trashed).map(r=>r.id);
+  const signature=JSON.stringify([q,filter,sort,settings.rate,prefs.get('libraryView'),selection.active,[...selection.ids],records.map(r=>[r.id,r.version,r.status,r.title,r.trashed])]);
   if(signature===state.librarySignature&&$('#library-list').childElementCount)return; // identical list: no DOM rebuild
   state.librarySignature=signature;
-  $('#library-list').innerHTML=records.length?records.map(r=>`
-   <article class="record-card glass"><div class="record-card-head"><span class="item-icon">${icon('file')}</span><span class="record-status">${statusLabel(r)}</span></div>
-   <h3 title="${h(r.title)}">${h(r.title)}</h3><p class="record-sub">${fmtDate(r.createdAt)} · ${h(r.source||'Импорт')}</p>
-   <div class="record-card-meta"><div><span>ДЛИТЕЛЬНОСТЬ</span><strong title="${pausedSeconds(r)?'С паузами: '+durationText(r.duration):''}">${durationText(recordedSeconds(r))}</strong></div><div><span>РАЗМЕР</span><strong>${sizeText(r.size||0)}</strong></div><div><span>СТОИМОСТЬ · ОЦЕНКА</span><strong>${money((r.estimatedUSD||0)*settings.rate)} ₽</strong></div></div>
-   <div class="record-card-actions">${r.trashed?`<button class="btn btn-outline btn-small" data-restore="${h(r.id)}" data-version="${r.version}">Восстановить ${icon('refresh')}</button>`:`<button class="btn ${r.status==='completed'?'btn-primary':'btn-outline'} btn-small" data-open="${h(r.id)}">${r.status==='completed'?'Открыть текст':'Открыть запись'} ${icon('arrow')}</button>
-   <div class="card-icon-actions"><button class="icon-btn" data-rename="${h(r.id)}" title="Переименовать" aria-label="Переименовать запись">${icon('file')}</button><button class="icon-btn" data-delete="${h(r.id)}" title="Удалить запись" aria-label="Удалить запись">${icon('trash')}</button></div>`}</div></article>`).join(''):
+  $('#library-list').innerHTML=records.length?records.map(r=>{const picked=selection.ids.has(r.id);return `
+   <article class="record-card glass${picked?' is-selected':''}" data-card="${h(r.id)}">${selection.active&&!r.trashed?`<label class="lib-check" title="Выбрать"><input type="checkbox" data-select="${h(r.id)}"${picked?' checked':''} aria-label="Выбрать «${h(r.title)}»"><span aria-hidden="true">${icon('check')}</span></label>`:''}
+   <h3 title="${h(r.title)}">${h(r.title)}</h3>
+   <div class="record-card-meta"><div><span>Длительность</span><strong title="${pausedSeconds(r)?'С паузами: '+durationText(r.duration):''}">${durationText(recordedSeconds(r))}</strong></div><div><span>Размер</span><strong>${sizeText(r.size||0)}</strong></div><div><span>Дата</span><strong>${fmtDate(r.createdAt)}</strong></div><div><span>Стоимость</span><strong>${money((r.estimatedUSD||0)*settings.rate)} ₽</strong></div></div>
+   <div class="record-card-actions">${r.trashed?`<button class="btn btn-outline btn-small" data-restore="${h(r.id)}" data-version="${r.version}">Восстановить ${icon('refresh')}</button>`:`<div class="card-icon-actions"><button class="morph-btn" data-rename="${h(r.id)}" aria-label="Переименовать запись">${icon('pencil')}<span>Переименовать</span></button><button class="morph-btn morph-danger" data-delete="${h(r.id)}" aria-label="Удалить запись">${icon('trash')}<span>Удалить</span></button></div>
+   <button class="btn ${r.status==='completed'?'btn-primary':'btn-outline'} btn-small" data-open="${h(r.id)}">${r.status==='completed'?'Открыть текст':'Открыть запись'} ${icon('arrow')}</button>`}</div></article>`}).join(''):
    `<div class="glass" style="grid-column:1/-1;border-radius:18px"><div class="empty-state">${icon('library')}<strong>${filter==='trash'?'Корзина пуста':($('#library-search').value.trim()?'Ничего не найдено':'Записей пока нет')}</strong><p>${filter==='trash'?'Здесь можно восстановить удалённые записи.':$('#library-search').value.trim()?`По запросу «${h($('#library-search').value.trim())}» ничего нет. Очистите поиск или измените фильтр.`:state.records.length?'Измените фильтр.':'Создайте запись или импортируйте аудио.'}</p>${filter==='trash'?'':`<button class="btn btn-outline btn-small" data-go="record">Студия записи ${icon('arrow')}</button>`}</div></div>`;
 }
 /** «~3 мин» from the pace so far (segments done since this job started on this screen). */
@@ -1236,7 +1279,7 @@ function connectGroq(onConnected){
   host.querySelector('input')?.focus();
  }).catch(error=>notify(error.message,'error'));
 }
-async function startTranscription(rec){
+async function startTranscription(rec,{confirmed=false}={}){
  if(archiveOperation){notify('Дождитесь завершения операции с архивом.','error');return}
  if(!rec||rec.status==='recording'||!rec.size){notify('Нет доступного аудиофайла.','error');return}
  if(['queued','processing','uploading'].includes(rec.status)){go('jobs');return}
@@ -1255,6 +1298,7 @@ async function startTranscription(rec){
   modal(storageDetails().local&&!state.health?.groq?'Подключите распознавание':'Обработка пока недоступна',storageDetails().local?'Подключите Groq в настройках. Запись уже сохранена; после подключения можно продолжить с неё.':'Проверьте подключение Groq и обработчик аудио на сервере приложения.',
    [{text:'Открыть настройки',primary:true,run:()=>go('settings')}]);return;
  }
+ if(confirmed){await uploadTranscription(rec,false,selection);return} // the person already agreed for the whole batch
  const est=rec.duration?money((Math.max(10,rec.duration)/3600)*MODEL_PRICE*settings.rate):'определяется после анализа файла';
  modal('Отправить аудио в Groq?',`Вариант: ${selection.title}.\n\nАудио будет передано через сервер приложения в Groq для распознавания русской речи.\n\nОриентировочная стоимость: ${est}${rec.duration?' ₽':''} (фактическая сумма может отличаться).\n\nПодтвердите отправку, если участники встречи дали необходимые согласия.`,
   [{text:'Отправить и обработать',primary:true,run:()=>uploadTranscription(rec,false,selection)}]);
@@ -1379,10 +1423,10 @@ function renameRecord(rec){
 }
 function deleteRecord(rec){
  if(storageDetails().local){
-  // Reversible, so no confirmation dialog: move to trash and offer «Вернуть» (HIG: prefer undo over confirm).
-  void (async()=>{try{const result=await removeRecording(rec.id);await refresh();
+  // Asked first (the person wants a clear «Вы уверены?»), and still undoable from the trash.
+  modal('Вы уверены?',`<p>Запись «${h(rec.title)}» будет перемещена в корзину. Её можно вернуть.</p>`,[{text:'Удалить',primary:true,danger:true,run:()=>void (async()=>{try{const result=await removeRecording(rec.id);await refresh();
    notify(`«${rec.title.length>40?rec.title.slice(0,39)+'…':rec.title}» в корзине`,'info',{text:'Вернуть',run:async()=>{await restoreRecording(rec.id,result.version);await refresh();notify('Запись восстановлена.')}});
-  }catch(e){notify(e.message,'error')}})();return;
+  }catch(e){notify(e.message,'error')}})()}]);return;
  }
  modal('Удалить запись?',`«${h(rec.title)}» будет удалена вместе с локальным аудио и транскриптом. Если запись отправлялась в Groq, приложение также удалит связанные временные файлы локального сервера.\n\nУдаление нельзя отменить.`,
  [{text:'Удалить безвозвратно',primary:true,run:async()=>{
@@ -1767,6 +1811,7 @@ function wire(){
  $$('.nav-link[data-view]').forEach(b=>b.addEventListener('click',()=>go(b.dataset.view)));
  document.addEventListener('click',e=>{
   const goButton=e.target.closest('[data-go]');if(goButton){go(goButton.dataset.go);return}
+  if(selection.active){const card=e.target.closest('[data-card]');if(card&&!e.target.closest('[data-restore]')){const id=card.dataset.card,rec=state.records.find(r=>r.id===id);if(rec&&!rec.trashed){e.preventDefault();selection.ids.has(id)?selection.ids.delete(id):selection.ids.add(id);card.classList.toggle('is-selected',selection.ids.has(id));const box=card.querySelector('[data-select]');if(box)box.checked=selection.ids.has(id);reflectSelection()}return}}
   const open=e.target.closest('[data-open]');if(open){void openRecord(open.dataset.open);return}
   const renamed=e.target.closest('[data-rename]');if(renamed){renameRecord(state.records.find(r=>r.id===renamed.dataset.rename));return}
   const deleted=e.target.closest('[data-delete]');if(deleted){deleteRecord(state.records.find(r=>r.id===deleted.dataset.delete));return}
@@ -1782,6 +1827,11 @@ function wire(){
 
  for(const id of ['hero-import','record-import','library-import'])$('#'+id).onclick=()=>withInput(importFile);
  $('#start-record').onclick=()=>{stopLevelCheck();return beginRecord()};
+ $('#library-select-mode').onclick=()=>setSelecting(!selection.active);$('#bulk-done').onclick=()=>setSelecting(false);
+ $('#bulk-all').onclick=()=>{if(selection.ids.size&&selection.ids.size===libraryVisible.length)selection.ids.clear();else libraryVisible.forEach(id=>selection.ids.add(id));state.librarySignature=null;void renderLibrary();reflectSelection()};
+ $('#bulk-transcribe').onclick=()=>void bulkTranscribe();$('#bulk-rename').onclick=()=>void bulkRename();$('#bulk-export').onclick=()=>void bulkExport();$('#bulk-delete').onclick=bulkDelete;
+ $('#library-sort').addEventListener('change',()=>{$('#library-sort').dataset.touched='1'});applyLibraryPrefs();reflectSelection();
+ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&selection.active&&$('#modal').hidden){setSelecting(false)}});
  // Paused with audio: keep this take in the library and start a fresh one.
  $('#new-record').onclick=async()=>{const button=$('#new-record');button.disabled=true;try{await endRecord();for(let i=0;i<150&&(captureActive(nativeController?.snapshot)||state.capture);i++)await new Promise(r=>setTimeout(r,100));notify('Первая запись сохранена в библиотеке. Начинаем новую.');await beginRecord()}finally{button.disabled=false}};$('#mark-record').onclick=markMoment;
  document.addEventListener('visibilitychange',syncLevelPreview);document.addEventListener('visibilitychange',()=>floatingRecorder.update(floatingRecorder.active,floatingRecorder.value));
