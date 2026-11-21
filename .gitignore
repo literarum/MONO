@@ -18,13 +18,13 @@ MONO-DATA/
 __pycache__/
 
 # .NET build output and local tool scratch (never commit binaries)
-native/windows/bin/
-native/windows/obj/
-native/windows/tests/bin/
-native/windows/tests/obj/
+MONO/native/windows/bin/
+MONO/native/windows/obj/
+MONO/native/windows/tests/bin/
+MONO/native/windows/tests/obj/
 .build/
 .playwright-cli/
 .build-smoke-data-*/
-native/windows/launcher/*.exe
-native/windows/launcher/*.obj
-native/windows/launcher/*.res
+MONO/native/windows/launcher/*.exe
+MONO/native/windows/launcher/*.obj
+MONO/native/windows/launcher/*.res

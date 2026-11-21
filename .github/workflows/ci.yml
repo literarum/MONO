@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+# The application lives in MONO/ (the repository root holds only the installer and that folder).
+defaults:
+  run:
+    working-directory: MONO
+
 jobs:
   test:
     name: Tests (${{ matrix.os }})
@@ -49,7 +54,7 @@ jobs:
       - name: Node tests
         run: node --test
       - name: Python tests
-        working-directory: launcher
+        working-directory: MONO/launcher
         run: python -m unittest discover -s tests
 
   e2e:

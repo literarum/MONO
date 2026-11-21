@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# The application lives in MONO/ (the repository root holds only the installer and that folder).
+defaults:
+  run:
+    working-directory: MONO
+
 jobs:
   real-audio:
     name: Record a tone through VB-CABLE

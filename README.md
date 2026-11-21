@@ -18,13 +18,13 @@
 
 ## Установка из исходников в один клик
 
-В корне проекта лежат установщики. Запустите тот, что подходит вашей системе:
+Скачайте архив («Code → Download ZIP») и распакуйте. Внутри два элемента: **«Установить и запустить MONO»** и папка **MONO** с программой. Дважды щёлкните «Установить и запустить MONO» — установщик всё сделает сам, создаст значок на рабочем столе и откроет MONO. Для macOS и Linux установщики лежат в папке MONO:
 
 | Система | Файл | Как запустить |
 |---|---|---|
 | Windows 10/11 | `Установить и запустить MONO.cmd` | Двойной щелчок |
-| macOS | `INSTALL-MONO-macOS.command` | Двойной щелчок в Finder |
-| Linux | `INSTALL-MONO-Linux.sh` | «Запустить как программу» или `./INSTALL-MONO-Linux.sh` |
+| macOS | `MONO/INSTALL-MONO-macOS.command` | Двойной щелчок в Finder |
+| Linux | `MONO/INSTALL-MONO-Linux.sh` | «Запустить как программу» или `./INSTALL-MONO-Linux.sh` |
 
 Установщик:
 
@@ -290,8 +290,8 @@ GitHub Actions: `.github/workflows/portable-build.yml` собирает отде
 
 ## Проверки и ограничения
 
-Протокол текущей приёмки и отката: [`docs/qa/native-release.md`](docs/qa/native-release.md).
-Исторический отчёт v0.4 сохранён в [`docs/qa/QA_REPORT_0.4.0.md`](docs/qa/QA_REPORT_0.4.0.md);
+Протокол текущей приёмки и отката: [`docs/qa/native-release.md`](MONO/docs/qa/native-release.md).
+Исторический отчёт v0.4 сохранён в [`docs/qa/QA_REPORT_0.4.0.md`](MONO/docs/qa/QA_REPORT_0.4.0.md);
 он не описывает все последующие изменения.
 
 Локальные проверки включают реальные браузерные сценарии по HTTP, запуск

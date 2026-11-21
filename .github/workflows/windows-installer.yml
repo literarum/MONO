@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+# The application lives in MONO/ (the repository root holds only the installer and that folder).
+defaults:
+  run:
+    working-directory: MONO
+
 jobs:
   installer:
     name: Build, install and verify MONO-Setup.exe
@@ -215,17 +220,17 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: MONO-Windows
-          path: .build/release/*.zip
+          path: MONO/.build/release/*.zip
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
           name: MONO-portable-windows
-          path: .build/portable/*
+          path: MONO/.build/portable/*
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
           name: MONO-Setup-windows
-          path: .build/installer/MONO-Setup-*.exe
+          path: MONO/.build/installer/MONO-Setup-*.exe
           if-no-files-found: error
