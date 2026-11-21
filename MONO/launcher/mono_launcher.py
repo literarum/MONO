@@ -543,7 +543,7 @@ def browser_window_command(url: str, browser: tuple[str, str] | None) -> list[st
         return None
     kind, executable = browser
     if kind == "chromium":
-        return [executable, f"--app={url}/?window=mono"]
+        return [executable, "--start-maximized", f"--app={url}/?window=mono"]
     if kind == "firefox":
         return [executable, "-new-window", f"{url}/?window=mono"]
     return None
@@ -558,7 +558,7 @@ def open_in_browser(url: str, browser=None) -> None:
     command = browser_window_command(url, (browser or default_browser)())
     if command is None and sys.platform != "win32":
         chrome = discover_chromium()
-        command = [chrome, f"--app={url}/?window=mono"] if chrome else None
+        command = [chrome, "--start-maximized", f"--app={url}/?window=mono"] if chrome else None
     if command is not None:
         with _external_browser_environment() as environment:
             extra = {"env": environment} if environment is not None else {}

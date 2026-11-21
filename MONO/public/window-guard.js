@@ -38,3 +38,16 @@ export async function closeIfOrphaned({fetchHealth=()=>fetch('/api/health',{cach
  for(let attempt=0;attempt<3;attempt++){try{const response=await fetchHealth();if(response.ok)return false}catch{}await new Promise(r=>setTimeout(r,1500))}
  try{close()}catch{}return true;
 }
+
+/** The launcher's window opens filling the screen; «Без рамок» (fullscreen) needs the person's first
+ * click, because browsers allow fullscreen only from a user gesture. */
+export function fitLauncherWindow({mode='maximized',win=globalThis,doc=globalThis.document,storage=globalThis.sessionStorage}={}){
+ let launcher=false;try{launcher=storage.getItem(FLAG)==='1'}catch{}
+ if(!launcher||mode==='window')return false;
+ try{const width=win.screen.availWidth,height=win.screen.availHeight;if(win.outerWidth<width-8||win.outerHeight<height-8){win.moveTo(win.screen.availLeft||0,win.screen.availTop||0);win.resizeTo(width,height)}}catch{}
+ if(mode==='fullscreen'&&doc.documentElement.requestFullscreen&&!doc.fullscreenElement){
+  const enter=()=>{doc.documentElement.requestFullscreen({navigationUI:'hide'}).catch(()=>{})};
+  doc.addEventListener('pointerdown',enter,{once:true,capture:true});doc.addEventListener('keydown',enter,{once:true,capture:true});
+ }
+ return true;
+}

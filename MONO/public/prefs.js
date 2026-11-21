@@ -21,6 +21,7 @@ export const PREF_DEFAULTS=Object.freeze({
  toastDuration:'normal',   // normal | long
  doneSound:true,           // a soft chime when a transcription is ready
  doneNotification:false,   // a system notification when MONO is in the background
+ windowMode:'maximized',   // maximized | fullscreen (no Windows frame) | window
  rateAuto:true,            // USD→RUB from the Bank of Russia every 6 hours
  groqReminder:true,        // offer to connect Groq at start while it is not connected
  tourDone:false            // the feature tour has been seen

@@ -19,7 +19,7 @@ import {SafetyTrack} from './safety-track.js';
 import {LevelPreview,addBookmark,SaveClock,BatteryWatch,DEFAULT_TITLE,suggestTitle} from './studio-extras.js';import {PlayerWave} from './waveform.js';
 import {speakerFor,SPEAKER_NAMES} from './speakers.js';
 import {paragraphs,isDoubtful,nextDoubtful,silenceSkips,skipTarget,savedSeconds,cleanText,transcriptStats,learnTerms,rememberTerms,promptWithTerms} from './intelligence.js';
-import {guardSingleWindow,closeIfOrphaned} from './window-guard.js';
+import {guardSingleWindow,closeIfOrphaned,fitLauncherWindow} from './window-guard.js';
 import {prefs,PREF_DEFAULTS,ACCENTS,applyVisualPrefs} from './prefs.js';
 import {FloatingRecorder} from './floating-recorder.js';
 import {runTour} from './tour.js';
@@ -688,6 +688,7 @@ function bindPreferences(){
    control.addEventListener('click',event=>{const button=event.target.closest('button[data-value]');if(button)void savePreference(control,button.dataset.value)});
    control.addEventListener('keydown',event=>{const step={ArrowRight:1,ArrowDown:1,ArrowLeft:-1,ArrowUp:-1}[event.key];if(!step)return;event.preventDefault();const index=buttons.findIndex(button=>button.getAttribute('aria-checked')==='true'),next=buttons[(index+step+buttons.length)%buttons.length];void savePreference(control,next.dataset.value);next.focus()})}
  }
+ prefs.subscribe((key,value)=>{if(key==='windowMode'){if(value==='fullscreen'&&!document.fullscreenElement)document.documentElement.requestFullscreen?.({navigationUI:'hide'}).catch(()=>{});else if(value!=='fullscreen'&&document.fullscreenElement)document.exitFullscreen().catch(()=>{})}});
  prefs.subscribe((key,value)=>{if(key==='doneNotification'&&value&&'Notification' in window&&Notification.permission!=='granted')void Notification.requestPermission().then(permission=>{if(permission!=='granted'){prefs.set('doneNotification',false);notify('Windows не разрешил уведомления от MONO. Разрешить можно в настройках сайта: значок замка в адресной строке → Уведомления.')}})});
  prefs.subscribe(key=>{if([null,'accent','glass','motion','textSize','showDoubts'].includes(key)){applyVisualPrefs();applyAccent(systemAccent);document.body.classList.toggle('hide-doubts',!prefs.get('showDoubts'))}if([null,'libraryView','librarySort'].includes(key)&&typeof renderLibrary==='function'){applyLibraryPrefs();void renderLibrary()}syncPreferenceControls()});
  applyVisualPrefs();document.body.classList.toggle('hide-doubts',!prefs.get('showDoubts'));syncPreferenceControls();
@@ -1983,6 +1984,7 @@ function wire(){
 }
 async function init(){
  void closeIfOrphaned();
+ fitLauncherWindow({mode:prefs.get('windowMode')});
  guardAppShell({onFind:()=>{const field=$({editor:'#editor-search',library:'#library-search',settings:'#settings-search'}[state.view]||'');if(field){field.focus();field.select?.()}else if(state.view!=='settings'){go('library');requestAnimationFrame(()=>$('#library-search')?.focus())}}});
  guardSingleWindow({onFocus:()=>{try{window.focus()}catch{}document.body.classList.add('window-called');setTimeout(()=>document.body.classList.remove('window-called'),900)},onDuplicate:showDuplicateWindow});
  applyTheme();wire();enhanceUI();await openDB();

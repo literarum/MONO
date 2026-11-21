@@ -127,7 +127,7 @@ class BrowserModeTests(unittest.TestCase):
 
     def test_a_window_of_the_default_browser_in_its_own_profile(self):
         self.assertEqual(mono._command_executable('"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --single-argument %1'),"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe")
-        self.assertEqual(mono.browser_window_command("http://127.0.0.1:4173",("chromium","C:/chrome.exe")),["C:/chrome.exe","--app=http://127.0.0.1:4173/?window=mono"])
+        self.assertEqual(mono.browser_window_command("http://127.0.0.1:4173",("chromium","C:/chrome.exe")),["C:/chrome.exe","--start-maximized","--app=http://127.0.0.1:4173/?window=mono"])
         self.assertEqual(mono.browser_window_command("http://127.0.0.1:4173",("firefox","C:/firefox.exe")),["C:/firefox.exe","-new-window","http://127.0.0.1:4173/?window=mono"])
         self.assertIsNone(mono.browser_window_command("http://127.0.0.1:4173",("other","C:/x.exe")))
         for command in [mono.browser_window_command("http://x",("chromium","c"))]:
