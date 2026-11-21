@@ -73,7 +73,7 @@ async function saveMarks(id){
 function showRecordSource(){
  const el=document.getElementById('record-source');if(!el||!captureSources)return;
  try{const {input,output}=captureSources.activeDevices?.()||{};const mode=captureSources.fallbackMode?.()||captureSources.value?.mode;
-  const parts=[];if(mode!=='system'&&input)parts.push('Микрофон: '+input);if(['system','both'].includes(mode)&&output)parts.push('Звук компьютера: '+output);
+  const parts=[];if(mode==='app'){const name=(captureSources.apps||[]).find(item=>item.processName===captureSources.value?.appName)?.name||captureSources.value?.appName;el.textContent=name?'Звук приложения: '+name:'Выберите приложение в «Что записывать»';return}if(mode!=='system'&&input)parts.push('Микрофон: '+input);if(['system','both'].includes(mode)&&output)parts.push('Звук компьютера: '+output);
   el.textContent=parts.join(' · ');}catch{el.textContent=''}
 }
 function syncLevelPreview(){
@@ -81,7 +81,7 @@ function syncLevelPreview(){
  const idle=state.view==='record'&&!state.capture&&!captureActive(nativeController?.snapshot)&&!document.hidden;
  if(!idle){if(state.previewRequested||levelPreview.wanted)stopLevelCheck();return}
  const choice=captureSources?.value||{},mode=captureSources?.fallbackMode?.()||choice.mode||'mic';
- if(mode==='system')return levelPreview.stop();
+ if(['system','app'].includes(mode))return levelPreview.stop();
  // The microphone is only listened to, never recorded, and only for 45 s per visit:
  // Windows shows its "microphone in use" indicator while the preview is open.
  if(!state.previewRequested||levelPreview.wanted||state.previewDone===state.viewVisit)return;

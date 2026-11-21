@@ -88,7 +88,7 @@ def execute(executable,manifest_sha):
                 while not capabilities.get('ready'):
                     if time.monotonic()>=deadline:raise RuntimeError('Native helper readiness timeout')
                     time.sleep(.05);capabilities=worker.ask('capture.capabilities')
-            if not capabilities['supported'] or set(capabilities['modes'])!={'mic','system','both'}:raise RuntimeError('Native helper capabilities mismatch')
+            if not capabilities['supported'] or not {'mic','system','both'}<=set(capabilities['modes'])<={'mic','system','both','app'}:raise RuntimeError('Native helper capabilities mismatch')
             devices=worker.ask('capture.devices')
             if not devices['inputDevices'] or not devices['outputDevices']:raise RuntimeError('Native helper did not enumerate endpoints')
             with io.BytesIO() as output:

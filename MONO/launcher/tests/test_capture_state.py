@@ -35,6 +35,17 @@ class CaptureStateTests(unittest.TestCase):
             if condition():return
             time.sleep(.01)
         self.fail('Capture state deadline: '+repr(self.service.status()))
+    def test_application_sound_is_one_system_track_labelled_with_the_program(self):
+        service=self.ready();self.assertIn('app',service.capabilities()['modes'])
+        apps=service.applications();self.assertTrue(apps['available']);self.assertEqual([app['processName'] for app in apps['applications']],['zoom','chrome'])
+        with self.assertRaises(CoreError) as missing:service.start({'mode':'app'})
+        self.assertEqual(missing.exception.code,'APP_NOT_SELECTED')
+        with self.assertRaises(CoreError):service.start({'mode':'app','processId':'4242'})
+        started=service.start({'mode':'app','processId':4242,'appName':'Zoom Workplace'})
+        self.spin(lambda:service.status()['state']=='recording' and len(self.config.get_library()._raw(started['recordId'])['_segments'])==1)
+        raw=self.config.get_library()._raw(started['recordId']);self.assertEqual(raw['_capture']['processId'],4242);self.assertEqual(raw['source'],'Звук приложения «Zoom Workplace»')
+        service.stop();self.spin(lambda:service.status()['state']=='ready');record=self.config.get_library().get_record(started['recordId'])
+        self.assertEqual(record['status'],'saved');self.assertEqual({track['id'] for track in record['tracks']},{'system'})
     def test_one_session_durable_parts_pause_gap_and_stop(self):
         service=self.ready();started=service.start({'mode':'both','inputId':'mic-fixture','outputId':'system-fixture'})
         with self.assertRaises(CoreError):service.start({'mode':'mic'})

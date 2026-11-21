@@ -7,16 +7,18 @@ internal enum PacketKind {Audio,Pause,Resume}
 internal sealed record AudioPacket(PacketKind Kind,byte[] Data,long StartNs);
 internal sealed class CaptureTrack : IDisposable
 {
-    readonly NativeSession session;readonly string? requestedId;readonly bool loopback;readonly BlockingCollection<AudioPacket> packets=new(128);
+    readonly NativeSession session;readonly string? requestedId;readonly bool loopback;readonly int? processId;readonly BlockingCollection<AudioPacket> packets=new(128);
     readonly Thread captureThread,writerThread;readonly AutoResetEvent sampleEvent=new(false);long queuedBytes;const long QueueLimit=8*1024*1024;
     public readonly ManualResetEventSlim Initialized=new(false),Started=new(false),PauseCompleted=new(false),ResumeCompleted=new(false),ProducerDone=new(false),WriterDone=new(false);
     public string Variant{get;private set;}="";public string Id{get;private set;}="";public string Track=>loopback?"system":"mic";public AudioFormat? Format{get;private set;}
-    public bool UsesDefault=>requestedId is null;public double Peak{get;private set;}public double Rms{get;private set;}public long ClippedFrames{get;private set;}
+    public bool UsesDefault=>requestedId is null&&processId is null;public bool IsApplication=>processId is not null;public double Peak{get;private set;}public double Rms{get;private set;}public long ClippedFrames{get;private set;}
     long safetyNs=250_000_000;bool producerPaused;
-    public CaptureTrack(NativeSession session,bool loopback,string? requestedId)
+    public CaptureTrack(NativeSession session,bool loopback,string? requestedId,int? processId=null)
     {
-        this.session=session;this.loopback=loopback;this.requestedId=requestedId;
-        captureThread=new Thread(Capture){IsBackground=true,Name="MONO WASAPI "+Track};captureThread.SetApartmentState(ApartmentState.STA);
+        this.session=session;this.loopback=loopback||processId is not null;this.requestedId=requestedId;this.processId=processId;
+        // Process loopback completes its activation on a system MTA thread; an MTA capture thread
+        // uses the activated client in the same apartment, without cross-apartment marshalling.
+        captureThread=new Thread(Capture){IsBackground=true,Name="MONO WASAPI "+Track};captureThread.SetApartmentState(processId is null?ApartmentState.STA:ApartmentState.MTA);
         writerThread=new Thread(Write){IsBackground=true,Name="MONO WAV "+Track};
     }
     public void Begin(){writerThread.Start();captureThread.Start();}
@@ -30,6 +32,11 @@ internal sealed class CaptureTrack : IDisposable
         bool eventDriven=true;IDeviceEnumerator? enumerator=null;IDevice? device=null;IAudioClient? client=null;IAudioCaptureClient? input=null;IntPtr mix=IntPtr.Zero;bool started=false;string operation="resolve-device";
         var mmcss=Realtime.EnterProAudio();
         try{
+          if(processId is int pid){
+            operation="process-loopback";var steps=new List<KeyValuePair<string,string>>();
+            try{client=ProcessLoopback.Open(pid,steps);}finally{Variant=string.Join(",",steps.Select(a=>a.Key+"="+a.Value));}
+            Id="process:"+pid;Format=new AudioFormat(ProcessLoopback.Format());
+          }else{
             enumerator=(IDeviceEnumerator)new DeviceEnumeratorCom();var flow=loopback?DataFlow.Render:DataFlow.Capture;
             ComAudio.Check(requestedId is null?enumerator.GetDefaultAudioEndpoint(flow,DeviceRole.Console,out device):enumerator.GetDevice(requestedId,out device));
             ComAudio.Check(device.GetState(out var state));if(state!=1)throw new AudioFailure("DEVICE_LOST");ComAudio.Check(device.GetId(out var id));Id=id;
@@ -44,9 +51,13 @@ internal sealed class CaptureTrack : IDisposable
             if(opened is null){int last=attempts.Count>0&&int.TryParse(attempts[^1].Value,System.Globalization.NumberStyles.HexNumber,null,out var h)?h:unchecked((int)0x80004005);ComAudio.Check(last);throw new AudioFailure("INTERNAL",last);}
             client=opened.Client;eventDriven=opened.EventDriven;
             try{Format=new AudioFormat(opened.Format);}catch(ArgumentException){throw new AudioFailure("UNSUPPORTED_FORMAT");}
-            operation="event-handle";if(eventDriven)ComAudio.Check(client.SetEventHandle(sampleEvent.SafeWaitHandle.DangerousGetHandle()));operation="stream-latency";ComAudio.Check(client.GetStreamLatency(out long latency));
-            operation="buffer-size";ComAudio.Check(client.GetBufferSize(out uint bufferFrames));safetyNs=Math.Max(250_000_000,checked(latency*100+ClockMath.FramesToNs(bufferFrames,Format.Rate)+50_000_000));
-            operation="capture-service";iid=typeof(IAudioCaptureClient).GUID;ComAudio.Check(client.GetService(ref iid,out var capture));input=(IAudioCaptureClient)capture;
+          }
+            operation="event-handle";if(eventDriven)ComAudio.Check(client.SetEventHandle(sampleEvent.SafeWaitHandle.DangerousGetHandle()));
+            // The process-loopback client may not report latency or buffer size; the safety margin then keeps its default.
+            operation="stream-latency";int latencyResult=client.GetStreamLatency(out long latency);if(processId is null)ComAudio.Check(latencyResult);else if(latencyResult<0)latency=0;
+            operation="buffer-size";int bufferResult=client.GetBufferSize(out uint bufferFrames);if(processId is null)ComAudio.Check(bufferResult);else if(bufferResult<0)bufferFrames=0;
+            safetyNs=Math.Max(250_000_000,checked(latency*100+ClockMath.FramesToNs(bufferFrames,Format.Rate)+50_000_000));
+            operation="capture-service";var captureIid=typeof(IAudioCaptureClient).GUID;ComAudio.Check(client.GetService(ref captureIid,out var capture));input=(IAudioCaptureClient)capture;
             Initialized.Set();session.StartGate.Wait(session.Cancellation);operation="start";ComAudio.Check(client.Start());started=true;Started.Set();long lastPacket=NativeSession.NowNs;
             while(!session.Cancellation.IsCancellationRequested){
                 if(session.PauseRequested&&!producerPaused){
@@ -75,6 +86,8 @@ internal sealed class CaptureTrack : IDisposable
                         int size=checked((int)(frames*Format.Alignment));if(size>QueueLimit)throw new AudioFailure("UNSUPPORTED_FORMAT");data=new byte[size];
                         if((flags&2)!=0){if(Format.Silence!=0)Array.Fill(data,Format.Silence);}else Marshal.Copy(pointer,data,0,size);
                         stamp=timestampError?-1:checked((long)qpc*100);
+                        // Only trust a process-loopback stamp that lies near now; otherwise the writer continues at its cursor.
+                        if(processId is not null&&stamp>=0&&Math.Abs(stamp-NativeSession.NowNs)>5_000_000_000)stamp=-1;
                     }finally{ComAudio.Check(input.ReleaseBuffer(frames));}
                     count++;
                     if(stamp>=0&&stamp<session.OriginNs){

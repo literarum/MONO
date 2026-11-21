@@ -15,6 +15,15 @@ try{
     Check(ClockMath.FramesToNs(635_040_000,44100)==14_400_000_000_000,"four-hour exact round trip");
     Check(SleepClock.SleptNs(5000,10_000_000)==4_000_000_000,"sleep detector compares boot time to awake time");
     Check(SleepClock.SleptNs(1000,10_000_000)==0,"normal elapsed time is not sleep");
+    var appFormat=new AudioFormat(ProcessLoopback.Format());
+    Check(appFormat.Rate==48000&&appFormat.Channels==2&&appFormat.Bits==16&&appFormat.Alignment==4&&appFormat.Encoding=="pcm_s16le","process loopback stream format is 48 kHz stereo PCM16");
+    if(ProcessLoopback.Supported){
+        // Real activation of Windows process loopback for this test process (silent, but the stream must open).
+        var steps=ProcessLoopback.SelfTest(Environment.ProcessId);
+        Check(steps.Contains("process-initialize=00000000")&&steps.Contains("capture-service=00000000"),"process loopback opens: "+steps);
+        Check(ProcessLoopback.Applications().All(row=>row["processId"] is int id&&id>0&&row["name"] is string),"application list rows");
+        Console.WriteLine("process loopback: "+steps);
+    }else Console.WriteLine("process loopback: not supported on build "+Environment.OSVersion.Version.Build);
     var receipts=new CommitWindow(maximumPending:2,maximumBytes:100,timeoutNs:1000);
     var hashA=new string('a',64);var hashB=new string('b',64);
     void Reject(Action action,string label){try{action();}catch(InvalidOperationException){Check(true,label);return;}throw new Exception(label);}

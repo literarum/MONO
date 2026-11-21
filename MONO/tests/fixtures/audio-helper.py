@@ -16,11 +16,11 @@ def segment(track,index,start):
     with file.open('r+b') as output:os.fsync(output.fileno())
     emit('segment',sessionId=session,track=track,index=index,relativeFile=file.name,format='pcm_s16le',sampleRate=16000,channels=1,startMonotonicNs=start,endMonotonicNs=start+2_000_000_000+(200000 if args.behavior=='clock-drift' else 0),frames=32000,sha256=hashlib.sha256(file.read_bytes()).hexdigest())
 if args.behavior=='slow-boot':time.sleep(12) # first launch on Windows: self-extracting single-file app + antivirus scan
-emit('ready',protocol=1,platform='fixture',supported=True,modes=['mic','system','both'],inputDevices=[{'id':'mic-fixture','name':'Fixture microphone','default':True}],outputDevices=[{'id':'system-fixture','name':'Fixture output','default':True}])
+emit('ready',protocol=1,platform='fixture',supported=True,modes=['mic','system','both'] if args.behavior=='windows-10' else ['mic','system','both','app'],windowsBuild=19045 if args.behavior=='windows-10' else 26100,inputDevices=[{'id':'mic-fixture','name':'Fixture microphone','default':True}],outputDevices=[{'id':'system-fixture','name':'Fixture output','default':True}])
 def heartbeat():
     while not closed.wait(.25):
         if session:
-            for track in ['mic','system'] if mode=='both' else [mode]:emit('level',sessionId=session,track=track,peak=0,rms=0,clippedFrames=0,monotonicNs=end)
+            for track in ['mic','system'] if mode=='both' else ['system'] if mode=='app' else [mode]:emit('level',sessionId=session,track=track,peak=0,rms=0,clippedFrames=0,monotonicNs=end)
 heart=threading.Thread(target=heartbeat,daemon=True)
 if args.behavior!='no-heartbeat':heart.start()
 for line in sys.stdin:
@@ -36,7 +36,7 @@ for line in sys.stdin:
         emit('state',sessionId=session,state='recording',monotonicNs=origin,originMonotonicNs=origin,inputId='mic-fixture',outputId='system-fixture')
         if previous:emit('level',sessionId=previous,track='mic',peak=.9,rms=.5,clippedFrames=0,monotonicNs=origin)
         if args.behavior=='unsafe':emit('segment',sessionId=session,track='mic',index=0,relativeFile='../escape.wav',format='pcm_s16le',sampleRate=16000,channels=1,startMonotonicNs=origin,frames=32000,sha256='0'*64);continue
-        for track in ['system'] if args.behavior=='wrong-track' else ['mic','system'] if mode=='both' else [mode]:segment(track,0,origin)
+        for track in ['system'] if args.behavior=='wrong-track' else ['mic','system'] if mode=='both' else ['system'] if mode=='app' else [mode]:segment(track,0,origin)
         end=origin+2_000_000_000
         if args.behavior=='fail-mid-take':
             # The system module fails for good after ~6 s of a take (driver or helper fault).
@@ -53,7 +53,7 @@ for line in sys.stdin:
         if args.behavior=='paused-data':segment('mic',1,origin+4_000_000_000)
     elif method=='resume':
         if args.behavior!='resume-delayed':emit('state',sessionId=session,state='recording',monotonicNs=origin+4_000_000_000)
-        for track in ['mic','system'] if mode=='both' else [mode]:segment(track,1,origin+4_000_000_000)
+        for track in ['mic','system'] if mode=='both' else ['system'] if mode=='app' else [mode]:segment(track,1,origin+4_000_000_000)
         end=origin+6_000_000_000
     elif method=='stop':
         if args.behavior!='ignore-stop':emit('state',sessionId=session,state='idle',monotonicNs=end)
@@ -63,6 +63,7 @@ for line in sys.stdin:
     elif method=='probe':
         ok=args.behavior not in ['open-failure','open-failure-unsafe']
         emit('probe',result={'opened':ok,'rawSupported':True,'mixFormat':{'tag':65534,'channels':2,'rate':48000,'bits':32},'browserFormat':'closest-match','initPlain':'00000000' if ok else '88890008',**({} if ok else {'initAutoconvert':'88890008','step':'initialize','hresult':'88890008'}),'frames':24000 if ok else 0,'peakDb':-12.0 if ok else -120.0,'silentFlag':False})
+    elif method=='applications':emit('applications',applications=[{'processId':4242,'processName':'zoom','name':'Zoom Workplace','title':'Встреча'},{'processId':5151,'processName':'chrome','name':'Google Chrome','title':'Конференция — Chrome'}])
     elif method=='enumerate':emit('devices',inputDevices=[{'id':'mic-fixture','name':'Fixture microphone','default':True}],outputDevices=[{'id':'system-fixture','name':'Fixture output','default':True}])
 closed.set()
 if heart.is_alive():heart.join(timeout=1)

@@ -3,7 +3,7 @@ import copy,re
 from local_core.paths import atomic_json
 from local_core.protocol import CoreError
 
-DEFAULTS={'version':1,'onboarding':{'completed':False,'keySkipped':False,'soundTested':False},'capture':{'mode':'browser','inputId':None,'outputId':None},'dismissedHints':[],'background':{'lingerSeconds':10,'finishWork':True,'keepAwake':True}}
+DEFAULTS={'version':1,'onboarding':{'completed':False,'keySkipped':False,'soundTested':False},'capture':{'mode':'browser','inputId':None,'outputId':None,'appName':None},'dismissedHints':[],'background':{'lingerSeconds':10,'finishWork':True,'keepAwake':True}}
 def invalid():raise CoreError('INVALID_PREFERENCES','Проверьте настройки приложения')
 class Preferences:
     def __init__(self,config):self.config=config
@@ -15,7 +15,8 @@ class Preferences:
         if 'capture' in patch:
             value=patch['capture']
             if not isinstance(value,dict) or set(value)-(set(DEFAULTS['capture'])|{'browserInputId'}):invalid()
-            if 'mode' in value and value['mode'] not in ['mic','system','both','browser']:invalid()
+            if 'mode' in value and value['mode'] not in ['mic','system','both','app','browser']:invalid()
+            if 'appName' in value and value['appName'] is not None and (not isinstance(value['appName'],str) or not 1<=len(value['appName'])<=120):invalid()
             for key in ['inputId','outputId','browserInputId']:
                 if key in value and value[key] is not None and (not isinstance(value[key],str) or not 1<=len(value[key])<=4096):invalid()
         if 'background' in patch:

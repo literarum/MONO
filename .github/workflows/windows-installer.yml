@@ -40,6 +40,17 @@ jobs:
         shell: pwsh
         run: dotnet run --project native/windows/tests/MonoAudio.Tests.csproj -c Release
 
+      - name: Source installer — syntax and the in-app module install (windows.ps1 -HelperOnly)
+        shell: powershell
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/install/windows.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count) { $errors | ForEach-Object { Write-Host $_ }; throw 'windows.ps1 has syntax errors' }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install/windows.ps1 -HelperOnly -Unattended
+          if ($LASTEXITCODE -ne 0) { Get-Content "$env:TEMP\mono-install.log" -ErrorAction SilentlyContinue; throw "windows.ps1 -HelperOnly exited with $LASTEXITCODE" }
+          if (!(Test-Path .build/capture-windows/bundle/MonoAudio.exe)) { throw 'windows.ps1 -HelperOnly did not build MonoAudio.exe' }
+          Remove-Item -Recurse -Force .build/capture-windows
+
       - name: Native capture module — publish MonoAudio.exe
         shell: pwsh
         run: |

@@ -12,9 +12,9 @@ internal static class Program
     }
     static void Devices(bool ready)
     {
-        var inventory=CoreAudio.Enumerate();var modes=new List<string>();if(inventory.Inputs.Count>0)modes.Add("mic");if(inventory.Outputs.Count>0)modes.Add("system");if(modes.Count==2)modes.Add("both");
+        var inventory=CoreAudio.Enumerate();var modes=new List<string>();if(inventory.Inputs.Count>0)modes.Add("mic");if(inventory.Outputs.Count>0)modes.Add("system");if(modes.Count==2)modes.Add("both");if(inventory.Outputs.Count>0&&ProcessLoopback.Supported)modes.Add("app");
         object Rows(IReadOnlyList<AudioDevice> rows)=>rows.Select(d=>new Dictionary<string,object?>{{"id",d.Id},{"name",d.Name},{"default",d.Default}}).ToArray();
-        Emit(ready?"ready":"devices",new(){{"protocol",1},{"platform","windows"},{"supported",modes.Count>0},{"modes",modes},{"inputDevices",Rows(inventory.Inputs)},{"outputDevices",Rows(inventory.Outputs)}});
+        Emit(ready?"ready":"devices",new(){{"protocol",1},{"platform","windows"},{"supported",modes.Count>0},{"modes",modes},{"windowsBuild",Environment.OSVersion.Version.Build},{"inputDevices",Rows(inventory.Inputs)},{"outputDevices",Rows(inventory.Outputs)}});
     }
     static void ValidateRoot(string value)
     {
@@ -35,6 +35,7 @@ internal static class Program
         if(!recent.Add(requestId))throw new AudioFailure("INTERNAL");order.Enqueue(requestId);if(order.Count>4096)recent.Remove(order.Dequeue());
         var parameters=request.GetProperty("params");if(parameters.ValueKind!=JsonValueKind.Object)throw new AudioFailure("INTERNAL");
         if(method=="enumerate"){Devices(false);return;}
+        if(method=="applications"){Emit("applications",new(){{"applications",ProcessLoopback.Applications()}});return;}
         if(method=="probe"){Emit("probe",new(){{"result",MicProbe.Run(DeviceId(parameters,"inputId"))}});return;}
         if(method=="diagnose"||method=="repair"){
             string? failure=null;
@@ -50,11 +51,13 @@ internal static class Program
         string? sid=parameters.TryGetProperty("sessionId",out var sidElement)?sidElement.GetString():null;
         if(method=="start"){
             string? mode=parameters.GetProperty("mode").GetString();
-            if(sid is null||!Guid.TryParseExact(sid,"D",out var guid)||guid.ToString("D")!=sid||mode is not ("mic" or "system" or "both"))throw new AudioFailure("INTERNAL");
+            if(sid is null||!Guid.TryParseExact(sid,"D",out var guid)||guid.ToString("D")!=sid||mode is not ("mic" or "system" or "both" or "app"))throw new AudioFailure("INTERNAL");
+            int? processId=null;
+            if(mode=="app"){if(!parameters.TryGetProperty("processId",out var pidElement)||!pidElement.TryGetInt32(out int pid)||pid<=0)throw new AudioFailure("INTERNAL");processId=pid;}
             // A start right after stop races the previous session's drain (up to ~3.5 s): wait for it
             // instead of reporting a busy device that is not busy.
             if(session is not null&&!session.Completed&&!session.WaitCompleted(5000)){Emit("error",new(){{"sessionId",sid},{"code","STOP_PENDING"}});return;}
-            session?.Dispose();session=new NativeSession(sid,root,mode,DeviceId(parameters,"inputId"),DeviceId(parameters,"outputId"),Emit);session.Begin();return;
+            session?.Dispose();session=new NativeSession(sid,root,mode,DeviceId(parameters,"inputId"),DeviceId(parameters,"outputId"),Emit,processId);session.Begin();return;
         }
         if(session is null||sid!=session.Id)return;
         switch(method){case "pause":session.Pause();break;case "resume":session.Resume();break;case "stop":session.RequestStop();break;case "commitAck":session.Acknowledge(parameters.GetProperty("track").GetString()??"",parameters.GetProperty("index").GetInt32(),parameters.GetProperty("sha256").GetString()??"");break;default:session.Fail("INTERNAL");break;}

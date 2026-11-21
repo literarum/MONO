@@ -2,6 +2,7 @@
 // fixture helper (tests/fixtures/audio-helper.py) instead of a sound card:
 // global hotkey, bookmarks, two-track meeting profile, undo of trash, recovery card,
 // and recording that continues after the audio device disappears.
+import {showPane} from '../helpers/settings-pane.mjs';
 import test from 'node:test';import assert from 'node:assert/strict';
 import {localServer} from '../helpers/local-server.mjs';import {until} from '../helpers/until.mjs';import {createRequire} from 'node:module';
 import {writeFileSync,chmodSync,mkdtempSync,readFileSync} from 'node:fs';import {tmpdir} from 'node:os';import path from 'node:path';import {fileURLToPath} from 'node:url';
@@ -231,7 +232,7 @@ test('browser window: the launcher sees the open page (by token only); the Kaspe
  assert.ok(pages>=1,'the open page is counted');
  assert.equal((await fetch(server.url+'/api/launcher/clients')).status,403,'no token, no answer');
  await page.evaluate(()=>{location.hash='#settings'});
- await page.click('.preflight-deep');await page.waitForSelector('#deep-browser',{timeout:60000});
+ await showPane(page,'.preflight-deep');await page.click('.preflight-deep');await page.waitForSelector('#deep-browser',{timeout:60000});
  assert.equal((await page.textContent('#deep-browser')).trim(),'Скопировать адрес MONO');
  await page.click('#deep-browser');
  await page.waitForFunction(()=>/Откройте Chrome или Edge сами/.test(document.querySelector('#deep-browser-hint')?.textContent||''),null,{timeout:10000});
@@ -254,7 +255,7 @@ test('deep diagnostics: when Kaspersky refuses audio to MONO alone, it is named 
   await fetch('/api/local/library/configure',{method:'POST',headers,body:JSON.stringify({useDefault:true})});
   await fetch('/api/local/preferences',{method:'PATCH',headers,body:JSON.stringify({onboarding:{completed:true,keySkipped:true,soundTested:true}})})});
  await page.reload();await page.waitForFunction(()=>document.querySelector('#nav-count'));await page.evaluate(()=>{location.hash='#settings'});
- await page.waitForSelector('.preflight-deep',{timeout:30000});await page.click('.preflight-deep');
+ await showPane(page,'.preflight-deep');await page.waitForSelector('.preflight-deep',{timeout:30000});await page.click('.preflight-deep');
  await page.waitForSelector('#deep-browser',{timeout:60000});
  const text=await page.textContent('#modal-text');
  assert.match(text,/Kaspersky не даёт MONO получать звук микрофона/);assert.match(text,/Discord/);
@@ -275,7 +276,7 @@ test('deep diagnostics tells a browser-only fault from a broken microphone: the 
   await fetch('/api/local/library/configure',{method:'POST',headers,body:JSON.stringify({useDefault:true})});
   await fetch('/api/local/preferences',{method:'PATCH',headers,body:JSON.stringify({onboarding:{completed:true,keySkipped:true,soundTested:true}})})});
  await page.reload();await page.waitForFunction(()=>document.querySelector('#nav-count'));await page.evaluate(()=>{location.hash='#settings'});
- await page.waitForSelector('.preflight-deep',{timeout:30000});await page.click('.preflight-deep');
+ await showPane(page,'.preflight-deep');await page.waitForSelector('.preflight-deep',{timeout:30000});await page.click('.preflight-deep');
  await page.waitForSelector('#deep-copy',{timeout:60000});
  const text=await page.textContent('#modal-text');
  assert.match(text,/Браузер не может открыть микрофон, системный модуль — может/);
@@ -309,7 +310,7 @@ test('Play at the end starts over; settings fill the width with an index and a t
  await page.click('.nav-link[data-view=settings]');await page.waitForFunction(()=>document.querySelectorAll('#settings-index a').length>=6);
  const layout=await page.evaluate(()=>{const grid=document.querySelector('#view-settings .settings-grid'),index=document.querySelector('#settings-index'),main=document.querySelector('#main');return {grid:grid.getBoundingClientRect().right,main:main.getBoundingClientRect().right,index:index.getBoundingClientRect().width,labels:[...index.querySelectorAll('a')].map(a=>a.textContent)}});
  assert.ok(layout.main-layout.grid<80,`settings stop ${layout.main-layout.grid}px short of the right edge`);assert.ok(layout.labels.includes('Groq')&&layout.labels.includes('Архив'));
- await page.click('.segmented button[data-value=light]');assert.equal(await page.evaluate(()=>document.body.dataset.theme),'light');
+ await showPane(page,'.segmented button[data-value=light]');await page.click('.segmented button[data-value=light]');assert.equal(await page.evaluate(()=>document.body.dataset.theme),'light');
  assert.equal(await page.getAttribute('.segmented button[data-value=light]','aria-checked'),'true');
  await page.click('.segmented button[data-value=dark]');assert.equal(await page.evaluate(()=>document.body.dataset.theme),'dark');
  // the pre-flight check no longer guesses that another app holds the microphone
@@ -377,7 +378,9 @@ test('round 4: floating recorder and pause state, sidebar badge, library selecti
  await page.click('#settings-index a[title="О MONO"]');await page.waitForFunction(()=>document.querySelector('#settings-index a.active')?.title==='О MONO'&&!document.querySelector('#about-card').classList.contains('pane-hidden'));
  await page.fill('#settings-search','курс');await page.waitForSelector('.settings-result');await page.keyboard.press('Enter');await page.waitForFunction(()=>document.querySelector('#settings-index a.active')?.title==='Расходы');
  // the tour runs to the end and is remembered
- await page.click('#start-tour');await page.waitForSelector('.tour');for(let i=0;i<9;i++){await page.click('.tour-next');await page.waitForTimeout(150)}
+ await showPane(page,'#start-tour');await page.click('#start-tour');await page.waitForSelector('.tour');
+ // each step changes behind a short haze; «Далее» is pressed when the card is on screen
+ for(let i=0;i<40&&await page.locator('.tour').count();i++){await page.locator('.tour-next').click({timeout:5000}).catch(()=>{});await page.waitForTimeout(450)}
  await page.waitForFunction(()=>!document.querySelector('.tour'));assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('mono-prefs-1')).tourDone),true);
  assert.deepEqual(page.errors,[]);
 });
@@ -391,4 +394,43 @@ test('the USD→RUB rate is taken automatically and shown with its source; a typ
  assert.match(await page.textContent('#rate-source'),/79,50 ₽ на 21\.11\.2026/);
  await page.fill('#setting-rate','90');await page.press('#setting-rate','Tab');
  await page.waitForFunction(()=>!document.querySelector('[data-pref=rateAuto]').checked);assert.deepEqual(page.errors,[]);
+});
+
+/** Picks an option of MONO's own select the way a person does: open it, click the row. */
+async function choose(page,select,text){await page.locator(select+' ~ .select-control').click();await page.locator('.select-popup [role=option]',{hasText:text}).first().click()}
+
+test('«Что записывать»: all four ways are listed; «Выбранное приложение» records one program and names it',{skip,timeout:90000},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('normal')});const page=await open(t,server,'browser');
+ await page.evaluate(()=>{location.hash='#record'});
+ const picker=page.locator('.side-card [data-source="mode"]');await picker.waitFor({state:'attached'});
+ await page.waitForFunction(()=>document.querySelectorAll('.side-card [data-source="mode"] option').length>=4);
+ const names=await picker.locator('option').allTextContents();
+ for(const name of ['Микрофон','Звук компьютера','Звук компьютера + микрофон','Выбранное приложение'])assert.ok(names.some(item=>item.startsWith(name)),name+' is listed: '+names.join(' | '));
+ await choose(page,'.side-card [data-source="mode"]','Выбранное приложение');
+ const app=page.locator('.side-card [data-source="appName"]');await page.waitForFunction(()=>[...document.querySelectorAll('.side-card [data-source="appName"] option')].some(option=>option.value==='zoom'));
+ await choose(page,'.side-card [data-source="appName"]','Zoom Workplace');
+ await until(page,async()=>(await (await fetch('/api/local/preferences')).json()).capture.appName==='zoom',null,{timeout:5000,polling:200});
+ assert.equal(await page.locator('.side-card [data-input]').isHidden(),true,'no microphone row: only the program is recorded');
+ await page.waitForFunction(()=>/Звук приложения: Zoom Workplace/.test(document.querySelector('#record-source')?.textContent||''));
+ await page.screenshot({path:path.join(tmpdir(),'mono-app-source.png')});
+ await page.click('#start-record');await page.waitForFunction(()=>!document.querySelector('#stop-record').hidden,null,{timeout:15000});
+ await page.waitForFunction(()=>/Подтверждено/.test(document.querySelector('#record-saved').textContent),null,{timeout:15000});
+ await page.click('#stop-record');
+ await until(page,async()=>{const {items}=await (await fetch('/api/local/records?limit=1&q=&trash=false')).json();return items[0]?.status==='saved'},null,{timeout:15000,polling:300});
+ const [take]=await records(page);assert.equal(take.source,'Звук приложения «Zoom Workplace»');assert.deepEqual(take.tracks.map(track=>track.id),['system']);
+ assert.deepEqual(page.errors,[]);
+});
+
+test('«Выбранное приложение» on Windows 10 explains why and switches to «Звук компьютера» in one click',{skip,timeout:60000},async t=>{
+ const server=await localServer(t,{MONO_AUDIO_HELPER:helper('windows-10')});const page=await open(t,server,'browser');
+ await page.evaluate(()=>{location.hash='#record'});
+ const picker=page.locator('.side-card [data-source="mode"]');await page.waitForFunction(()=>document.querySelectorAll('.side-card [data-source="mode"] option').length>=4);
+ await choose(page,'.side-card [data-source="mode"]','Выбранное приложение');
+ const panel=page.locator('.side-card .source-unavailable');await panel.waitFor({state:'visible'});await page.waitForTimeout(500);
+ assert.match(await panel.textContent(),/Windows 11.*19045/s);
+ await page.screenshot({path:path.join(tmpdir(),'mono-app-unavailable.png')});
+ await panel.locator('.source-fix').click();
+ await until(page,async()=>(await (await fetch('/api/local/preferences')).json()).capture.mode==='system',null,{timeout:5000,polling:200});
+ await panel.waitFor({state:'hidden'});
+ assert.deepEqual(page.errors,[]);
 });

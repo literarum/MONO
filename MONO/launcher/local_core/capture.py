@@ -6,7 +6,7 @@ from local_core.protocol import CoreError,MAX_LINE
 
 ACTIVE={'requesting','recording','paused','stopping'}
 ERRORS={'ACCESS_DENIED','DEVICE_LOST','DEVICE_BUSY','UNSUPPORTED_FORMAT','NOT_SUPPORTED','IO_ERROR','DISCONTINUITY','SLEEP','INTERNAL','START_TIMEOUT','STOP_PENDING'}
-FAILURE_STAGES={'coordinator'}|{f'capture-{track}/{operation}' for track in ['mic','system'] for operation in ['resolve-device','activate','mix-format','initialize','event-handle','stream-latency','buffer-size','capture-service','start','next-packet','packet-buffer']}
+FAILURE_STAGES={'coordinator'}|{f'capture-{track}/{operation}' for track in ['mic','system'] for operation in ['process-loopback','resolve-device','activate','mix-format','initialize','event-handle','stream-latency','buffer-size','capture-service','start','next-packet','packet-buffer']}
 
 def failure_details(event):
     stage=event.get('stage');native=event.get('nativeCode')
@@ -43,6 +43,8 @@ def wave_descriptor(file):
     if tag==3 and bits not in [32,64] or tag==1 and bits==64:fail('INVALID_AUDIO')
     encoding=f'pcm_f{bits}le' if tag==3 else 'pcm_u8' if bits==8 else f'pcm_s{bits}le'
     return {'sampleRate':rate,'channels':channels,'bitsPerSample':bits,'formatTag':tag,'format':encoding,'frames':data//alignment}
+
+TRACKS={'mic':['mic'],'system':['system'],'both':['mic','system'],'app':['system']}
 
 class CaptureService:
     def __init__(self,config,helper_command=None):
@@ -83,7 +85,27 @@ class CaptureService:
             except CoreError:continue
             if path.is_file():return [str(path)]
         return None
+    def install_helper(self):
+        """Builds the recording module with the source installer (windows.ps1 -HelperOnly), on the
+        person's click. The module process is closed first: Windows cannot replace a running exe."""
+        if self.active:fail('CAPTURE_BUSY')
+        if os.name!='nt':return {'started':False,'reason':'NOT_WINDOWS'}
+        if os.environ.get('MONO_AUDIO_HELPER'):return {'started':False,'reason':'PACKAGED'}
+        script=Path(__file__).resolve().parents[2]/'scripts'/'install'/'windows.ps1'
+        if not script.is_file():return {'started':False,'reason':'NO_INSTALLER'}
+        if self.installing:return {'started':True,'running':True}
+        self.close()
+        try:self.installer=subprocess.Popen(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',str(script),'-Gui','-HelperOnly'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW)
+        except OSError:return {'started':False,'reason':'NO_POWERSHELL'}
+        return {'started':True,'running':True}
+    @property
+    def installing(self):installer=getattr(self,'installer',None);return installer is not None and installer.poll() is None
+    def install_status(self):
+        installer=getattr(self,'installer',None)
+        if installer is None:return {'running':False,'exitCode':None}
+        code=installer.poll();return {'running':code is None,'exitCode':code}
     def _launch(self):
+        if self.installing:return False
         command=self._command()
         if not command:return False
         library=self.config.get_library()
@@ -156,17 +178,34 @@ class CaptureService:
         for field,devices in [('inputId','inputDevices'),('outputId','outputDevices')]:
             value=params.get(field)
             if value is not None and (not isinstance(value,str) or value not in {device['id'] for device in self.capability.get(devices,[])}):fail('DEVICE_LOST')
+        process_id=params.get('processId');app_name=params.get('appName')
+        if mode=='app':
+            if not integer(process_id,1) or process_id>2**32-1:fail('APP_NOT_SELECTED')
+            if app_name is not None and (not isinstance(app_name,str) or len(app_name)>120):fail('INVALID_CAPTURE')
         self.session_id=str(uuid.uuid4());self.mode=mode;self.origin=None;self.end_ns=None;self.pause_ns=None;self.pending=None;self.levels={};self.error=None;self.saved_bytes=0
         self.level_seen={};self.failure_details=None
         self.test_deadline=None;self.resume_requested=False
-        source={'mic':'Микрофон','system':'Звук компьютера','both':'Микрофон и компьютер'}[mode]
+        source={'mic':'Микрофон','system':'Звук компьютера','both':'Звук компьютера + микрофон','app':'Звук приложения'+(f' «{app_name}»' if mode=='app' and app_name else '')}[mode]
         record=self.library.create_record({'title':'Запись '+time.strftime('%d.%m.%Y %H:%M'),'mime':'audio/wav','source':source,'status':'requesting'})
         self.record_id=record['id'];raw=self.library._raw(self.record_id)
-        raw['_capture']={'sessionId':self.session_id,'mode':mode,'inputId':params.get('inputId'),'outputId':params.get('outputId'),'sessionDirectory':self.root.relative_to(self.library.root).as_posix()};raw['version']+=1;self.library._commit(raw)
+        raw['_capture']={'sessionId':self.session_id,'mode':mode,'inputId':params.get('inputId'),'outputId':None if mode=='app' else params.get('outputId'),**({'processId':process_id,'appName':app_name} if mode=='app' else {}),'sessionDirectory':self.root.relative_to(self.library.root).as_posix()};raw['version']+=1;self.library._commit(raw)
         self.state='requesting';self.last_seen=time.monotonic();self.deadline=time.monotonic()+15
-        try:self._send('start',{'sessionId':self.session_id,'mode':mode,'inputId':params.get('inputId'),'outputId':params.get('outputId')})
+        try:self._send('start',{'sessionId':self.session_id,'mode':mode,'inputId':params.get('inputId'),'outputId':params.get('outputId'),**({'processId':process_id} if mode=='app' else {})})
         except CoreError:self._interrupt('CAPTURE_HELPER_UNAVAILABLE');raise
         return self.status()
+    def applications(self):
+        """Programs with a window whose sound can be recorded on its own (Windows process loopback)."""
+        if not self._launch():return {'available':False,'reason':'HELPER_UNAVAILABLE','applications':[]}
+        self.tick()
+        if self.child is None or self.child.poll() is not None:return {'available':False,'reason':'HELPER_UNAVAILABLE','applications':[]}
+        if not self.ready:return {'available':False,'reason':'STARTING','applications':[]}
+        if 'app' not in self.capability.get('modes',[]):return {'available':False,'reason':'APP_CAPTURE_UNSUPPORTED','windowsBuild':self.capability.get('windowsBuild'),'applications':[]}
+        before=getattr(self,'applications_seq',0);self._send('applications',{})
+        until=time.monotonic()+5
+        while getattr(self,'applications_seq',0)==before and time.monotonic()<until:
+            self.tick();time.sleep(.02)
+        if getattr(self,'applications_seq',0)==before:return {'available':False,'reason':'TIMEOUT','applications':[]}
+        return {'available':True,'applications':self.applications_list}
     def diagnose(self,repair=None):
         """Windows view of every microphone: present, disabled, muted, input level.
         repair={'inputId','mute','minimumVolume'} changes one endpoint first (on user intent)."""
@@ -242,7 +281,7 @@ class CaptureService:
         if self.child and self.child.poll() is None:self.child.kill()
         if code=='ACCESS_DENIED':
             if self.mode in ['mic','both']:self.access['microphone']='denied'
-            if self.mode in ['system','both']:self.access['system']='denied'
+            if self.mode in ['system','both','app']:self.access['system']='denied'
         if was_active and self.record_id:
             try:
                 raw=self.library._raw(self.record_id);raw['status']='interrupted';raw['_capture']['errorCode']=code;raw['version']+=1;self.library._commit(raw)
@@ -275,8 +314,8 @@ class CaptureService:
                 if not isinstance(values,list) or len(values)>256 or any(not isinstance(d,dict) or not isinstance(d.get('id'),str) or len(d['id'])>4096 or not isinstance(d.get('name'),str) or len(d['name'])>500 or type(d.get('default')) is not bool for d in values):fail('INVALID_CAPTURE_PROTOCOL')
                 self.capability[field]=values
             if kind=='ready':
-                if type(event.get('supported')) is not bool or not isinstance(event.get('modes'),list) or any(mode not in ['mic','system','both'] for mode in event['modes']):fail('INVALID_CAPTURE_PROTOCOL')
-                self.capability.update({'supported':event['supported'],'modes':event['modes']});self.ready=event['supported']
+                if type(event.get('supported')) is not bool or not isinstance(event.get('modes'),list) or any(mode not in ['mic','system','both','app'] for mode in event['modes']):fail('INVALID_CAPTURE_PROTOCOL')
+                self.capability.update({'supported':event['supported'],'modes':event['modes'],**({'windowsBuild':event['windowsBuild']} if integer(event.get('windowsBuild')) else {})});self.ready=event['supported']
                 if not self.ready:self.error='NOT_SUPPORTED'
                 if not self.active:self.state='ready' if self.ready else 'error'
             return
@@ -285,6 +324,15 @@ class CaptureService:
             if not isinstance(result,dict) or len(json.dumps(result))>4000:fail('INVALID_CAPTURE_PROTOCOL')
             allowed={'opened','step','code','hresult','id','rawSupported','mixFormat','browserFormat','initPlain','initAutoconvert','frames','peakDb','silentFlag','attempts','variant','mtaEvent'}
             self.probe_result={k:v for k,v in result.items() if k in allowed and k!='id'};self.probe_seq=getattr(self,'probe_seq',0)+1
+            return
+        if kind=='applications':
+            rows=event.get('applications')
+            if not isinstance(rows,list) or len(rows)>256:fail('INVALID_CAPTURE_PROTOCOL')
+            apps=[]
+            for row in rows:
+                if not isinstance(row,dict) or not integer(row.get('processId'),1) or not isinstance(row.get('name'),str) or not isinstance(row.get('processName'),str):fail('INVALID_CAPTURE_PROTOCOL')
+                apps.append({'processId':row['processId'],'processName':row['processName'][:120],'name':row['name'][:120],'title':row.get('title')[:200] if isinstance(row.get('title'),str) else ''})
+            self.applications_list=apps;self.applications_seq=getattr(self,'applications_seq',0)+1
             return
         if kind=='diagnosis':
             inputs=event.get('inputs')
@@ -306,7 +354,7 @@ class CaptureService:
         elif kind=='segment':self._segment(event)
         elif kind=='level':
             track=event.get('track')
-            if track not in ['mic','system'] or self.mode!='both' and track!=self.mode or any(type(event.get(field)) not in [int,float] or not math.isfinite(event[field]) or not 0<=event[field]<=1000 for field in ['peak','rms']):fail('INVALID_CAPTURE_PROTOCOL')
+            if track not in TRACKS.get(self.mode,[]) or any(type(event.get(field)) not in [int,float] or not math.isfinite(event[field]) or not 0<=event[field]<=1000 for field in ['peak','rms']):fail('INVALID_CAPTURE_PROTOCOL')
             if not integer(event.get('clippedFrames',0)) or event.get('clippedFrames',0)>2**53-1:fail('INVALID_CAPTURE_PROTOCOL')
             self.levels[track]={'peak':event['peak'],'rms':event['rms'],'clippedFrames':event.get('clippedFrames',0)}
             self.level_seen[track]=time.monotonic()
@@ -336,14 +384,14 @@ class CaptureService:
             if self.pause_ns is not None:self._gap(self.pause_ns,stamp,'paused');self.pause_ns=None
             raw=self.library._raw(self.record_id);raw['status']='recording';raw['_capture']['originMonotonicNs']=self.origin
             for field in ['inputId','outputId']:
-                relevant=self.mode=='both' or self.mode==('mic' if field=='inputId' else 'system')
+                relevant=('mic' if field=='inputId' else 'system') in TRACKS.get(self.mode,[])
                 if not relevant:continue
                 previous=raw['_capture'].get(field);actual=event.get(field,previous)
                 if not isinstance(actual,str) or not actual or len(actual)>4096 or previous is not None and actual!=previous:fail('DEVICE_LOST')
                 raw['_capture'][field]=actual
             raw['version']+=1;self.library._commit(raw);self.state='recording';self.pending=None;self.resume_requested=False
             if self.mode in ['mic','both']:self.access['microphone']='available'
-            if self.mode in ['system','both']:self.access['system']='available'
+            if self.mode in ['system','both','app']:self.access['system']='available'
         elif state=='paused':
             if self.state=='stopping':return
             if self.state!='recording' or self.pending!='pause':fail('INVALID_CAPTURE_STATE')
@@ -360,7 +408,7 @@ class CaptureService:
     def _segment(self,event):
         if self.origin is None:fail('INVALID_CAPTURE_PROTOCOL')
         track=event.get('track');index=event.get('index');frames=event.get('frames');start=event.get('startMonotonicNs')
-        if track not in ['mic','system'] or self.mode!='both' and track!=self.mode or not integer(index) or index>999999 or not integer(frames,1) or not integer(start) or start<self.origin or start-self.origin>30*86400*10**9:fail('INVALID_CAPTURE_PROTOCOL')
+        if track not in TRACKS.get(self.mode,[]) or not integer(index) or index>999999 or not integer(frames,1) or not integer(start) or start<self.origin or start-self.origin>30*86400*10**9:fail('INVALID_CAPTURE_PROTOCOL')
         name=event.get('relativeFile');sha=event.get('sha256')
         if name!=f'{track}-{index:06}.wav' or not isinstance(sha,str) or not re.fullmatch('[a-f0-9]{64}',sha):fail('INVALID_CAPTURE_PROTOCOL')
         if self.pause_ns is not None and start>=self.pause_ns:

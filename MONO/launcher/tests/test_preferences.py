@@ -13,7 +13,7 @@ class PreferencesTests(unittest.TestCase):
             config=LocalConfig();config.configure({'useDefault':True});original=config.settings['libraryRoot'];prefs=Preferences(config)
             self.assertFalse(prefs.get()['onboarding']['completed']);prefs.update({'onboarding':{'keySkipped':True},'capture':{'mode':'both','inputId':'selected-mic','outputId':'selected-output'},'dismissedHints':['meeting-headphones']});config.close();config=LocalConfig()
             try:
-                stored=Preferences(config).get();self.assertTrue(stored['onboarding']['keySkipped']);self.assertFalse(stored['onboarding']['soundTested']);self.assertEqual(stored['capture'],{'mode':'both','inputId':'selected-mic','outputId':'selected-output'});self.assertEqual(stored['dismissedHints'],['meeting-headphones']);self.assertEqual(config.settings['libraryRoot'],original)
+                stored=Preferences(config).get();self.assertTrue(stored['onboarding']['keySkipped']);self.assertFalse(stored['onboarding']['soundTested']);self.assertEqual(stored['capture'],{'mode':'both','inputId':'selected-mic','outputId':'selected-output','appName':None});self.assertEqual(stored['dismissedHints'],['meeting-headphones']);self.assertEqual(config.settings['libraryRoot'],original)
                 before=copy.deepcopy(config.settings)
                 for change in [{'libraryRoot':'other'},{'capture':{'mode':'invalid'}},{'onboarding':{'completed':'true'}},{'onboarding':{'arbitrary':True}},{'dismissedHints':['x'*101]},{'key':'gsk_do_not_store_here'},{'capture':{'inputId':'x'*4097}}]:
                     with self.subTest(change=list(change)):

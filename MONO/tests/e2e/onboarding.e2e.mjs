@@ -70,7 +70,7 @@ test('no folder at first launch: «Начать запись» offers to choose 
  await page.click('#stop-record');await page.waitForFunction(()=>!document.querySelector('#start-record').hidden,null,{timeout:20000});
  // later, Settings → another folder: it is used, no «недоступна»
  writeFileSync(path.join(server.root,'test-picker.json'),JSON.stringify({create:second,open:second}));
- await page.click('.nav-link[data-view=settings]');await page.click('#request-persistence');await page.waitForSelector('#modal:not([hidden])');
+ await page.click('.nav-link[data-view=settings]');await page.evaluate(()=>{const card=document.querySelector('#request-persistence').closest('.settings-card');document.querySelector(`#settings-index a[data-target="${card.id}"]`).click()});await page.click('#request-persistence');await page.waitForSelector('#modal:not([hidden])');
  await page.click('#modal-actions button:has-text("Выбрать папку")');
  await page.waitForFunction(()=>/Вторая папка/.test(document.querySelector('#storage-persistence')?.textContent||''),null,{timeout:30000});
  status=await page.evaluate(async()=>(await fetch('/api/local/status')).json());assert.equal(status.libraryAvailable,true);assert.match(status.libraryPath,/Вторая папка$/);

@@ -10,7 +10,7 @@ export class GuidanceModel{
    if(capture.state==='paused')return visible(hint('pause-timeline','Запись на паузе','Звук сейчас не записывается. На временной шкале сохранится пауза.'));
    if(capture.state==='ready'&&capture.recordId)return visible(hint('after-recording','Сначала прослушайте','Проверьте начало записи и слышимость участников. Расшифровку можно запустить после прослушивания.','listen'));
    if(!['idle','ready'].includes(capture.state))return null;
-   return visible(['mic','browser'].includes(mode)?hint('first-mic','Перед началом','Пять секунд проверки помогут убедиться, что выбран нужный микрофон.','sound-test'):hint('meeting','Перед встречей','Выберите «Микрофон и компьютер», если нужен ваш голос. Наушники помогут избежать эха.','sound-test'));
+   return visible(['mic','browser'].includes(mode)?hint('first-mic','Перед началом','Пять секунд проверки помогут убедиться, что выбран нужный микрофон.','sound-test'):mode==='app'?hint('meeting-app','Перед встречей','Запишется только звук выбранной программы. Если нужен и ваш голос, выберите «Звук компьютера + микрофон».','sound-test'):hint('meeting','Перед встречей','Выберите «Звук компьютера + микрофон», если нужен ваш голос. Наушники помогут избежать эха.','sound-test'));
   }
   let quiet=null,loud=null;
   for(const track of ['mic','system']){

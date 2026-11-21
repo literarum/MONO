@@ -12,11 +12,12 @@ internal sealed class NativeSession : IDisposable
     public bool RecordingPublished{get;private set;}public long StopNs=>Interlocked.Read(ref stopNs) is var value&&value>0?value:NowNs;
     public static long NowNs=>ClockMath.QpcToNs(Stopwatch.GetTimestamp(),Stopwatch.Frequency);
     public bool Completed=>coordinator?.IsCompleted??false;
-    public NativeSession(string id,string root,string mode,string? inputId,string? outputId,Action<string,Dictionary<string,object?>> emit)
+    public NativeSession(string id,string root,string mode,string? inputId,string? outputId,Action<string,Dictionary<string,object?>> emit,int? processId=null)
     {
         Id=id;Root=root;this.emit=emit;
         if(mode is "mic" or "both")tracks.Add(new CaptureTrack(this,false,inputId));
         if(mode is "system" or "both")tracks.Add(new CaptureTrack(this,true,outputId));
+        if(mode=="app"){if(processId is not int pid||pid<=0)throw new AudioFailure("INTERNAL");tracks.Add(new CaptureTrack(this,true,null,pid));}
         if(tracks.Count==0)throw new AudioFailure("NOT_SUPPORTED");
     }
     void State(string value,long stamp)=>emit("state",new(){{"sessionId",Id},{"state",value},{"monotonicNs",stamp},{"originMonotonicNs",OriginNs},{"inputId",tracks.FirstOrDefault(t=>t.Track=="mic")?.Id},{"outputId",tracks.FirstOrDefault(t=>t.Track=="system")?.Id}});

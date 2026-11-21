@@ -128,7 +128,8 @@ def record(value):
         capture=value['_capture']
         if not isinstance(capture,dict):invalid()
         identifier(capture.get('sessionId'))
-        if capture.get('mode') not in ['mic','system','both']:invalid()
+        if capture.get('mode') not in ['mic','system','both','app']:invalid()
+        if capture.get('mode')=='app' and (not integer(capture.get('processId'),1,2**32-1) or capture.get('appName') is not None and not string(capture['appName'],120,False)):invalid()
         for key in ['inputId','outputId']:
             if capture.get(key) is not None and not string(capture[key],4096,False):invalid()
         if 'originMonotonicNs' in capture and not integer(capture['originMonotonicNs'],maximum=2**63-1):invalid()

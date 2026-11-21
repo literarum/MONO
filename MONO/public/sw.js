@@ -1,4 +1,4 @@
-const CACHE='mono-shell-v40';
+const CACHE='mono-shell-v41';
 // Static modules only; credential requests remain excluded with every /api/ URL.
 const APP_FILES=['/','/index.html','/styles.css','/ui/tokens.css','/ui/controls.css','/ui/scroll-area.css','/ui/motion.css','/ui/refine.css','/ui/system.css','/ui/aurora.css','/ui/index.js','/ui/select.js','/ui/select-model.js','/ui/layers.js','/ui/scroll-area.js','/ui/scroll-model.js','/ui/drawer.js','/ui/drawer-model.js','/app.js','/db.js','/legacy-db.js','/library-client.js','/library-migration.js','/backup-core.js','/manifest.webmanifest','/icon.svg','/icon-maskable.svg','/icon-192.png','/icon-512.png','/icon-maskable-512.png'];
 APP_FILES.push('/credentials.js','/capture-client.js','/native-capture.js','/native-sources.js','/onboarding-model.js','/onboarding.js','/help.js','/help-model.js','/media-interlock.js');

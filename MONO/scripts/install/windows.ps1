@@ -1,7 +1,7 @@
 ﻿# MONO Transcribe — установка из исходников для Windows 10/11.
 # Запускается из «Установить и запустить MONO.cmd» (окно установки без консоли: -Gui). Совместим с Windows PowerShell 5.1.
 # Файл сохранён в UTF-8 с BOM: без BOM PowerShell 5.1 читает кириллицу как ANSI.
-param([switch]$NoLaunch,[switch]$Unattended,[switch]$Gui)
+param([switch]$NoLaunch,[switch]$Unattended,[switch]$Gui,[switch]$HelperOnly)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 try{[Console]::OutputEncoding=[System.Text.Encoding]::UTF8}catch{}
@@ -52,8 +52,49 @@ function Winget-Install($id,$name){
   if(@(0,-1978335189,-1978335135) -notcontains $LASTEXITCODE){Fail "winget не смог установить $name (код $LASTEXITCODE)."}
   Refresh-Path
 }
+# The recording module MonoAudio.exe: «Звук компьютера», «Звук компьютера + микрофон» and
+# «Выбранное приложение» need it. It is built here from source with .NET SDK 10, which is
+# installed through winget when missing (no question: without it only the microphone works).
+# Always rebuilt when the SDK is present, so an update brings the module's new abilities.
+function Install-Helper{
+  Step 'Модуль записи звука компьютера и приложений'
+  $helper=Join-Path $Root '.build\capture-windows\bundle\MonoAudio.exe'
+  Refresh-Path
+  $dotnet=Get-Command dotnet.exe -ErrorAction SilentlyContinue
+  $sdk10=$false
+  if($dotnet){$sdks=& $dotnet.Source --list-sdks 2>$null;$sdk10=[bool]($sdks | Where-Object {$_ -match '^10\.'})}
+  if(-not $sdk10){
+    if(Has-Winget){
+      Say 'Устанавливаю .NET SDK 10 для модуля записи (это займёт несколько минут)…'
+      Write-Host '    Устанавливаю .NET SDK 10 через winget…'
+      & winget.exe install --id Microsoft.DotNet.SDK.10 --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity | Out-Host
+      Refresh-Path
+      $dotnet=Get-Command dotnet.exe -ErrorAction SilentlyContinue
+      if(-not $dotnet -and (Test-Path "$env:ProgramFiles\dotnet\dotnet.exe")){$dotnet=Get-Command "$env:ProgramFiles\dotnet\dotnet.exe"}
+      if($dotnet){$sdks=& $dotnet.Source --list-sdks 2>$null;$sdk10=[bool]($sdks | Where-Object {$_ -match '^10\.'})}
+    }else{Warn 'winget (Установщик приложений) недоступен — установите .NET SDK 10 с сайта Microsoft и запустите установку снова.'}
+  }
+  if($sdk10){
+    Say 'Собираю модуль записи MonoAudio…'
+    Write-Host '    Собираю MonoAudio.exe (локальная сборка для этого компьютера)…'
+    & $dotnet.Source publish (Join-Path $Root 'native\windows\MonoAudio.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o (Split-Path $helper) --nologo -v quiet | Out-Host
+    if($LASTEXITCODE -eq 0 -and (Test-Path $helper)){Ok 'Модуль собран: доступны «Звук компьютера», «Звук компьютера + микрофон» и «Выбранное приложение»';return $true}
+    Warn 'Сборка модуля не удалась — пока останется запись микрофона через окно MONO'
+  }elseif(Test-Path $helper){Ok 'Используется собранный ранее модуль';return $true}
+  else{Warn 'Модуль не установлен — пока доступна только запись микрофона'}
+  return $false
+}
 function Version-Of($exe,$arguments){
   try{$out=& $exe @arguments 2>&1 | Select-Object -First 1;return "$out"}catch{return ''}
+}
+
+# Called from MONO itself («Установить модуль» next to «Что записывать»): only the module.
+if($HelperOnly){
+  if($Window){$Title.Text='Устанавливаем модуль записи';$Note.Text='Когда установка закончится, MONO сам подключит модуль.'}
+  $built=Install-Helper
+  Stop-Transcript | Out-Null
+  if($Window){$Window.Close()}
+  if($built){exit 0}else{exit 3}
 }
 
 Write-Host 'MONO Transcribe — установка' -ForegroundColor White
@@ -117,21 +158,8 @@ if(-not (Has-FFmpeg)){
 if(-not (Has-FFmpeg)){Fail 'FFmpeg не найден. Установите FFmpeg (ffmpeg.exe и ffprobe.exe в PATH) и запустите установку снова.'}
 Ok ((Version-Of 'ffmpeg.exe' @('-version')) -replace ' Copyright.*','')
 
-# --- Нативный модуль записи звука компьютера (необязательно) ----------------------
-Step 'Модуль записи звука компьютера (WASAPI, необязательно)'
-$helper=Join-Path $Root '.build\capture-windows\bundle\MonoAudio.exe'
-$dotnet=Get-Command dotnet.exe -ErrorAction SilentlyContinue
-$sdk10=$false
-if($dotnet){$sdks=& $dotnet.Source --list-sdks 2>$null;$sdk10=[bool]($sdks | Where-Object {$_ -match '^10\.'})}
-if(-not $sdk10 -and -not (Test-Path $helper)){
-  Warn 'Для записи «Звука компьютера» нужен .NET SDK 10 (около 1 ГБ). Без него MONO пишет микрофон через окно браузера.'
-  if(Ask '    Установить .NET SDK 10 и собрать модуль?'){Winget-Install 'Microsoft.DotNet.SDK.10' '.NET SDK 10';$dotnet=Get-Command dotnet.exe -ErrorAction SilentlyContinue;$sdk10=[bool]$dotnet}
-}
-if($sdk10){
-  Write-Host '    Собираю MonoAudio.exe (локальная сборка для этого компьютера)…'
-  & $dotnet.Source publish (Join-Path $Root 'native\windows\MonoAudio.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o (Split-Path $helper) --nologo -v quiet | Out-Host
-  if($LASTEXITCODE -eq 0 -and (Test-Path $helper)){Ok 'Модуль собран: доступны «Звук компьютера» и «Микрофон и компьютер»'}else{Warn 'Сборка модуля не удалась — останется запись микрофона через браузер'}
-}elseif(Test-Path $helper){Ok 'Модуль уже собран'}else{Ok 'Пропущено: запись микрофона через окно браузера'}
+# --- Модуль записи звука компьютера и приложений -------------------------------
+Install-Helper | Out-Null
 
 # --- Окно приложения -----------------------------------------------------------
 Step 'Окно приложения (Microsoft Edge или Google Chrome)'

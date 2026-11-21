@@ -1,5 +1,6 @@
 // «Глубокая диагностика» in a real browser: live microphone test, server checks, report
 // without paths or keys, and the journal that survives a core restart.
+import {showPane} from '../helpers/settings-pane.mjs';
 import test from 'node:test';import assert from 'node:assert/strict';import net from 'node:net';import {once} from 'node:events';
 import {localServer} from '../helpers/local-server.mjs';import {createRequire} from 'node:module';
 let playwright=null;
@@ -17,7 +18,7 @@ test('deep diagnostics: live microphone, server checks, private report, journal 
   await fetch('/api/local/preferences',{method:'PATCH',headers,body:JSON.stringify({onboarding:{completed:true,keySkipped:true,soundTested:true},capture:{mode:'mic'}})})});
  await server.restart(); // a second start must show up in the journal
  await page.goto(server.url+'/');await page.waitForFunction(()=>document.querySelector('#nav-count'));await page.evaluate(()=>{location.hash='#settings'});
- await page.waitForSelector('.preflight-deep',{timeout:30000});
+ await showPane(page,'.preflight-deep');await page.waitForSelector('.preflight-deep',{timeout:30000});
  await page.click('.preflight-deep');
  await page.waitForSelector('#deep-copy',{timeout:40000});
  // Groq points at a closed port: the conclusion must name the network problem.

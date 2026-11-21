@@ -3,7 +3,7 @@ import {validCaptureDiagnostic} from '../../public/capture-diagnostic.js';
 const send=(res,status,body)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(body))};
 export async function captureRoute(req,res,url,worker){
  if(!url.pathname.startsWith('/api/local/capture/'))return false;
- const operation=url.pathname.slice('/api/local/capture/'.length),read=['capabilities','devices','status','check_access','diagnose','probe'].includes(operation),write=['repair','start','test','discard_test','pause','resume','stop','browser_start','browser_heartbeat','browser_pause','browser_resume','browser_finish','browser_abort'].includes(operation);
+ const operation=url.pathname.slice('/api/local/capture/'.length),read=['capabilities','devices','status','check_access','diagnose','probe','applications','install_status'].includes(operation),write=['install_helper','repair','start','test','discard_test','pause','resume','stop','browser_start','browser_heartbeat','browser_pause','browser_resume','browser_finish','browser_abort'].includes(operation);
  if(operation==='browser_diagnostic'&&req.method==='POST'){
   let value;try{value=await readJSON(req,1024)}catch{send(res,400,{code:'INVALID_CAPTURE_DIAGNOSTIC',error:'Проверьте диагностические данные'});return true}
   if(!validCaptureDiagnostic(value)){send(res,400,{code:'INVALID_CAPTURE_DIAGNOSTIC',error:'Проверьте диагностические данные'});return true}
@@ -25,8 +25,9 @@ export async function captureRoute(req,res,url,worker){
    const fields=operation==='browser_start'?['sampleRate','inputId','test']:['browser_pause','browser_resume','browser_finish'].includes(operation)?['sessionId','frames']:['sessionId'];
    if(Object.keys(params).some(key=>!fields.includes(key))){send(res,400,{error:'Проверьте параметры записи',code:'INVALID_CAPTURE'});return true}
   }
+  if(operation==='install_helper'&&Object.keys(params).length){send(res,400,{error:'Проверьте параметры записи',code:'INVALID_CAPTURE'});return true}
   if(operation==='repair'&&Object.keys(params).some(key=>!['inputId','mute','minimumVolume'].includes(key))){send(res,400,{error:'Проверьте параметры записи',code:'INVALID_CAPTURE'});return true}
-  if(['start','test'].includes(operation)&&Object.keys(params).some(key=>!['mode','inputId','outputId'].includes(key))){send(res,400,{error:'Проверьте параметры записи',code:'INVALID_CAPTURE'});return true}
+  if(['start','test'].includes(operation)&&Object.keys(params).some(key=>!['mode','inputId','outputId','processId','appName'].includes(key))){send(res,400,{error:'Проверьте параметры записи',code:'INVALID_CAPTURE'});return true}
   send(res,['start','test','browser_start'].includes(operation)?202:200,await worker.call('capture.'+operation,params));
  }catch(error){if(['start','test'].includes(operation))console.warn(JSON.stringify({event:'native_capture_failure',operation,code:error.code||'CAPTURE_UNAVAILABLE'}));send(res,['CAPTURE_BUSY','LIBRARY_BUSY','DEVICE_LOST'].includes(error.code)?409:error.code?.startsWith('INVALID')?400:503,{error:'Не удалось выполнить операцию со звуком',code:error.code||'CAPTURE_UNAVAILABLE'})}
  return true;

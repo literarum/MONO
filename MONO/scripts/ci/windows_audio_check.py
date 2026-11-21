@@ -68,13 +68,17 @@ def main() -> int:
     caps = service.capabilities()
     while not caps.get("ready") and caps.get("state") != "error" and time.monotonic() < deadline:
         service.tick(); time.sleep(0.05); caps = service.capabilities()
-    report["capabilities"] = {k: caps.get(k) for k in ("ready", "supported", "modes", "state", "reason", "inputDevices", "outputDevices")}
+    report["capabilities"] = {k: caps.get(k) for k in ("ready", "supported", "modes", "windowsBuild", "state", "reason", "inputDevices", "outputDevices")}
     failed = not caps.get("ready")
     library = config.get_library()
     for mode in caps.get("modes") or []:
         result = {}
         try:
-            started = service.start({"mode": mode})
+            params = {"mode": mode}
+            if mode == "app":
+                # The process that plays the tone (see the workflow); its sound alone must be recorded.
+                params.update(processId=int(os.environ["MONO_TONE_PID"]), appName="Tone player")
+            started = service.start(params)
             record = started["recordId"]
             until = time.monotonic() + 7
             states = []
@@ -106,6 +110,29 @@ def main() -> int:
             result = {"ok": False, "exception": f"{type(error).__name__}: {error}", "status": service.status()}
             failed = True
         report["modes"][mode] = result
+    if "app" in (caps.get("modes") or []):
+        # Isolation: a silent process (this script) yields silence although the tone plays.
+        isolation = {}
+        try:
+            isolation["applications"] = service.applications()
+            until = time.monotonic() + 10
+            while service.status()["state"] in ("stopping", "recording", "requesting", "paused") and time.monotonic() < until:
+                service.tick(); time.sleep(0.02)
+            started = service.start({"mode": "app", "processId": os.getpid(), "appName": "Silent check"}); record = started["recordId"]
+            until = time.monotonic() + 5
+            while time.monotonic() < until:
+                service.tick(); time.sleep(0.02)
+            service.stop(); until = time.monotonic() + 10
+            while service.status()["state"] in ("stopping", "recording", "requesting", "paused") and time.monotonic() < until:
+                service.tick(); time.sleep(0.02)
+            parts = library._raw(record)["_segments"]
+            isolation["silentPeak"] = round(max((peak_of(library.root / p["path"]) for p in parts), default=0.0), 4)
+            isolation["state"] = service.status()["state"]; isolation["segments"] = len(parts)
+            isolation["ok"] = bool(isolation["applications"].get("available") and isolation["state"] == "ready" and parts and isolation["silentPeak"] < 0.01)
+        except Exception as error:
+            isolation = {"ok": False, "exception": f"{type(error).__name__}: {error}", "status": service.status()}
+        report["appIsolation"] = isolation
+        failed |= not isolation["ok"]
         # A second start right after stop must not report DEVICE_BUSY.
     if caps.get("modes"):
         try:

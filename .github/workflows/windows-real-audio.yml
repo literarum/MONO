@@ -80,7 +80,9 @@ jobs:
         run: |
           python -c "import math,struct,wave;w=wave.open(r'$env:RUNNER_TEMP\tone.wav','wb');w.setnchannels(2);w.setsampwidth(2);w.setframerate(48000);w.writeframes(b''.join(struct.pack('<hh',v,v) for v in (int(12000*math.sin(2*math.pi*440*i/48000)) for i in range(48000*5))));w.close()"
           $script = "`$p = New-Object System.Media.SoundPlayer '$env:RUNNER_TEMP\tone.wav'; `$p.PlayLooping(); Start-Sleep -Seconds 1500"
-          Start-Process powershell -ArgumentList '-NoProfile','-Command',$script -WindowStyle Hidden
+          $player = Start-Process powershell -ArgumentList '-NoProfile','-Command',$script -WindowStyle Hidden -PassThru
+          # «Выбранное приложение» records exactly this process (Windows process loopback).
+          "MONO_TONE_PID=$($player.Id)" >> $env:GITHUB_ENV
           Start-Sleep -Seconds 3
 
       - name: Microphone blocked by Windows privacy → clear error, system audio still records
