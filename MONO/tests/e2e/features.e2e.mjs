@@ -16,7 +16,7 @@ async function open(t,server,mode='both',{migrated=true}={}){
  const browser=await playwright.chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});t.after(()=>browser.close());
  const context=await browser.newContext();await context.grantPermissions(['microphone'],{origin:server.url});
  if(migrated)await context.addInitScript(()=>{try{localStorage.setItem('mono-source-browser-1','1')}catch{}});
- const page=await context.newPage();page.errors=[];page.on('pageerror',error=>page.errors.push(error.message));
+ const page=await context.newPage();page.errors=[];page.stacks=[];page.on('pageerror',error=>{page.errors.push(error.message);page.stacks.push(String(error.stack||error.message))});
  await page.goto(server.url+'/');
  await page.evaluate(async mode=>{const {csrf}=await (await fetch('/api/local/session')).json();const headers={'Content-Type':'application/json','X-Mono-CSRF':csrf};
   await fetch('/api/local/library/configure',{method:'POST',headers,body:JSON.stringify({useDefault:true})});
@@ -139,7 +139,7 @@ test('the window survives a core restart: banner, then automatic reconnect with 
  await page.waitForFunction(()=>!document.querySelector('.connection-banner'),null,{timeout:30000});
  await page.waitForFunction(()=>document.readyState==='complete'&&document.querySelector('#nav-count'));
  const status=await page.evaluate(async()=>{const {csrf}=await (await fetch('/api/local/session')).json();return (await fetch('/api/local/ping',{method:'POST',headers:{'Content-Type':'application/json','X-Mono-CSRF':csrf},body:'{}'})).status});
- assert.equal(status,200);assert.deepEqual(page.errors,[]);
+ assert.equal(status,200);assert.deepEqual(page.errors,[],page.stacks.join('\n---\n'));
 });
 
 test('safety track: when the system module fails mid-take, the window’s independent copy restores the meeting',{skip},async t=>{
