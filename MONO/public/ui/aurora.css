@@ -58,8 +58,7 @@ body[data-theme=light] .sidebar{background:linear-gradient(170deg,rgba(255,255,2
 main{padding-top:28px!important}
 
 /* —— Dedication under the logo ——————————————————————————————————— */
-.brand{margin-bottom:6px!important}
-.brand-dedication{display:flex;align-items:center;gap:7px;margin:0 12px 30px;font-size:12px;font-weight:500;letter-spacing:.01em;color:var(--muted);font-style:italic}
+.brand{margin-bottom:30px!important}
 
 /* —— Motion on every interaction ————————————————————————————————————— */
 .btn,.text-link,.back-link,.btn-plain,.icon-btn,.nav-link,.segmented button,.accent-dot,.select-control,.select-option,.settings-index a,.record-card,.metric-card,.drop-zone,.fr-btn,.preflight-item.is-actionable,details>summary,.switch,.check-row input,.usage-tile,.guide-step,.lib-check,.view-toggle button{
@@ -387,7 +386,7 @@ body[data-theme=light] .tour-veil{background:color-mix(in srgb,#0b1d44 38%,trans
 /* —— Narrow windows and phones ———————————————————————————————————————— */
 @media (max-width:990px){
  /* the sidebar is a tab bar here: only the five sections */
- .sidebar .brand-dedication,.sidebar .sidebar-foot{display:none!important}
+ .sidebar .sidebar-foot{display:none!important}
  .nav-rec-badge{position:absolute;top:6px;right:calc(50% - 18px);margin:0}
  .settings-heading-side{margin-left:0}
 }
